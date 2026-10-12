@@ -90,6 +90,9 @@ class LogTail:
         self._stopped = False
         self.position = 0
         self._inode: int | None = None
+        # The first bytes this file had when we read them. Linux reuses a deleted file's inode
+        # number at once, so a replacement can keep the inode; a different head shows it.
+        self._head: bytes = b""
 
     def stop(self) -> None:
         """Ask the follow loop to finish. Safe from a signal handler."""
@@ -159,17 +162,26 @@ class LogTail:
         except FileNotFoundError:
             # Deleted mid-run. Treat the next appearance as a restart rather
             # than resuming at a stale offset into a different file.
-            self._inode, self.position = None, 0
+            self._inode, self.position, self._head = None, 0, b""
             return False
 
         replaced = self._inode is not None and stat.st_ino != self._inode
         truncated = stat.st_size < self.position
+        if not replaced and not truncated and self._head:
+            replaced = self._read_head(len(self._head)) != self._head
         self._inode = stat.st_ino
 
         if replaced or truncated:
-            self.position = 0
+            self.position, self._head = 0, b""
             return True
         return False
+
+    def _read_head(self, n: int) -> bytes:
+        try:
+            with self.path.open("rb") as handle:
+                return handle.read(n)
+        except FileNotFoundError:
+            return b""
 
     def _read_new(self) -> str:
         """Bytes since ``position``, decoded leniently."""
@@ -187,8 +199,14 @@ class LogTail:
         # partial tail and rewinding is what keeps offsets byte-exact — decoding
         # with `errors="replace"` would silently change the length.
         text, consumed = _decode_whole_characters(raw)
+        if self.position < HEAD_BYTES:
+            self._head = (self._head + raw[:consumed])[:HEAD_BYTES]
         self.position += consumed
         return text
+
+
+#: How many of a log's first bytes identify it (a solver banner, then the case header).
+HEAD_BYTES = 256
 
 
 def _decode_whole_characters(raw: bytes) -> tuple[str, int]:

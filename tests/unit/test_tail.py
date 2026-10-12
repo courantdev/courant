@@ -252,3 +252,29 @@ class TestFindLog:
 
     def test_nothing_to_find_is_not_an_error(self, tmp_path):
         assert find_log(tmp_path) is None
+
+
+class TestInodeReuse:
+    """Linux gives a new file the inode number of the one just deleted, so an inode check
+    alone misses a replacement (seen on GitHub's ubuntu runners, 12 Oct 2026)."""
+
+    def test_a_replacement_that_keeps_the_inode_is_still_a_restart(self, tmp_path, monkeypatch):
+        log = tmp_path / "log.simpleFoam"
+        log.write_text("aaaaaaaa\n")
+        follower = tail(log, idle_timeout=None)
+        stream = follower.follow()
+        next(stream)
+        log.write_text("bbbbbbbb\n")       # same size, and the same inode: overwritten in place
+        restarted = next(stream)
+        assert restarted.restarted is True and restarted.text == "bbbbbbbb\n"
+
+    def test_appending_is_not_a_restart(self, tmp_path):
+        log = tmp_path / "log.simpleFoam"
+        log.write_text("first\n")
+        follower = tail(log, idle_timeout=None)
+        stream = follower.follow()
+        assert next(stream).text == "first\n"
+        with log.open("a") as fh:
+            fh.write("second\n")
+        chunk = next(stream)
+        assert chunk.restarted is False and chunk.text == "second\n"
