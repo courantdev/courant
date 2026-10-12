@@ -1,0 +1,12 @@
+{
+  "container_wall_s": 6.7,
+  "cpus": 1,
+  "date": "2026-09-30",
+  "edits": [],
+  "id": "simpleFoam_airFoil2D__shipped",
+  "image": "opencfd/openfoam-default:2406",
+  "pre": [],
+  "solver": "simpleFoam",
+  "solver_exit_code": 0,
+  "tutorial": "incompressible/simpleFoam/airFoil2D"
+}

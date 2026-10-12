@@ -1,0 +1,87 @@
+{
+ "case_id": "pimpleFoam_planarContraction",
+ "config": {
+  "boundary": {
+   "\".*\"": {
+    "sigma": "zeroGradient"
+   },
+   "inlet": {
+    "U": "fixedValue",
+    "p": "zeroGradient",
+    "sigma": "fixedValue"
+   },
+   "outlet": {
+    "U": "zeroGradient",
+    "p": "fixedValue"
+   },
+   "wall": {
+    "U": "fixedValue",
+    "p": "zeroGradient"
+   }
+  },
+  "ddt_scheme": "backward",
+  "delta_t": 0.002,
+  "div_schemes": {
+   "default": "none",
+   "div((nu*dev2(T(grad(U)))))": "Gauss linear",
+   "div((nuM*grad(U)))": "Gauss linear",
+   "div(phi,U)": "Gauss linearUpwind grad(U)",
+   "div(phi,sigma)": "Gauss vanAlbada",
+   "div(sigma)": "Gauss linear"
+  },
+  "end_time": 0.2,
+  "linear_solvers": {
+   "\"(U|sigma)\"": {
+    "field": "\"(U|sigma)\"",
+    "rel_tol": 0.1,
+    "solver": "smoothSolver",
+    "tolerance": 1e-06
+   },
+   "\"(U|sigma)Final\"": {
+    "field": "\"(U|sigma)Final\"",
+    "rel_tol": 0.0
+   },
+   "p": {
+    "field": "p",
+    "rel_tol": 0.05,
+    "solver": "GAMG",
+    "tolerance": 1e-06
+   },
+   "pFinal": {
+    "field": "pFinal",
+    "rel_tol": 0.0
+   }
+  },
+  "n_correctors": 1,
+  "n_non_orthogonal_correctors": 0,
+  "regions": [],
+  "relaxation_factors": {
+   "\".*\"": 1.0
+  },
+  "relaxation_scopes": {
+   "\".*\"": "equations"
+  },
+  "solver": "pimpleFoam",
+  "transport": {
+   "nu": 1e-05
+  },
+  "turbulence_type": "laminar",
+  "unreadable": {},
+  "write_control": "runTime",
+  "write_interval": 100.0
+ },
+ "expects_code": "NUM.CFL_VIOLATION",
+ "fault_id": "cfl_blowup",
+ "label": "broken",
+ "mesh": {
+  "average_non_orthogonality": 0.0,
+  "max_aspect_ratio": 76.857148,
+  "max_non_orthogonality": 0.0,
+  "max_skewness": 5.683665e-14,
+  "mesh_ok": true,
+  "n_cells": 1800,
+  "n_negative_volume_cells": 0
+ },
+ "scenario_id": "pimpleFoam_planarContraction::cfl_blowup",
+ "solver": "pimpleFoam"
+}

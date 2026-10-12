@@ -1,0 +1,87 @@
+{
+ "case_id": "pisoFoam_RAS_cavity",
+ "config": {
+  "boundary": {
+   "\"(movingWall|fixedWalls)\"": {
+    "epsilon": "epsilonWallFunction",
+    "k": "kqRWallFunction",
+    "nuTilda": "zeroGradient",
+    "nut": "nutkWallFunction",
+    "omega": "omegaWallFunction",
+    "p": "zeroGradient"
+   },
+   "fixedWalls": {
+    "U": "noSlip"
+   },
+   "frontAndBack": {
+    "U": "empty",
+    "epsilon": "empty",
+    "k": "empty",
+    "nuTilda": "empty",
+    "nut": "empty",
+    "omega": "empty",
+    "p": "empty"
+   },
+   "movingWall": {
+    "U": "fixedValue"
+   }
+  },
+  "ddt_scheme": "Euler",
+  "div_schemes": {
+   "default": "none",
+   "div((nuEff*dev2(T(grad(U)))))": "Gauss linear",
+   "div(R)": "Gauss linear",
+   "div(U)": "Gauss linear",
+   "div(phi,R)": "Gauss limitedLinear 1",
+   "div(phi,U)": "Gauss CoBlended 0.01 limitedLinearV 1 0.05 linearUpwind grad(U)",
+   "div(phi,epsilon)": "Gauss limitedLinear 1",
+   "div(phi,k)": "Gauss limitedLinear 1",
+   "div(phi,nuTilda)": "Gauss limitedLinear 1",
+   "div(phi,omega)": "Gauss limitedLinear 1"
+  },
+  "linear_solvers": {
+   "\"(U|k|epsilon|omega|R|nuTilda)\"": {
+    "field": "\"(U|k|epsilon|omega|R|nuTilda)\"",
+    "rel_tol": 0.0,
+    "solver": "smoothSolver",
+    "tolerance": 1e-05
+   },
+   "p": {
+    "field": "p",
+    "rel_tol": 0.1,
+    "solver": "GAMG",
+    "tolerance": 1e-06
+   },
+   "pFinal": {
+    "field": "pFinal",
+    "rel_tol": 0.0,
+    "tolerance": 1e-06
+   }
+  },
+  "regions": [],
+  "relaxation_factors": {},
+  "relaxation_scopes": {},
+  "transport": {
+   "nu": 1e-05
+  },
+  "turbulence_model": "kEpsilon",
+  "turbulence_type": "RAS",
+  "unreadable": {
+   "system/controlDict": "FoamFileDecodeError: parsing failed on line 48, column 1:"
+  }
+ },
+ "expects_code": null,
+ "fault_id": null,
+ "label": "healthy",
+ "mesh": {
+  "average_non_orthogonality": 0.0,
+  "max_aspect_ratio": 1.0,
+  "max_non_orthogonality": 0.0,
+  "max_skewness": 1.81581e-14,
+  "mesh_ok": true,
+  "n_cells": 400,
+  "n_negative_volume_cells": 0
+ },
+ "scenario_id": "pisoFoam_RAS_cavity::healthy",
+ "solver": "pisoFoam"
+}

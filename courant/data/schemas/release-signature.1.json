@@ -1,0 +1,39 @@
+{
+ "$id": "urn:courant:release-signature:1",
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "additionalProperties": false,
+ "description": "TRD OPS-4, OPS-7. SHA256SUMS.sig.json: the Ed25519 signature of the exact bytes of a release's SHA256SUMS, under the key S holds (H-SIGNING-KEY). courant update checks it against the release key pinned in its build.",
+ "properties": {
+  "algorithm": {
+   "const": "ed25519"
+  },
+  "public_key": {
+   "pattern": "^[0-9a-f]{64}$",
+   "type": "string"
+  },
+  "schema": {
+   "const": "courant.release-signature/1"
+  },
+  "signature": {
+   "pattern": "^[0-9a-f]{128}$",
+   "type": "string"
+  },
+  "signed": {
+   "const": "SHA256SUMS"
+  },
+  "signed_sha256": {
+   "pattern": "^[0-9a-f]{64}$",
+   "type": "string"
+  }
+ },
+ "required": [
+  "schema",
+  "algorithm",
+  "signed",
+  "signed_sha256",
+  "public_key",
+  "signature"
+ ],
+ "title": "courant.release-signature/1",
+ "type": "object"
+}

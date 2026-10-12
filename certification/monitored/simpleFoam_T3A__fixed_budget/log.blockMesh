@@ -1,0 +1,131 @@
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2406                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _be01ca78-20240625 OPENFOAM=2406 version=2406
+Arch   : "LSB;label=32;scalar=64"
+Exec   : blockMesh
+Date   : Oct 01 2026
+Time   : 03:49:03
+Host   : 0725650099ef
+PID    : 487
+I/O    : uncollated
+Case   : /tmp/case
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Creating block mesh from "system/blockMeshDict"
+Creating block edges
+No non-planar block faces defined
+Creating topology blocks
+
+Creating topology patches - from boundary section
+
+Creating block mesh topology
+--> FOAM Warning : 
+    From Foam::polyMesh::polyMesh(const Foam::IOobject&, Foam::pointField&&, const Foam::cellShapeList&, const Foam::faceListList&, const Foam::wordList&, const Foam::PtrList<Foam::dictionary>&, const Foam::word&, const Foam::word&, bool)
+    in file meshes/polyMesh/polyMeshFromShapeMesh.C at line 915
+    Found 22 undefined faces in mesh; adding to default patch defaultFaces
+
+Check topology
+
+	Basic statistics
+		Number of internal faces : 14
+		Number of boundary faces : 38
+		Number of defined boundary faces : 38
+		Number of undefined boundary faces : 0
+	Checking patch -> block consistency
+
+Creating block offsets
+Creating merge list (topological search)...
+
+Creating polyMesh from blockMesh
+Creating points with scale (1 1 1)
+    Block 0 cell size :
+        i : 0.00403181 .. 0.00190248
+        j : 0.000733623 .. 0.000733623
+        k : 0.1 .. 0.1
+
+    Block 1 cell size :
+        i : 0.00190252 .. 4.18554e-05
+        j : 0.000814798 .. 0.000814798
+        k : 0.1 .. 0.1
+
+    Block 2 cell size :
+        i : 0.00190252 .. 4.18554e-05
+        j : 0.000814798 .. 0.000814798
+        k : 0.1 .. 0.1
+
+    Block 3 cell size :
+        i : 0.00525698 .. 0.0024806
+        j : 0.00191433 .. 0.0957903
+        k : 0.1 .. 0.1
+
+    Block 4 cell size :
+        i : 0.000814798 .. 0.000814798
+        j : 0.00191433 .. 0.0957903
+        k : 0.1 .. 0.1
+
+    Block 5 cell size :
+        i : 2.94511e-05 .. 0.00208923
+        j : 4.1855e-05 .. 0.00190252
+        k : 0.1 .. 0.1
+
+    Block 6 cell size :
+        i : 2.94511e-05 .. 0.00208923
+        j : 0.00190252 .. 0.0951995
+        k : 0.1 .. 0.1
+
+    Block 7 cell size :
+        i : 0.0020882 .. 0.0152234
+        j : 4.1855e-05 .. 0.00190252
+        k : 0.1 .. 0.1
+
+    Block 8 cell size :
+        i : 0.0020882 .. 0.0152234
+        j : 0.00190252 .. 0.0951995
+        k : 0.1 .. 0.1
+
+    Block 9 cell size :
+        i : 0.0146152 .. 0.0583276
+        j : 4.1855e-05 .. 0.00190252
+        k : 0.1 .. 0.1
+
+    Block 10 cell size :
+        i : 0.0146152 .. 0.0583276
+        j : 0.00190252 .. 0.0951995
+        k : 0.1 .. 0.1
+
+Creating cells
+Creating patches
+No patch pairs to merge
+
+Writing polyMesh with 0 cellZones
+----------------
+Mesh Information
+----------------
+  boundingBox: (0 0 -0.05) (3.04 1 0.05)
+  nPoints: 54496
+  nCells: 26820
+  nFaces: 107707
+  nInternalFaces: 53213
+----------------
+Patches
+----------------
+  patch 0 (start: 53213 size: 47) name: above
+  patch 1 (start: 53260 size: 327) name: top
+  patch 2 (start: 53587 size: 60) name: inlet
+  patch 3 (start: 53647 size: 80) name: outlet
+  patch 4 (start: 53727 size: 340) name: plate
+  patch 5 (start: 54067 size: 53640) name: defaultFaces
+
+End
+

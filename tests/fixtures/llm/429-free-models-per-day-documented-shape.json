@@ -1,0 +1,18 @@
+{
+ "source": "OpenRouter's documented 429 envelope (docs: limits, 'Handling 429 errors', read 2026-10-04) with the X-RateLimit-* headers the docs say a platform-limit 429 carries. The message names the limit, free-models-per-day, which is the name ARC-8 keys on; the live smoke does not spend a request to provoke one.",
+ "status": 429,
+ "headers": {
+  "X-RateLimit-Limit": "50",
+  "X-RateLimit-Remaining": "0",
+  "X-RateLimit-Reset": "1791158400000"
+ },
+ "body": {
+  "error": {
+   "code": 429,
+   "message": "Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day",
+   "metadata": {
+    "error_type": "rate_limit_exceeded"
+   }
+  }
+ }
+}

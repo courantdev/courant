@@ -1,0 +1,2038 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2406                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+FoamFile
+{
+    version         2;
+    format          ascii;
+    class           dictionary;
+    object          controlDict;
+}
+
+application     pisoFoam;
+
+startFrom       latestTime;
+
+startTime       0;
+
+stopAt          endTime;
+
+endTime         10;
+
+deltaT          0.05;
+
+writeControl    timeStep;
+
+writeInterval   100;
+
+purgeWrite      0;
+
+writeFormat     ascii;
+
+writePrecision  6;
+
+writeCompression off;
+
+timeFormat      general;
+
+timePrecision   6;
+
+runTimeModifiable true;
+
+functions
+{
+    fieldAverage1
+    {
+        type            fieldAverage;
+        libs            ( fieldFunctionObjects );
+        fields          ( U { mean on ; prime2Mean on ; base time ; } );
+        restartOnRestart false;
+        restartOnOutput false;
+        periodicRestart false;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    add1
+    {
+        type            add;
+        libs            ( fieldFunctionObjects );
+        fields          ( k k_0 );
+        result          kTotal;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         10;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    runTime;
+        writeInterval   1;
+    }
+    blendingFactor1
+    {
+        type            blendingFactor;
+        libs            ( fieldFunctionObjects );
+        field           U;
+        phi             phi;
+        tolerance       0.001;
+        result          blendingFactorField;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 2;
+        writeControl    timeStep;
+        writeInterval   50;
+    }
+    components1
+    {
+        type            components;
+        libs            ( fieldFunctionObjects );
+        field           U;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    timeStep;
+        writeInterval   25;
+    }
+    CourantNo1
+    {
+        type            CourantNo;
+        libs            ( fieldFunctionObjects );
+        rho             rho;
+        field           phi;
+        result          CourantNumberField;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    continuityError1
+    {
+        type            continuityError;
+        libs            ( fieldFunctionObjects );
+        phi             phi;
+        writePrecision  10;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    ddt1
+    {
+        type            ddt;
+        libs            ( fieldFunctionObjects );
+        field           U;
+        result          ddtU;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.1;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    ddt21
+    {
+        type            ddt2;
+        libs            ( fieldFunctionObjects );
+        fields          ( U p );
+        mag             false;
+        result          d@@dt2;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         10;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    runTime;
+        writeInterval   1;
+    }
+    div1
+    {
+        type            div;
+        libs            ( fieldFunctionObjects );
+        field           U;
+        result          divU;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    timeStep;
+        writeInterval   25;
+    }
+    div2
+    {
+        type            div;
+        libs            ( fieldFunctionObjects );
+        field           phi;
+        result          divPhi;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 10;
+        writeControl    timeStep;
+        writeInterval   50;
+    }
+    enstrophy1
+    {
+        type            enstrophy;
+        libs            ( fieldFunctionObjects );
+        field           U;
+        result          enstrophyField;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    timeStep;
+        writeInterval   25;
+    }
+    flowType1
+    {
+        type            flowType;
+        libs            ( fieldFunctionObjects );
+        field           U;
+        result          flowTypeField;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    timeStep;
+        writeInterval   25;
+    }
+    flux1
+    {
+        type            flux;
+        libs            ( fieldFunctionObjects );
+        rho             none;
+        field           U;
+        result          fluxField;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    timeStep;
+        writeInterval   25;
+    }
+    grad1
+    {
+        type            grad;
+        libs            ( fieldFunctionObjects );
+        field           U;
+        result          gradU;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    timeStep;
+        writeInterval   25;
+    }
+    grad2
+    {
+        type            grad;
+        libs            ( fieldFunctionObjects );
+        field           phi;
+        result          gradPhi;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 10;
+        writeControl    timeStep;
+        writeInterval   50;
+    }
+    histogram1
+    {
+        type            histogram;
+        libs            ( fieldFunctionObjects );
+        field           p;
+        model           equalBinWidth;
+        nBins           100;
+        max             10;
+        min             -10;
+        writePrecision  6;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    histogram2
+    {
+        type            histogram;
+        libs            ( fieldFunctionObjects );
+        field           p;
+        model           unequalBinWidth;
+        ranges          ( ( -10 -9 ) ( -9 -8 ) ( -8 -7 ) ( -7 -6 ) ( -6 -2 ) ( -2 0 ) ( 0 5 ) ( 5 10 ) );
+        writePrecision  6;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    Lambda21
+    {
+        type            Lambda2;
+        libs            ( fieldFunctionObjects );
+        field           U;
+        result          Lambda2Field;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    timeStep;
+        writeInterval   25;
+    }
+    LambVector1
+    {
+        type            LambVector;
+        libs            ( fieldFunctionObjects );
+        field           U;
+        result          LambVectorField;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    timeStep;
+        writeInterval   25;
+    }
+    limitFields1
+    {
+        type            limitFields;
+        libs            ( fieldFunctionObjects );
+        fields          ( U p );
+        limit           both;
+        min             0;
+        max             5;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    timeStep;
+        writeInterval   25;
+    }
+    log1
+    {
+        type            log;
+        libs            ( fieldFunctionObjects );
+        field           k;
+        clip            0.001;
+        checkDimensions false;
+        scale           1;
+        offset          0;
+        result          logk;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.1;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    mag1
+    {
+        type            mag;
+        libs            ( fieldFunctionObjects );
+        field           U;
+        result          magU;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    timeStep;
+        writeInterval   25;
+    }
+    mag2
+    {
+        type            mag;
+        libs            ( fieldFunctionObjects );
+        field           p;
+        result          magP;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 10;
+        writeControl    timeStep;
+        writeInterval   50;
+    }
+    magSqr1
+    {
+        type            magSqr;
+        libs            ( fieldFunctionObjects );
+        field           U;
+        result          magSqrU;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    timeStep;
+        writeInterval   25;
+    }
+    magSqr2
+    {
+        type            magSqr;
+        libs            ( fieldFunctionObjects );
+        field           p;
+        result          magSqrP;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 10;
+        writeControl    timeStep;
+        writeInterval   50;
+    }
+    sampleEpsilon1
+    {
+        type            sets;
+        libs            ( sampling );
+        interpolationScheme cellPointFace;
+        setFormat       raw;
+        fields          ( epsilon );
+        sets            ( cloud { type cloud ; axis xyz ; points ( ( 0.0025 0.05 0.005 ) ) ; } );
+    }
+    multiFieldValue_add
+    {
+        type            multiFieldValue;
+        libs            ( fieldFunctionObjects );
+        operation       add;
+        functions
+        {
+            movingWallEpsilon
+            {
+                type            surfaceFieldValue;
+                operation       areaAverage;
+                regionType      patch;
+                name            movingWall;
+                fields          ( epsilon );
+                writeFields     no;
+                writeToFile     no;
+                log             no;
+                resultFields    ( areaAverage(movingWall,epsilon) );
+            }
+            fixedWallsEpsilon
+            {
+                type            surfaceFieldValue;
+                operation       areaAverage;
+                regionType      patch;
+                name            fixedWalls;
+                fields          ( epsilon );
+                writeFields     no;
+                writeToFile     no;
+                log             yes;
+            }
+            averageEpsilon
+            {
+                type            valueAverage;
+                functionObject  sampleEpsilon1;
+                fields          ( average(epsilon) );
+                writeToFile     no;
+                log             no;
+            }
+        }
+        writePrecision  10;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    multiFieldValue_sum
+    {
+        type            multiFieldValue;
+        libs            ( fieldFunctionObjects );
+        operation       sum;
+        functions
+        {
+            movingWallEpsilon
+            {
+                type            surfaceFieldValue;
+                operation       areaAverage;
+                regionType      patch;
+                name            movingWall;
+                fields          ( epsilon );
+                writeFields     no;
+                writeToFile     no;
+                log             no;
+                resultFields    ( areaAverage(movingWall,epsilon) );
+            }
+            fixedWallsEpsilon
+            {
+                type            surfaceFieldValue;
+                operation       areaAverage;
+                regionType      patch;
+                name            fixedWalls;
+                fields          ( epsilon );
+                writeFields     no;
+                writeToFile     no;
+                log             yes;
+            }
+            averageEpsilon
+            {
+                type            valueAverage;
+                functionObject  sampleEpsilon1;
+                fields          ( average(epsilon) );
+                writeToFile     no;
+                log             no;
+            }
+        }
+        writePrecision  10;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    multiFieldValue_subtract
+    {
+        type            multiFieldValue;
+        libs            ( fieldFunctionObjects );
+        operation       subtract;
+        functions
+        {
+            movingWallEpsilon
+            {
+                type            surfaceFieldValue;
+                operation       areaAverage;
+                regionType      patch;
+                name            movingWall;
+                fields          ( epsilon );
+                writeFields     no;
+                writeToFile     no;
+                log             no;
+                resultFields    ( areaAverage(movingWall,epsilon) );
+            }
+            fixedWallsEpsilon
+            {
+                type            surfaceFieldValue;
+                operation       areaAverage;
+                regionType      patch;
+                name            fixedWalls;
+                fields          ( epsilon );
+                writeFields     no;
+                writeToFile     no;
+                log             yes;
+            }
+            averageEpsilon
+            {
+                type            valueAverage;
+                functionObject  sampleEpsilon1;
+                fields          ( average(epsilon) );
+                writeToFile     no;
+                log             no;
+            }
+        }
+        writePrecision  10;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    multiFieldValue_min
+    {
+        type            multiFieldValue;
+        libs            ( fieldFunctionObjects );
+        operation       min;
+        functions
+        {
+            movingWallEpsilon
+            {
+                type            surfaceFieldValue;
+                operation       areaAverage;
+                regionType      patch;
+                name            movingWall;
+                fields          ( epsilon );
+                writeFields     no;
+                writeToFile     no;
+                log             no;
+                resultFields    ( areaAverage(movingWall,epsilon) );
+            }
+            fixedWallsEpsilon
+            {
+                type            surfaceFieldValue;
+                operation       areaAverage;
+                regionType      patch;
+                name            fixedWalls;
+                fields          ( epsilon );
+                writeFields     no;
+                writeToFile     no;
+                log             yes;
+            }
+            averageEpsilon
+            {
+                type            valueAverage;
+                functionObject  sampleEpsilon1;
+                fields          ( average(epsilon) );
+                writeToFile     no;
+                log             no;
+            }
+        }
+        writePrecision  10;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    multiFieldValue_max
+    {
+        type            multiFieldValue;
+        libs            ( fieldFunctionObjects );
+        operation       max;
+        functions
+        {
+            movingWallEpsilon
+            {
+                type            surfaceFieldValue;
+                operation       areaAverage;
+                regionType      patch;
+                name            movingWall;
+                fields          ( epsilon );
+                writeFields     no;
+                writeToFile     no;
+                log             no;
+                resultFields    ( areaAverage(movingWall,epsilon) );
+            }
+            fixedWallsEpsilon
+            {
+                type            surfaceFieldValue;
+                operation       areaAverage;
+                regionType      patch;
+                name            fixedWalls;
+                fields          ( epsilon );
+                writeFields     no;
+                writeToFile     no;
+                log             yes;
+            }
+            averageEpsilon
+            {
+                type            valueAverage;
+                functionObject  sampleEpsilon1;
+                fields          ( average(epsilon) );
+                writeToFile     no;
+                log             no;
+            }
+        }
+        writePrecision  10;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    multiFieldValue_average
+    {
+        type            multiFieldValue;
+        libs            ( fieldFunctionObjects );
+        operation       average;
+        functions
+        {
+            movingWallEpsilon
+            {
+                type            surfaceFieldValue;
+                operation       areaAverage;
+                regionType      patch;
+                name            movingWall;
+                fields          ( epsilon );
+                writeFields     no;
+                writeToFile     no;
+                log             no;
+                resultFields    ( areaAverage(movingWall,epsilon) );
+            }
+            fixedWallsEpsilon
+            {
+                type            surfaceFieldValue;
+                operation       areaAverage;
+                regionType      patch;
+                name            fixedWalls;
+                fields          ( epsilon );
+                writeFields     no;
+                writeToFile     no;
+                log             yes;
+            }
+            averageEpsilon
+            {
+                type            valueAverage;
+                functionObject  sampleEpsilon1;
+                fields          ( average(epsilon) );
+                writeToFile     no;
+                log             no;
+            }
+        }
+        writePrecision  10;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    multiFieldValue_divide
+    {
+        type            multiFieldValue;
+        libs            ( fieldFunctionObjects );
+        operation       divide;
+        functions
+        {
+            movingWallEpsilon
+            {
+                type            surfaceFieldValue;
+                operation       areaAverage;
+                regionType      patch;
+                name            movingWall;
+                fields          ( epsilon );
+                writeFields     no;
+                writeToFile     no;
+                log             no;
+                resultFields    ( areaAverage(movingWall,epsilon) );
+            }
+            fixedWallsEpsilon
+            {
+                type            surfaceFieldValue;
+                operation       areaAverage;
+                regionType      patch;
+                name            fixedWalls;
+                fields          ( epsilon );
+                writeFields     no;
+                writeToFile     no;
+                log             yes;
+            }
+            averageEpsilon
+            {
+                type            valueAverage;
+                functionObject  sampleEpsilon1;
+                fields          ( average(epsilon) );
+                writeToFile     no;
+                log             no;
+            }
+        }
+        writePrecision  10;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    multiFieldValue_cmptDivide
+    {
+        type            multiFieldValue;
+        libs            ( fieldFunctionObjects );
+        operation       cmptDivide;
+        functions
+        {
+            movingWallEpsilon
+            {
+                type            surfaceFieldValue;
+                operation       areaAverage;
+                regionType      patch;
+                name            movingWall;
+                fields          ( epsilon );
+                writeFields     no;
+                writeToFile     no;
+                log             no;
+                resultFields    ( areaAverage(movingWall,epsilon) );
+            }
+            fixedWallsEpsilon
+            {
+                type            surfaceFieldValue;
+                operation       areaAverage;
+                regionType      patch;
+                name            fixedWalls;
+                fields          ( epsilon );
+                writeFields     no;
+                writeToFile     no;
+                log             yes;
+            }
+            averageEpsilon
+            {
+                type            valueAverage;
+                functionObject  sampleEpsilon1;
+                fields          ( average(epsilon) );
+                writeToFile     no;
+                log             no;
+            }
+        }
+        writePrecision  10;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    multiply1_scalar_scalar
+    {
+        type            multiply;
+        libs            ( fieldFunctionObjects );
+        fields          ( k k_0 );
+        result          k2;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         10;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    runTime;
+        writeInterval   1;
+    }
+    multiply1_vector_vector
+    {
+        type            multiply;
+        libs            ( fieldFunctionObjects );
+        fields          ( U U_0 );
+        result          U2;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         10;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    runTime;
+        writeInterval   1;
+    }
+    multiply1_scalar_vector
+    {
+        type            multiply;
+        libs            ( fieldFunctionObjects );
+        fields          ( k U );
+        result          kU;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         10;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    runTime;
+        writeInterval   1;
+    }
+    multiply1_scalar_tensor
+    {
+        type            multiply;
+        libs            ( fieldFunctionObjects );
+        fields          ( k U2 );
+        result          kU2;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         10;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    runTime;
+        writeInterval   1;
+    }
+    momentum1
+    {
+        type            momentum;
+        libs            ( fieldFunctionObjects );
+        regionType      all;
+        writeMomentum   yes;
+        writePosition   yes;
+        writeVelocity   yes;
+        p               p;
+        U               U;
+        rho             rho;
+        rhoRef          1;
+        cylindrical     false;
+        writePrecision  10;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+        useNamePrefix   true;
+    }
+    nearWallFields1
+    {
+        type            nearWallFields;
+        libs            ( fieldFunctionObjects );
+        fields          ( ( U UNear ) ( p pNear ) );
+        patches         ( fixedWalls );
+        distance        0.001;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    timeStep;
+        writeInterval   25;
+    }
+    PecletNo1
+    {
+        type            PecletNo;
+        libs            ( fieldFunctionObjects );
+        rho             rho;
+        field           phi;
+        result          PecletNoField;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.1;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    pressure1
+    {
+        type            pressure;
+        libs            ( fieldFunctionObjects );
+        mode            static;
+        U               U;
+        rho             rhoInf;
+        rhoInf          1;
+        pRef            1;
+        result          staticP;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    timeStep;
+        writeInterval   25;
+    }
+    pressure2
+    {
+        type            pressure;
+        libs            ( fieldFunctionObjects );
+        mode            total;
+        U               U;
+        rho             rhoInf;
+        rhoInf          1;
+        pRef            1;
+        result          totalP;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       1;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 10;
+        writeControl    timeStep;
+        writeInterval   50;
+    }
+    pressure3
+    {
+        type            pressure;
+        libs            ( fieldFunctionObjects );
+        mode            staticCoeff;
+        U               U;
+        rho             rhoInf;
+        rhoInf          1;
+        pRef            1;
+        pInf            1;
+        UInf            ( 1 0 0 );
+        result          staticCoeffP;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 15;
+        writeControl    timeStep;
+        writeInterval   75;
+    }
+    pressure4
+    {
+        type            pressure;
+        libs            ( fieldFunctionObjects );
+        mode            totalCoeff;
+        U               U;
+        rho             rhoInf;
+        rhoInf          1;
+        pRef            1;
+        pInf            1;
+        UInf            ( 1 0 0 );
+        result          totalCoeffP;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 25;
+        writeControl    timeStep;
+        writeInterval   100;
+    }
+    processorField1
+    {
+        type            processorField;
+        libs            ( fieldFunctionObjects );
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         5000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    proudmanAcousticPower1
+    {
+        type            proudmanAcousticPower;
+        libs            ( fieldFunctionObjects );
+        alphaEps        0.1;
+        aRef            340;
+        rhoInf          1;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         5000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    pow1
+    {
+        type            pow;
+        libs            ( fieldFunctionObjects );
+        field           k;
+        n               0.25;
+        checkDimensions false;
+        scale           0.5;
+        offset          2.5;
+        result          powk;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.1;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    Q1
+    {
+        type            Q;
+        libs            ( fieldFunctionObjects );
+        field           U;
+        result          QField;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    timeStep;
+        writeInterval   25;
+    }
+    randomise1
+    {
+        type            randomise;
+        libs            ( fieldFunctionObjects );
+        magPerturbation 0.1;
+        field           U;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    timeStep;
+        writeInterval   25;
+    }
+    readFields1
+    {
+        type            readFields;
+        libs            ( fieldFunctionObjects );
+        fields          ( U p );
+        readOnStart     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    timeStep;
+        writeInterval   25;
+    }
+    setFlow1
+    {
+        type            setFlow;
+        libs            ( fieldFunctionObjects );
+        mode            function;
+        scale           1;
+        reverseTime     1;
+        velocity        ( 1 0 0 );
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 500;
+        writeControl    timeStep;
+        writeInterval   500;
+    }
+    streamFunction1
+    {
+        type            streamFunction;
+        libs            ( fieldFunctionObjects );
+        field           phi;
+        result          streamFunc;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.1;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    streamLine1
+    {
+        type            streamLine;
+        libs            ( fieldFunctionObjects );
+        U               U;
+        fields          ( U p k );
+        setFormat       vtk;
+        direction       forward;
+        lifeTime        10;
+        cloud           particleTracks;
+        seedSampleSet
+        {
+            type            uniform;
+            axis            x;
+            start           ( 0 0.05 0.005 );
+            end             ( 0.1 0.05 0.005 );
+            nPoints         20;
+        }
+        nSubCycle       1;
+        interpolationScheme cellPoint;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    subtract1
+    {
+        type            subtract;
+        libs            ( fieldFunctionObjects );
+        fields          ( k k_0 );
+        result          kDiff;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         10;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    runTime;
+        writeInterval   1;
+    }
+    surfaceInterpolate1
+    {
+        type            surfaceInterpolate;
+        libs            ( fieldFunctionObjects );
+        fields          ( ( U surfaceU ) ( p surfaceP ) ( k surfaceK ) ( divU surfaceDivU ) );
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  writeTime;
+        executeInterval -1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    turbulenceFields1
+    {
+        type            turbulenceFields;
+        libs            ( fieldFunctionObjects );
+        fields          ( k epsilon omega nuTilda nut nuEff R devReff L );
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  writeTime;
+        executeInterval -1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    turbulenceFields2
+    {
+        type            turbulenceFields;
+        libs            ( fieldFunctionObjects );
+        field           I;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  writeTime;
+        executeInterval -1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    valueAverage1
+    {
+        type            valueAverage;
+        libs            ( fieldFunctionObjects );
+        functionObject  momentum1;
+        fields          ( momentum_x momentum_y momentum_z );
+        resetOnRestart  false;
+        window          1;
+        windowType      exact;
+        writePrecision  10;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    volFieldValue1_none_none
+    {
+        type            volFieldValue;
+        libs            ( fieldFunctionObjects );
+        fields          ( p U );
+        operation       none;
+        regionType      all;
+        postOperation   none;
+        weightField     none;
+        writeFields     true;
+        scalingFactor   1;
+        writePrecision  8;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    volFieldValue1_min_none
+    {
+        type            volFieldValue;
+        libs            ( fieldFunctionObjects );
+        fields          ( p U );
+        operation       min;
+        regionType      all;
+        postOperation   none;
+        weightField     none;
+        writeFields     true;
+        scalingFactor   1;
+        writePrecision  8;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    volFieldValue1_max_none
+    {
+        type            volFieldValue;
+        libs            ( fieldFunctionObjects );
+        fields          ( p U );
+        operation       max;
+        regionType      all;
+        postOperation   none;
+        weightField     none;
+        writeFields     true;
+        scalingFactor   1;
+        writePrecision  8;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    volFieldValue1_sum_none
+    {
+        type            volFieldValue;
+        libs            ( fieldFunctionObjects );
+        fields          ( p U );
+        operation       sum;
+        regionType      all;
+        postOperation   none;
+        weightField     none;
+        writeFields     true;
+        scalingFactor   1;
+        writePrecision  8;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    volFieldValue1_sumMag_none
+    {
+        type            volFieldValue;
+        libs            ( fieldFunctionObjects );
+        fields          ( p U );
+        operation       sumMag;
+        regionType      all;
+        postOperation   none;
+        weightField     none;
+        writeFields     true;
+        scalingFactor   1;
+        writePrecision  8;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    volFieldValue1_average_none
+    {
+        type            volFieldValue;
+        libs            ( fieldFunctionObjects );
+        fields          ( p U );
+        operation       average;
+        regionType      all;
+        postOperation   none;
+        weightField     none;
+        writeFields     true;
+        scalingFactor   1;
+        writePrecision  8;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    volFieldValue1_volAverage_none
+    {
+        type            volFieldValue;
+        libs            ( fieldFunctionObjects );
+        fields          ( p U );
+        operation       volAverage;
+        regionType      all;
+        postOperation   none;
+        weightField     none;
+        writeFields     true;
+        scalingFactor   1;
+        writePrecision  8;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    volFieldValue1_volIntegrate_none
+    {
+        type            volFieldValue;
+        libs            ( fieldFunctionObjects );
+        fields          ( p U );
+        operation       volIntegrate;
+        regionType      all;
+        postOperation   none;
+        weightField     none;
+        writeFields     true;
+        scalingFactor   1;
+        writePrecision  8;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    volFieldValue1_CoV_none
+    {
+        type            volFieldValue;
+        libs            ( fieldFunctionObjects );
+        fields          ( p U );
+        operation       CoV;
+        regionType      all;
+        postOperation   none;
+        weightField     none;
+        writeFields     true;
+        scalingFactor   1;
+        writePrecision  8;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    volFieldValue1_min_none_cellzone
+    {
+        type            volFieldValue;
+        libs            ( fieldFunctionObjects );
+        fields          ( p U );
+        operation       min;
+        regionType      cellZone;
+        postOperation   none;
+        weightField     none;
+        writeFields     true;
+        scalingFactor   1;
+        writePrecision  8;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+        name            zone1;
+    }
+    volFieldValue1_max_none_cellzone
+    {
+        type            volFieldValue;
+        libs            ( fieldFunctionObjects );
+        fields          ( p U );
+        operation       max;
+        regionType      cellZone;
+        postOperation   none;
+        weightField     none;
+        writeFields     true;
+        scalingFactor   1;
+        writePrecision  8;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+        name            zone1;
+    }
+    volFieldValue1_sum_none_cellzone
+    {
+        type            volFieldValue;
+        libs            ( fieldFunctionObjects );
+        fields          ( p U );
+        operation       sum;
+        regionType      cellZone;
+        postOperation   none;
+        weightField     none;
+        writeFields     true;
+        scalingFactor   1;
+        writePrecision  8;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+        name            zone1;
+    }
+    volFieldValue1_sumMag_none_cellzone
+    {
+        type            volFieldValue;
+        libs            ( fieldFunctionObjects );
+        fields          ( p U );
+        operation       sumMag;
+        regionType      cellZone;
+        postOperation   none;
+        weightField     none;
+        writeFields     true;
+        scalingFactor   1;
+        writePrecision  8;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+        name            zone1;
+    }
+    volFieldValue1_average_none_cellzone
+    {
+        type            volFieldValue;
+        libs            ( fieldFunctionObjects );
+        fields          ( p U );
+        operation       average;
+        regionType      cellZone;
+        postOperation   none;
+        weightField     none;
+        writeFields     true;
+        scalingFactor   1;
+        writePrecision  8;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+        name            zone1;
+    }
+    volFieldValue1_volAverage_none_cellzone
+    {
+        type            volFieldValue;
+        libs            ( fieldFunctionObjects );
+        fields          ( p U );
+        operation       volAverage;
+        regionType      cellZone;
+        postOperation   none;
+        weightField     none;
+        writeFields     true;
+        scalingFactor   1;
+        writePrecision  8;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+        name            zone1;
+    }
+    volFieldValue1_volIntegrate_none_cellzone
+    {
+        type            volFieldValue;
+        libs            ( fieldFunctionObjects );
+        fields          ( p U );
+        operation       volIntegrate;
+        regionType      cellZone;
+        postOperation   none;
+        weightField     none;
+        writeFields     true;
+        scalingFactor   1;
+        writePrecision  8;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+        name            zone1;
+    }
+    volFieldValue1_CoV_none_cellzone
+    {
+        type            volFieldValue;
+        libs            ( fieldFunctionObjects );
+        fields          ( p U );
+        operation       CoV;
+        regionType      cellZone;
+        postOperation   none;
+        weightField     none;
+        writeFields     true;
+        scalingFactor   1;
+        writePrecision  8;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+        name            zone1;
+    }
+    vorticity1
+    {
+        type            vorticity;
+        libs            ( fieldFunctionObjects );
+        field           U;
+        result          vorticityField;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    timeStep;
+        writeInterval   25;
+    }
+    reference1
+    {
+        type            reference;
+        libs            ( fieldFunctionObjects );
+        field           U;
+        refValue        sample;
+        position        ( 0 0 0 );
+        scale           1;
+        offset          ( 0 0 0 );
+        interpolationScheme cell;
+        result          diffU;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    timeStep;
+        writeInterval   25;
+    }
+    reference2
+    {
+        type            reference;
+        libs            ( fieldFunctionObjects );
+        field           p;
+        refValue        sample;
+        position        ( 0 0 0 );
+        scale           -2;
+        offset          1.5;
+        interpolationScheme cellPoint;
+        result          diffP;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    timeStep;
+        writeInterval   25;
+    }
+    wallShearStress1
+    {
+        type            wallShearStress;
+        libs            ( fieldFunctionObjects );
+        patches         ( fixedWalls );
+        writeFields     yes;
+        writePrecision  10;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    writeCellCentres1
+    {
+        type            writeCellCentres;
+        libs            ( fieldFunctionObjects );
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  writeTime;
+        executeInterval -1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    writeCellVolumes1
+    {
+        type            writeCellVolumes;
+        libs            ( fieldFunctionObjects );
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  writeTime;
+        executeInterval -1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    yPlus1
+    {
+        type            yPlus;
+        libs            ( fieldFunctionObjects );
+        writePrecision  10;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        writeFields     yes;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+    zeroGradient1
+    {
+        type            zeroGradient;
+        libs            ( fieldFunctionObjects );
+        fields          ( U "(epsilon|omega)" p );
+        result          @@zeroGrad;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    timeStep;
+        writeInterval   25;
+    }
+    zeroGradient2
+    {
+        type            zeroGradient;
+        libs            ( fieldFunctionObjects );
+        fields          ( U "(epsilon|omega)" p );
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0.25;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 5;
+        writeControl    timeStep;
+        writeInterval   25;
+    }
+    norm_U_L1
+    {
+        type            norm;
+        libs            ( fieldFunctionObjects );
+        field           U;
+        norm            L1;
+        result          norm_U_L1;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  writeTime;
+        writeControl    writeTime;
+    }
+    norm_U_L2
+    {
+        type            norm;
+        libs            ( fieldFunctionObjects );
+        field           U;
+        norm            L2;
+        result          norm_U_L2;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  writeTime;
+        writeControl    writeTime;
+    }
+    norm_U_Lp
+    {
+        type            norm;
+        libs            ( fieldFunctionObjects );
+        field           U;
+        norm            Lp;
+        result          norm_U_Lp;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  writeTime;
+        writeControl    writeTime;
+        p               3;
+    }
+    norm_U_max
+    {
+        type            norm;
+        libs            ( fieldFunctionObjects );
+        field           U;
+        norm            max;
+        result          norm_U_max;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  writeTime;
+        writeControl    writeTime;
+    }
+    norm_U_composite
+    {
+        type            norm;
+        libs            ( fieldFunctionObjects );
+        field           U;
+        norm            composite;
+        result          norm_U_composite;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  writeTime;
+        writeControl    writeTime;
+        divisor         constant 2;
+    }
+    norm_k_field
+    {
+        type            norm;
+        libs            ( fieldFunctionObjects );
+        field           k;
+        norm            divisorField;
+        result          norm_k_field;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  writeTime;
+        writeControl    writeTime;
+        divisorField    p;
+    }
+    solverInfo1
+    {
+        type            solverInfo;
+        libs            ( utilityFunctionObjects );
+        fields          ( k epsilon p U );
+        writeResidualFields true;
+        writePrecision  16;
+        writeToFile     true;
+        useUserTime     true;
+        region          region0;
+        enabled         true;
+        log             true;
+        timeStart       0;
+        timeEnd         1000;
+        executeControl  timeStep;
+        executeInterval 1;
+        writeControl    writeTime;
+        writeInterval   -1;
+    }
+}
+
+
+// ************************************************************************* //

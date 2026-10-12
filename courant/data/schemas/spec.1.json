@@ -1,0 +1,258 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:courant:spec:1",
+  "title": "courant.spec/1",
+  "description": "A task specification: the values a task asked for and where each lives in an OpenFOAM case (TRD SPEC-1, SPEC-10, SPEC-12). Every value-bearing field carries its unit in x-unit, or the word dimensionless. Item names are unique within a specification, which JSON Schema cannot state; the reader (courant.spec.load_spec) checks it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "items"
+  ],
+  "properties": {
+    "schema": {
+      "const": "courant.spec/1"
+    },
+    "task": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "What the task asks for, in words."
+    },
+    "rel_tol": {
+      "type": "number",
+      "minimum": 0,
+      "default": 0.01,
+      "x-unit": "dimensionless",
+      "description": "Relative tolerance for every numeric item that gives none."
+    },
+    "angle_tol_deg": {
+      "type": "number",
+      "minimum": 0,
+      "default": 1.0,
+      "x-unit": "degree",
+      "description": "Angular tolerance for every vector item that gives none."
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/item"
+      }
+    },
+    "provenance": {
+      "$ref": "#/$defs/provenance"
+    }
+  },
+  "$defs": {
+    "number_list": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    },
+    "provenance": {
+      "description": "SPEC-7: where the specification came from, inside the hashed content. extracted_by without confirmed_by is never binding: a mismatch can only lower a verdict to insufficient (VER-5.12).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "extracted_by": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "confirmed_by": {
+          "type": "string"
+        },
+        "confirmed_date": {
+          "type": "string"
+        }
+      }
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "file"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!/)(?!(.*/)?\\.\\.(/|$)).+$",
+          "description": "Relative to the case, and inside it."
+        },
+        "patch": {
+          "type": "string",
+          "description": "Locator: a boundary value under boundaryField/<patch>; key defaults to value."
+        },
+        "key": {
+          "type": "string",
+          "description": "Locator (without patch): an entry inside the blocks named by path. With patch: the boundary condition's entry."
+        },
+        "path": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "blocks": {
+          "enum": [
+            "cells"
+          ],
+          "description": "Locator: the cell counts of every hex block of a blockMeshDict."
+        },
+        "sha256": {
+          "type": "string",
+          "description": "Locator: the whole file's SHA-256."
+        },
+        "value": {
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/number_list"
+            }
+          ],
+          "x-unit": "units",
+          "description": "The value asked for, in the item's units (SI, as the case writes it, when units is absent); cell counts are dimensionless."
+        },
+        "units": {
+          "type": "string",
+          "description": "The unit of value, min, max and abs_tol."
+        },
+        "dimensions": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 5,
+          "maxItems": 7,
+          "x-unit": "dimensionless",
+          "description": "OpenFOAM's dimension set: exponents of mass, length, time, temperature, moles, current, luminosity."
+        },
+        "rel_tol": {
+          "type": "number",
+          "minimum": 0,
+          "x-unit": "dimensionless"
+        },
+        "abs_tol": {
+          "type": "number",
+          "minimum": 0,
+          "x-unit": "units"
+        },
+        "angle_tol_deg": {
+          "type": "number",
+          "minimum": 0,
+          "x-unit": "degree"
+        },
+        "min": {
+          "type": "number",
+          "x-unit": "units",
+          "description": "SPEC-12: a lower bound instead of a value (for blocks: cells, on the total cell count, dimensionless)."
+        },
+        "max": {
+          "type": "number",
+          "x-unit": "units",
+          "description": "SPEC-12: an upper bound instead of a value. min above max is an impossible specification (SPEC-9), not a schema error."
+        },
+        "modelling_choice": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "patch"
+              ]
+            },
+            {
+              "required": [
+                "key"
+              ],
+              "not": {
+                "required": [
+                  "patch"
+                ]
+              }
+            },
+            {
+              "required": [
+                "blocks"
+              ]
+            },
+            {
+              "required": [
+                "sha256"
+              ]
+            }
+          ]
+        },
+        {
+          "oneOf": [
+            {
+              "required": [
+                "value"
+              ]
+            },
+            {
+              "required": [
+                "sha256"
+              ]
+            },
+            {
+              "anyOf": [
+                {
+                  "required": [
+                    "min"
+                  ]
+                },
+                {
+                  "required": [
+                    "max"
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "if": {
+            "required": [
+              "patch"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "path"
+              ],
+              "properties": {
+                "path": {
+                  "minItems": 1
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

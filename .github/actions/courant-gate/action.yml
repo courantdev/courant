@@ -1,0 +1,137 @@
+name: courant-gate
+description: >-
+  Verify the simulation runs a repository names with Courant: an independent, deterministic
+  accept, reject or insufficient for each, a per-run job summary, and an evidence pack per run
+  as a workflow artefact. Installs the published binary; the check itself uses no network.
+
+# TRD GATE-7, GATE-8. This file has no logic of its own: each input becomes an environment
+# variable of `courant gate`, which decides everything and is tested without GitHub
+# (tests/unit/test_action.py). Its public home is github.com/courantdev/courant (H-DISTRIBUTION):
+#     uses: courantdev/courant/.github/actions/courant-gate@v<version>
+
+inputs:
+  paths:
+    description: >-
+      Case globs, one per line or comma-separated, relative to the repository root. Each match
+      is a case directory or a solver log (.log, .log.gz). Optional when courant.toml names them.
+    required: false
+    default: ""
+  outputs:
+    description: >-
+      Where each run's log and results are: a directory holding one entry per run name (a
+      directory with a log, NAME.log or NAME.log.gz). Repositories rarely commit solver output;
+      this is the path of an artefact of an earlier job, an LFS path or a mounted volume. A run
+      with no output there fails the check.
+    required: false
+    default: ""
+  spec:
+    description: The task specification (courant.spec/1) the runs were asked to meet.
+    required: false
+    default: ""
+  spec-sha256:
+    description: The hash the specification was locked at before the run. Required with `spec`.
+    required: false
+    default: ""
+  fail-on:
+    description: >-
+      not-accept (the default) fails on anything but accept. reject lets an insufficient run
+      pass, and the summary says so on every run. A void or invalid specification, a run with no
+      output and an unreadable input fail the check whatever this says.
+    required: false
+    default: ""
+  pack-store:
+    description: >-
+      A path in the repository where each run's evidence pack is also kept. Without it the packs
+      exist only as workflow artefacts, which expire, and the summary warns.
+    required: false
+    default: ""
+  courant-version:
+    description: The Courant version to install and to require ('latest' installs the newest).
+    required: false
+    default: "latest"
+  config:
+    description: The settings file, courant.toml (GATE-8), when it is not at the repository root.
+    required: false
+    default: ""
+  working-directory:
+    description: The repository root the globs are relative to.
+    required: false
+    default: "."
+  install:
+    description: >-
+      'true' installs the published binary. 'false' uses the `courant` already on PATH (this
+      repository's own CI installs the checkout).
+    required: false
+    default: "true"
+
+outputs:
+  exit-code:
+    description: "0 the check passes; 1 a run fails it; 4 something could not be judged."
+    value: ${{ steps.gate.outputs.exit-code }}
+  packs:
+    description: The directory the evidence packs were written to.
+    value: ${{ steps.gate.outputs.packs }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Courant
+      if: inputs.install == 'true'
+      shell: bash
+      env:
+        COURANT_VERSION: ${{ inputs.courant-version }}
+      # The one step that uses the network for Courant: the installer from this action's own
+      # repository and ref (packaging/install.sh) downloads the binary from the releases of
+      # github.com/courantdev/courant and checks it against the release's SHA256SUMS, and that
+      # file's Ed25519 signature (python3 with cryptography, or OpenSSL 3; GitHub's Linux
+      # runners have OpenSSL 3), before making it executable.
+      run: |
+        sh "$GITHUB_ACTION_PATH/../../../packaging/install.sh"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+    - name: Verify
+      id: gate
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        COURANT_GATE_PATHS: ${{ inputs.paths }}
+        COURANT_GATE_OUTPUTS: ${{ inputs.outputs }}
+        COURANT_GATE_SPEC: ${{ inputs.spec }}
+        COURANT_GATE_SPEC_SHA256: ${{ inputs.spec-sha256 }}
+        COURANT_GATE_FAIL_ON: ${{ inputs.fail-on }}
+        COURANT_GATE_PACK_STORE: ${{ inputs.pack-store }}
+        COURANT_GATE_COURANT_VERSION: ${{ inputs.courant-version }}
+        COURANT_GATE_CONFIG: ${{ inputs.config }}
+        COURANT_GATE_PACKS_DIR: ${{ runner.temp }}/courant-packs
+      # A `courant` that cannot start (a missing dependency) exits 1 from Python, which would
+      # read as "a run fails the check"; it is 4, nothing was judged.
+      run: |
+        set +e
+        export COURANT_GATE_SUMMARY="$GITHUB_STEP_SUMMARY"
+        if courant version >/dev/null; then
+          courant gate
+          code=$?
+        else
+          echo "::error::courant could not start (the error is above); nothing was judged"
+          code=4
+        fi
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        echo "packs=$COURANT_GATE_PACKS_DIR" >> "$GITHUB_OUTPUT"
+        exit 0
+
+    - name: Keep the evidence packs
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: courant-evidence-packs
+        path: ${{ runner.temp }}/courant-packs
+        if-no-files-found: ignore
+
+    - name: Fail the check
+      if: steps.gate.outputs.exit-code != '0'
+      shell: bash
+      env:
+        CODE: ${{ steps.gate.outputs.exit-code }}
+      run: |
+        echo "courant gate exited $CODE (1: a run fails the check; 4: something could not be judged). See the job summary."
+        exit "${CODE:-4}"

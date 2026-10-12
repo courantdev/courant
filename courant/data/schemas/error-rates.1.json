@@ -1,0 +1,53 @@
+{
+ "$id": "urn:courant:error-rates:1",
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "additionalProperties": false,
+ "description": "TRD GATE-12. The error rates published for this build, read from the packaged results.",
+ "properties": {
+  "abstentions": {
+   "type": [
+    "object",
+    "null"
+   ]
+  },
+  "courant_version": {
+   "type": "string"
+  },
+  "false_accepts": {
+   "type": "object"
+  },
+  "false_alarms": {
+   "type": "object"
+  },
+  "measured": {
+   "type": "boolean"
+  },
+  "measured_on": {
+   "type": "object"
+  },
+  "non_accept_rate_healthy": {
+   "type": [
+    "number",
+    "null"
+   ]
+  },
+  "non_accept_rate_note": {
+   "type": "string"
+  },
+  "note": {
+   "type": "string"
+  },
+  "schema": {
+   "const": "courant.error-rates/1"
+  }
+ },
+ "required": [
+  "courant_version",
+  "measured",
+  "non_accept_rate_healthy",
+  "non_accept_rate_note",
+  "schema"
+ ],
+ "title": "courant.error-rates/1",
+ "type": "object"
+}

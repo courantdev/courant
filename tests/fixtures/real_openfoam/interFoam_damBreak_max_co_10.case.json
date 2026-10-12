@@ -1,0 +1,93 @@
+{
+ "case_id": "interFoam_damBreak",
+ "config": {
+  "adjust_timestep": true,
+  "boundary": {
+   "atmosphere": {
+    "U": "pressureInletOutletVelocity",
+    "alpha.water": "inletOutlet",
+    "p_rgh": "totalPressure"
+   },
+   "defaultFaces": {
+    "U": "empty",
+    "alpha.water": "empty",
+    "p_rgh": "empty"
+   },
+   "leftWall": {
+    "U": "noSlip",
+    "alpha.water": "zeroGradient",
+    "p_rgh": "fixedFluxPressure"
+   },
+   "lowerWall": {
+    "U": "noSlip",
+    "alpha.water": "zeroGradient",
+    "p_rgh": "fixedFluxPressure"
+   },
+   "rightWall": {
+    "U": "noSlip",
+    "alpha.water": "zeroGradient",
+    "p_rgh": "fixedFluxPressure"
+   }
+  },
+  "ddt_scheme": "Euler",
+  "delta_t": 0.001,
+  "div_schemes": {
+   "div(((rho*nuEff)*dev2(T(grad(U)))))": "Gauss linear",
+   "div(phi,alpha)": "Gauss vanLeer",
+   "div(phirb,alpha)": "Gauss linear",
+   "div(rhoPhi,U)": "Gauss linearUpwind grad(U)"
+  },
+  "end_time": 0.3,
+  "linear_solvers": {
+   "\"alpha.water.*\"": {
+    "field": "\"alpha.water.*\"",
+    "rel_tol": 0.0,
+    "solver": "smoothSolver",
+    "tolerance": 1e-08
+   },
+   "\"pcorr.*\"": {
+    "field": "\"pcorr.*\"",
+    "rel_tol": 0.0,
+    "solver": "PCG",
+    "tolerance": 1e-05
+   },
+   "U": {
+    "field": "U",
+    "rel_tol": 0.0,
+    "solver": "smoothSolver",
+    "tolerance": 1e-06
+   },
+   "p_rgh": {
+    "field": "p_rgh",
+    "rel_tol": 0.05,
+    "solver": "PCG",
+    "tolerance": 1e-07
+   },
+   "p_rghFinal": {
+    "field": "p_rghFinal",
+    "rel_tol": 0.0
+   }
+  },
+  "max_co": 10.0,
+  "n_correctors": 3,
+  "n_non_orthogonal_correctors": 0,
+  "regions": [],
+  "relaxation_factors": {
+   "\".*\"": 1.0
+  },
+  "relaxation_scopes": {
+   "\".*\"": "equations"
+  },
+  "solver": "interFoam",
+  "transport": {},
+  "turbulence_type": "laminar",
+  "unreadable": {},
+  "write_control": "adjustable",
+  "write_interval": 0.05
+ },
+ "expects_code": "NUM.CFL_VIOLATION",
+ "fault_id": "max_co_too_high",
+ "label": "broken",
+ "scenario_id": "interFoam_damBreak::max_co_too_high",
+ "solver": "interFoam"
+}

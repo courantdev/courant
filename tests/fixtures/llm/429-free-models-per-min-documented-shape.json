@@ -1,0 +1,18 @@
+{
+ "source": "OpenRouter's documented 429 envelope, as above, for the per-minute platform limit (20 a minute on the free tier). Retry-After, when OpenRouter sends one, is added by the test that needs it.",
+ "status": 429,
+ "headers": {
+  "X-RateLimit-Limit": "20",
+  "X-RateLimit-Remaining": "0",
+  "X-RateLimit-Reset": "1791115260000"
+ },
+ "body": {
+  "error": {
+   "code": 429,
+   "message": "Rate limit exceeded: free-models-per-min. ",
+   "metadata": {
+    "error_type": "rate_limit_exceeded"
+   }
+  }
+ }
+}

@@ -1,0 +1,117 @@
+{
+ "case_id": "rhoPimpleFoam_RAS_cavity",
+ "config": {
+  "adjust_timestep": false,
+  "boundary": {
+   "fixedWalls": {
+    "T": "zeroGradient",
+    "U": "fixedValue",
+    "alphat": "compressible::alphatWallFunction",
+    "epsilon": "epsilonWallFunction",
+    "k": "kqRWallFunction",
+    "nut": "nutkWallFunction",
+    "omega": "omegaWallFunction",
+    "p": "zeroGradient"
+   },
+   "frontAndBack": {
+    "T": "empty",
+    "U": "empty",
+    "alphat": "empty",
+    "epsilon": "empty",
+    "k": "empty",
+    "nut": "empty",
+    "omega": "empty",
+    "p": "empty"
+   },
+   "movingWall": {
+    "T": "zeroGradient",
+    "U": "fixedValue",
+    "alphat": "compressible::alphatWallFunction",
+    "epsilon": "epsilonWallFunction",
+    "k": "kqRWallFunction",
+    "nut": "nutkWallFunction",
+    "omega": "omegaWallFunction",
+    "p": "zeroGradient"
+   }
+  },
+  "ddt_scheme": "Euler",
+  "delta_t": 0.1,
+  "div_schemes": {
+   "default": "none",
+   "div(((rho*nuEff)*dev2(T(grad(U)))))": "Gauss linear",
+   "div((rho*R))": "Gauss linear",
+   "div(R)": "Gauss linear",
+   "div(U)": "Gauss linear",
+   "div(phi,K)": "Gauss linear",
+   "div(phi,R)": "$turbulence",
+   "div(phi,U)": "Gauss limitedLinearV 1",
+   "div(phi,epsilon)": "$turbulence",
+   "div(phi,h)": "Gauss limitedLinear 1",
+   "div(phi,k)": "$turbulence",
+   "div(phi,omega)": "$turbulence",
+   "div(phid,p)": "Gauss limitedLinear 1",
+   "turbulence": "Gauss limitedLinear 1"
+  },
+  "end_time": 1.0,
+  "linear_solvers": {
+   "\"(U|h|R|k|epsilon|omega)\"": {
+    "field": "\"(U|h|R|k|epsilon|omega)\"",
+    "rel_tol": 0.1,
+    "solver": "smoothSolver",
+    "tolerance": 1e-05
+   },
+   "\"(U|h|R|k|epsilon|omega)Final\"": {
+    "field": "\"(U|h|R|k|epsilon|omega)Final\"",
+    "rel_tol": 0.0
+   },
+   "\"rho.*\"": {
+    "field": "\"rho.*\"",
+    "rel_tol": 0.0,
+    "tolerance": 1e-05
+   },
+   "p": {
+    "field": "p",
+    "rel_tol": 0.01,
+    "solver": "PCG",
+    "tolerance": 1e-06
+   },
+   "pFinal": {
+    "field": "pFinal",
+    "rel_tol": 0.0
+   }
+  },
+  "max_co": 0.3,
+  "n_correctors": 2,
+  "n_non_orthogonal_correctors": 0,
+  "regions": [],
+  "relaxation_factors": {},
+  "relaxation_scopes": {},
+  "solver": "rhoPimpleFoam",
+  "transport": {
+   "Cp": 1007.0,
+   "Hf": 0.0,
+   "Pr": 0.7,
+   "molWeight": 28.9,
+   "mu": 1.84e-05
+  },
+  "turbulence_model": "kOmegaSST",
+  "turbulence_type": "RAS",
+  "unreadable": {},
+  "write_control": "runTime",
+  "write_interval": 100.0
+ },
+ "expects_code": "NUM.CFL_VIOLATION",
+ "fault_id": "cfl_blowup",
+ "label": "broken",
+ "mesh": {
+  "average_non_orthogonality": 0.0,
+  "max_aspect_ratio": 1.0,
+  "max_non_orthogonality": 0.0,
+  "max_skewness": 1.876737271e-14,
+  "mesh_ok": true,
+  "n_cells": 400,
+  "n_negative_volume_cells": 0
+ },
+ "scenario_id": "rhoPimpleFoam_RAS_cavity::cfl_blowup",
+ "solver": "rhoPimpleFoam"
+}

@@ -1,0 +1,80 @@
+{
+ "$id": "urn:courant:support:1",
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "additionalProperties": false,
+ "description": "TRD OPS-6. What to send when something is wrong: versions, platform, the command, the verdict.",
+ "properties": {
+  "command_line": {
+   "items": {
+    "type": "string"
+   },
+   "type": "array"
+  },
+  "courant": {
+   "additionalProperties": false,
+   "properties": {
+    "packaged": {
+     "type": "boolean"
+    },
+    "version": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "packaged",
+    "version"
+   ],
+   "type": "object"
+  },
+  "platform": {
+   "additionalProperties": false,
+   "properties": {
+    "machine": {
+     "type": "string"
+    },
+    "python": {
+     "type": "string"
+    },
+    "release": {
+     "type": "string"
+    },
+    "system": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "machine",
+    "python",
+    "release",
+    "system"
+   ],
+   "type": "object"
+  },
+  "pseudonymised": {
+   "type": "boolean"
+  },
+  "schema": {
+   "const": "courant.support/1"
+  },
+  "verdict": {
+   "oneOf": [
+    {
+     "type": "null"
+    },
+    {
+     "$ref": "urn:courant:verdict:2"
+    }
+   ]
+  }
+ },
+ "required": [
+  "command_line",
+  "courant",
+  "platform",
+  "pseudonymised",
+  "schema",
+  "verdict"
+ ],
+ "title": "courant.support/1",
+ "type": "object"
+}

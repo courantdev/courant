@@ -1,0 +1,155 @@
+{
+ "$id": "urn:courant:record:1",
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "additionalProperties": false,
+ "description": "TRD REC-1. One verified run: the specification, the verdict, provenance and the VER-14 manifest. Re-derives byte for byte.",
+ "properties": {
+  "manifest": {
+   "items": {
+    "additionalProperties": false,
+    "properties": {
+     "bytes": {
+      "minimum": 0,
+      "type": "integer"
+     },
+     "path": {
+      "type": "string"
+     },
+     "sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+     }
+    },
+    "required": [
+     "path",
+     "bytes",
+     "sha256"
+    ],
+    "type": "object"
+   },
+   "type": "array"
+  },
+  "provenance": {
+   "additionalProperties": false,
+   "properties": {
+    "courant_version": {
+     "type": "string"
+    },
+    "producer": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "requester": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "required": [
+    "courant_version",
+    "producer",
+    "requester"
+   ],
+   "type": "object"
+  },
+  "schema": {
+   "const": "courant.record/1"
+  },
+  "spec": {
+   "oneOf": [
+    {
+     "type": "null"
+    },
+    {
+     "additionalProperties": false,
+     "properties": {
+      "locked_sha256": {
+       "oneOf": [
+        {
+         "pattern": "^[0-9a-f]{64}$",
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ]
+      },
+      "sha256": {
+       "pattern": "^[0-9a-f]{64}$",
+       "type": "string"
+      },
+      "text": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "locked_sha256",
+      "sha256",
+      "text"
+     ],
+     "type": "object"
+    }
+   ]
+  },
+  "target": {
+   "additionalProperties": false,
+   "properties": {
+    "case_json": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "name": {
+     "type": "string"
+    },
+    "source": {
+     "enum": [
+      "case_dir",
+      "log",
+      "corpus"
+     ]
+    }
+   },
+   "required": [
+    "case_json",
+    "name",
+    "source"
+   ],
+   "type": "object"
+  },
+  "tool": {
+   "additionalProperties": false,
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "version": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "name",
+    "version"
+   ],
+   "type": "object"
+  },
+  "verdict": {
+   "$ref": "urn:courant:verdict:2"
+  }
+ },
+ "required": [
+  "manifest",
+  "provenance",
+  "schema",
+  "spec",
+  "target",
+  "tool",
+  "verdict"
+ ],
+ "title": "courant.record/1",
+ "type": "object"
+}

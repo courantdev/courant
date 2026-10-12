@@ -1,0 +1,96 @@
+{
+ "case_id": "rhoPimpleFoam_RAS_cavity",
+ "config": {
+  "adjust_timestep": false,
+  "boundary": {
+   "fixedWalls": {
+    "T": "zeroGradient",
+    "U": "fixedValue",
+    "alphat": "compressible::alphatWallFunction",
+    "epsilon": "epsilonWallFunction",
+    "k": "kqRWallFunction",
+    "nut": "nutkWallFunction",
+    "omega": "omegaWallFunction",
+    "p": "zeroGradient"
+   },
+   "frontAndBack": {
+    "T": "empty",
+    "U": "empty",
+    "alphat": "empty",
+    "epsilon": "empty",
+    "k": "empty",
+    "nut": "empty",
+    "omega": "empty",
+    "p": "empty"
+   },
+   "movingWall": {
+    "T": "zeroGradient",
+    "U": "fixedValue",
+    "alphat": "compressible::alphatWallFunction",
+    "epsilon": "epsilonWallFunction",
+    "k": "kqRWallFunction",
+    "nut": "nutkWallFunction",
+    "omega": "omegaWallFunction",
+    "p": "zeroGradient"
+   }
+  },
+  "delta_t": 0.01,
+  "div_schemes": {},
+  "end_time": 1.0,
+  "linear_solvers": {
+   "\"(U|h|R|k|epsilon|omega)\"": {
+    "field": "\"(U|h|R|k|epsilon|omega)\"",
+    "rel_tol": 0.1,
+    "solver": "smoothSolver",
+    "tolerance": 1e-05
+   },
+   "\"(U|h|R|k|epsilon|omega)Final\"": {
+    "field": "\"(U|h|R|k|epsilon|omega)Final\"",
+    "rel_tol": 0.0
+   },
+   "\"rho.*\"": {
+    "field": "\"rho.*\"",
+    "rel_tol": 0.0,
+    "tolerance": 1e-05
+   },
+   "p": {
+    "field": "p",
+    "rel_tol": 0.01,
+    "solver": "PCG",
+    "tolerance": 1e-06
+   },
+   "pFinal": {
+    "field": "pFinal",
+    "rel_tol": 0.0
+   }
+  },
+  "max_co": 0.3,
+  "n_correctors": 2,
+  "n_non_orthogonal_correctors": 0,
+  "regions": [],
+  "relaxation_factors": {},
+  "relaxation_scopes": {},
+  "solver": "rhoPimpleFoam",
+  "transport": {
+   "Cp": 1007.0,
+   "Hf": 0.0,
+   "Pr": 0.7,
+   "molWeight": 28.9,
+   "mu": 1.84e-05
+  },
+  "turbulence_model": "kOmegaSST",
+  "turbulence_type": "RAS",
+  "unreadable": {},
+  "write_control": "runTime",
+  "write_interval": 100.0
+ },
+ "expects_code": "ENV.MISSING_DICT",
+ "fault_id": "missing_dict",
+ "label": "broken",
+ "mesh": {
+  "mesh_ok": false,
+  "n_negative_volume_cells": 0
+ },
+ "scenario_id": "rhoPimpleFoam_RAS_cavity::missing_dict",
+ "solver": "rhoPimpleFoam"
+}

@@ -1,0 +1,77 @@
+{
+ "$id": "urn:courant:cache:1",
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "additionalProperties": false,
+ "description": "TRD GATE-11. One entry of the batch verdict cache; sha256 covers every other field but the hmac, and the hmac (a per-user secret kept outside the cache) covers all of them. listing is the run's tree snapshot (directories, files with size and mode, links).",
+ "properties": {
+  "fingerprint": {
+   "additionalProperties": false,
+   "properties": {
+    "inputs": {
+     "items": {
+      "additionalProperties": false,
+      "properties": {
+       "bytes": {
+        "minimum": 0,
+        "type": "integer"
+       },
+       "path": {
+        "type": "string"
+       },
+       "sha256": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+       }
+      },
+      "required": [
+       "path",
+       "bytes",
+       "sha256"
+      ],
+      "type": "object"
+     },
+     "type": "array"
+    },
+    "listing": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    }
+   },
+   "required": [
+    "inputs",
+    "listing"
+   ],
+   "type": "object"
+  },
+  "hmac": {
+   "pattern": "^[0-9a-f]{64}$",
+   "type": "string"
+  },
+  "key": {
+   "pattern": "^[0-9a-f]{64}$",
+   "type": "string"
+  },
+  "schema": {
+   "const": "courant.cache/1"
+  },
+  "sha256": {
+   "pattern": "^[0-9a-f]{64}$",
+   "type": "string"
+  },
+  "verdict": {
+   "$ref": "urn:courant:verdict:2"
+  }
+ },
+ "required": [
+  "fingerprint",
+  "hmac",
+  "key",
+  "schema",
+  "sha256",
+  "verdict"
+ ],
+ "title": "courant.cache/1",
+ "type": "object"
+}

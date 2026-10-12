@@ -1,0 +1,250 @@
+{
+ "$defs": {
+  "InputFile": {
+   "additionalProperties": false,
+   "properties": {
+    "bytes": {
+     "title": "Bytes",
+     "type": "integer"
+    },
+    "path": {
+     "title": "Path",
+     "type": "string"
+    },
+    "sha256": {
+     "title": "Sha256",
+     "type": "string"
+    }
+   },
+   "required": [
+    "path",
+    "bytes",
+    "sha256"
+   ],
+   "title": "InputFile",
+   "type": "object"
+  },
+  "PreflightRun": {
+   "additionalProperties": false,
+   "properties": {
+    "id": {
+     "title": "Id",
+     "type": "string"
+    },
+    "inputs": {
+     "items": {
+      "$ref": "#/$defs/InputFile"
+     },
+     "title": "Inputs",
+     "type": "array"
+    },
+    "solver": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Solver"
+    }
+   },
+   "required": [
+    "id",
+    "solver",
+    "inputs"
+   ],
+   "title": "PreflightRun",
+   "type": "object"
+  },
+  "Reason": {
+   "additionalProperties": false,
+   "description": "One cited observation behind a verdict (INV-2).",
+   "properties": {
+    "code": {
+     "title": "Code",
+     "type": "string"
+    },
+    "input": {
+     "title": "Input",
+     "type": "string"
+    },
+    "kind": {
+     "enum": [
+      "event",
+      "finding",
+      "check",
+      "conformance"
+     ],
+     "title": "Kind",
+     "type": "string"
+    },
+    "log_offset": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Log Offset"
+    },
+    "method": {
+     "title": "Method",
+     "type": "string"
+    },
+    "severity": {
+     "enum": [
+      "critical",
+      "major",
+      "warn",
+      "minor"
+     ],
+     "title": "Severity",
+     "type": "string"
+    },
+    "summary": {
+     "title": "Summary",
+     "type": "string"
+    },
+    "threshold": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Threshold"
+    },
+    "value": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Value"
+    }
+   },
+   "required": [
+    "code",
+    "kind",
+    "severity",
+    "summary",
+    "input",
+    "method"
+   ],
+   "title": "Reason",
+   "type": "object"
+  },
+  "ToolInfo": {
+   "additionalProperties": false,
+   "properties": {
+    "checks": {
+     "anyOf": [
+      {
+       "const": "next",
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Checks"
+    },
+    "name": {
+     "default": "courant",
+     "title": "Name",
+     "type": "string"
+    },
+    "version": {
+     "title": "Version",
+     "type": "string"
+    }
+   },
+   "required": [
+    "version"
+   ],
+   "title": "ToolInfo",
+   "type": "object"
+  }
+ },
+ "$id": "urn:courant:preflight:1",
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "additionalProperties": false,
+ "description": "Derived from courant.verify.preflight:Preflight by scripts/schemas.py; do not edit.",
+ "properties": {
+  "next_action": {
+   "anyOf": [
+    {
+     "type": "string"
+    },
+    {
+     "type": "null"
+    }
+   ],
+   "title": "Next Action"
+  },
+  "not_checked": {
+   "items": {
+    "type": "string"
+   },
+   "title": "Not Checked",
+   "type": "array"
+  },
+  "probable_causes": {
+   "items": {
+    "type": "string"
+   },
+   "title": "Probable Causes",
+   "type": "array"
+  },
+  "reasons": {
+   "items": {
+    "$ref": "#/$defs/Reason"
+   },
+   "title": "Reasons",
+   "type": "array"
+  },
+  "run": {
+   "$ref": "#/$defs/PreflightRun"
+  },
+  "schema": {
+   "const": "courant.preflight/1"
+  },
+  "tool": {
+   "$ref": "#/$defs/ToolInfo"
+  },
+  "verdict": {
+   "enum": [
+    "SETUP_FAULT",
+    "NO_SETUP_FAULT_FOUND",
+    "NOT_ASSESSABLE"
+   ],
+   "title": "Verdict",
+   "type": "string"
+  }
+ },
+ "required": [
+  "next_action",
+  "not_checked",
+  "probable_causes",
+  "reasons",
+  "run",
+  "schema",
+  "tool",
+  "verdict"
+ ],
+ "title": "courant.preflight/1",
+ "type": "object"
+}

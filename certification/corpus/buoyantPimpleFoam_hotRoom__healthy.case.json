@@ -1,0 +1,117 @@
+{
+ "case_id": "buoyantPimpleFoam_hotRoom",
+ "config": {
+  "adjust_timestep": false,
+  "boundary": {
+   "ceiling": {
+    "T": "lumpedMassWallTemperature",
+    "U": "noSlip",
+    "alphat": "compressible::alphatWallFunction",
+    "epsilon": "epsilonWallFunction",
+    "k": "kqRWallFunction",
+    "nut": "nutkWallFunction",
+    "p": "calculated",
+    "p_rgh": "fixedFluxPressure"
+   },
+   "fixedWalls": {
+    "T": "zeroGradient",
+    "U": "noSlip",
+    "alphat": "compressible::alphatWallFunction",
+    "epsilon": "epsilonWallFunction",
+    "k": "kqRWallFunction",
+    "nut": "nutkWallFunction",
+    "p": "calculated",
+    "p_rgh": "fixedFluxPressure"
+   },
+   "floor": {
+    "T": "fixedValue",
+    "U": "noSlip",
+    "alphat": "compressible::alphatWallFunction",
+    "epsilon": "epsilonWallFunction",
+    "k": "kqRWallFunction",
+    "nut": "nutkWallFunction",
+    "p": "calculated",
+    "p_rgh": "fixedFluxPressure"
+   }
+  },
+  "ddt_scheme": "Euler",
+  "delta_t": 2.0,
+  "div_schemes": {
+   "default": "none",
+   "div(((rho*nuEff)*dev2(T(grad(U)))))": "Gauss linear",
+   "div(R)": "Gauss linear",
+   "div(phi,Ekp)": "Gauss linear",
+   "div(phi,K)": "Gauss linear",
+   "div(phi,R)": "$turbulence",
+   "div(phi,U)": "Gauss upwind",
+   "div(phi,e)": "$energy",
+   "div(phi,epsilon)": "$turbulence",
+   "div(phi,h)": "$energy",
+   "div(phi,k)": "$turbulence",
+   "energy": "Gauss upwind",
+   "turbulence": "Gauss upwind"
+  },
+  "end_time": 2000.0,
+  "linear_solvers": {
+   "\"(U|h|e|k|epsilon|R)\"": {
+    "field": "\"(U|h|e|k|epsilon|R)\"",
+    "rel_tol": 0.1,
+    "solver": "PBiCGStab",
+    "tolerance": 1e-06
+   },
+   "\"(U|h|e|k|epsilon|R)Final\"": {
+    "field": "\"(U|h|e|k|epsilon|R)Final\"",
+    "rel_tol": 0.0
+   },
+   "\"rho.*\"": {
+    "field": "\"rho.*\"",
+    "rel_tol": 0.0,
+    "solver": "PCG",
+    "tolerance": 0.0
+   },
+   "p_rgh": {
+    "field": "p_rgh",
+    "rel_tol": 0.01,
+    "solver": "PCG",
+    "tolerance": 1e-08
+   },
+   "p_rghFinal": {
+    "field": "p_rghFinal",
+    "rel_tol": 0.0
+   }
+  },
+  "max_co": 0.5,
+  "n_correctors": 2,
+  "n_non_orthogonal_correctors": 0,
+  "regions": [],
+  "relaxation_factors": {},
+  "relaxation_scopes": {},
+  "solver": "buoyantPimpleFoam",
+  "transport": {
+   "Cp": 1000.0,
+   "Hf": 0.0,
+   "Pr": 0.7,
+   "molWeight": 28.9,
+   "mu": 1.8e-05
+  },
+  "turbulence_model": "kEpsilon",
+  "turbulence_type": "RAS",
+  "unreadable": {},
+  "write_control": "timeStep",
+  "write_interval": 200.0
+ },
+ "expects_code": null,
+ "fault_id": null,
+ "label": "healthy",
+ "mesh": {
+  "average_non_orthogonality": 0.0,
+  "max_aspect_ratio": 1.0,
+  "max_non_orthogonality": 0.0,
+  "max_skewness": 0.0,
+  "mesh_ok": true,
+  "n_cells": 4000,
+  "n_negative_volume_cells": 0
+ },
+ "scenario_id": "buoyantPimpleFoam_hotRoom::healthy",
+ "solver": "buoyantPimpleFoam"
+}

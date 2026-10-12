@@ -1,0 +1,42 @@
+
+courantPressureInlet
+{
+    type            surfaceFieldValue;
+    libs            (fieldFunctionObjects);
+    writeControl    timeStep;
+    writeInterval   1;
+    log             false;
+    writeFields     false;
+    regionType      patch;
+    name            inlet;
+    operation       areaAverage;
+    fields          (p);
+}
+
+courantPressureOutlet
+{
+    type            surfaceFieldValue;
+    libs            (fieldFunctionObjects);
+    writeControl    timeStep;
+    writeInterval   1;
+    log             false;
+    writeFields     false;
+    regionType      patch;
+    name            outlet;
+    operation       areaAverage;
+    fields          (p);
+}
+
+courantWallForces
+{
+    type            forces;
+    libs            (forces);
+    writeControl    timeStep;
+    writeInterval   1;
+    log             false;
+    patches         (lowerWall upperWall);
+    rho             rhoInf;
+    rhoInf          1;
+    CofR            (0 0 0);
+}
+

@@ -1,0 +1,64 @@
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2406                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _be01ca78-20240625 OPENFOAM=2406 version=2406
+Arch   : "LSB;label=32;scalar=64"
+Exec   : blockMesh
+Date   : Aug 01 2026
+Time   : 00:07:00
+Host   : 7a050f55a4a0
+PID    : 482
+I/O    : uncollated
+Case   : /tmp/c
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Creating block mesh from "system/blockMeshDict"
+Creating block edges
+No non-planar block faces defined
+Creating topology blocks
+--> FOAM Warning : 
+    From Foam::vector Foam::cellModel::centre(const Foam::labelList&, const Foam::UList<Foam::Vector<double> >&) const
+    in file meshes/meshShapes/cellModel/cellModel.C at line 63
+    zero or negative pyramid volume: -0.0166667 for face 0
+--> FOAM Warning : 
+    From Foam::vector Foam::cellModel::centre(const Foam::labelList&, const Foam::UList<Foam::Vector<double> >&) const
+    in file meshes/meshShapes/cellModel/cellModel.C at line 63
+    zero or negative pyramid volume: -0.0166667 for face 1
+--> FOAM Warning : 
+    From Foam::vector Foam::cellModel::centre(const Foam::labelList&, const Foam::UList<Foam::Vector<double> >&) const
+    in file meshes/meshShapes/cellModel/cellModel.C at line 63
+    zero or negative pyramid volume: -0.0166667 for face 2
+--> FOAM Warning : 
+    From Foam::vector Foam::cellModel::centre(const Foam::labelList&, const Foam::UList<Foam::Vector<double> >&) const
+    in file meshes/meshShapes/cellModel/cellModel.C at line 63
+    zero or negative pyramid volume: -0.0166667 for face 3
+--> FOAM Warning : 
+    From Foam::vector Foam::cellModel::centre(const Foam::labelList&, const Foam::UList<Foam::Vector<double> >&) const
+    in file meshes/meshShapes/cellModel/cellModel.C at line 63
+    zero or negative pyramid volume: -0.0166667 for face 4
+--> FOAM Warning : 
+    From Foam::vector Foam::cellModel::centre(const Foam::labelList&, const Foam::UList<Foam::Vector<double> >&) const
+    in file meshes/meshShapes/cellModel/cellModel.C at line 63
+    zero or negative pyramid volume: -0.0166667 for face 5
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2406)
+Block hex (0 1 2 3 4 5 6 7) (20 20 1) grading (1(1) 1(1) 1(1)) is inside-out
+
+file: system/blockMeshDict/blocks at line 25.
+
+    From void Foam::blockDescriptor::check(const Foam::Istream&)
+    in file blockDescriptor/blockDescriptor.C at line 141.
+
+FOAM exiting
+

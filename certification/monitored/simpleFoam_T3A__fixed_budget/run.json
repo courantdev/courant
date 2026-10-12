@@ -1,0 +1,16 @@
+{
+  "container_wall_s": 43.7,
+  "cpus": 1,
+  "date": "2026-09-30",
+  "edits": [
+    "foamDictionary -entry SIMPLE/residualControl -remove system/fvSolution > /dev/null"
+  ],
+  "id": "simpleFoam_T3A__fixed_budget",
+  "image": "opencfd/openfoam-default:2406",
+  "pre": [
+    "blockMesh"
+  ],
+  "solver": "simpleFoam",
+  "solver_exit_code": 0,
+  "tutorial": "incompressible/simpleFoam/T3A"
+}

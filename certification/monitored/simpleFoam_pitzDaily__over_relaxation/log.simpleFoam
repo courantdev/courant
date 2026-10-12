@@ -1,0 +1,89 @@
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2406                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _be01ca78-20240625 OPENFOAM=2406 version=2406
+Arch   : "LSB;label=32;scalar=64"
+Exec   : simpleFoam
+Date   : Oct 01 2026
+Time   : 02:25:23
+Host   : a13e95d27397
+PID    : 489
+I/O    : uncollated
+Case   : /tmp/case
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+
+SIMPLE: no convergence criteria found. Calculations will run for 2000 steps.
+
+Reading field p
+
+Reading field U
+
+Reading/calculating face flux field phi
+
+Selecting incompressible transport model Newtonian
+Selecting turbulence model type RAS
+Selecting RAS turbulence model kEpsilon
+RAS
+{
+    RASModel        kEpsilon;
+    turbulence      on;
+    printCoeffs     on;
+    Cmu             0.09;
+    C1              1.44;
+    C2              1.92;
+    C3              0;
+    sigmak          1;
+    sigmaEps        1.3;
+}
+
+No MRF models present
+
+No finite volume options present
+
+Starting time loop
+
+surfaceFieldValue courantPressureInlet:
+    operation     = areaAverage
+
+
+surfaceFieldValue courantPressureOutlet:
+    operation     = areaAverage
+
+
+forces courantWallForces:
+    rho: rhoInf
+    Freestream density (rhoInf) set to 1
+    Not including porosity effects
+streamLine streamlines:
+    Employing velocity field U
+    automatic track length specified through number of sub cycles : 5
+
+Time = 1
+
+smoothSolver:  Solving for Ux, Initial residual = 1, Final residual = 0.0767884, No Iterations 1
+smoothSolver:  Solving for Uy, Initial residual = 1, Final residual = 0.0613675, No Iterations 2
+[stack trace]
+=============
+#1  Foam::sigFpe::sigHandler(int) in /usr/lib/openfoam/openfoam2406/platforms/linuxARM64GccDPInt32Opt/lib/libOpenFOAM.so
+#2  __kernel_rt_sigreturn
+#3  Foam::divide(Foam::Field<double>&, double const&, Foam::UList<double> const&) in /usr/lib/openfoam/openfoam2406/platforms/linuxARM64GccDPInt32Opt/lib/libOpenFOAM.so
+#4  ? in /usr/lib/openfoam/openfoam2406/platforms/linuxARM64GccDPInt32Opt/bin/simpleFoam
+#5  ? in /usr/lib/openfoam/openfoam2406/platforms/linuxARM64GccDPInt32Opt/bin/simpleFoam
+#6  ? in /usr/lib/openfoam/openfoam2406/platforms/linuxARM64GccDPInt32Opt/bin/simpleFoam
+#7  ? in /lib/aarch64-linux-gnu/libc.so.6
+#8  __libc_start_main in /lib/aarch64-linux-gnu/libc.so.6
+#9  ? in /usr/lib/openfoam/openfoam2406/platforms/linuxARM64GccDPInt32Opt/bin/simpleFoam
+=============

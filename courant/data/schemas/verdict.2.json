@@ -1,0 +1,752 @@
+{
+ "$defs": {
+  "ConformanceBlock": {
+   "additionalProperties": false,
+   "description": "Whether the case is the problem that was asked. Present only when a spec was given.",
+   "properties": {
+    "checked": {
+     "title": "Checked",
+     "type": "integer"
+    },
+    "invalid": {
+     "default": [],
+     "items": {
+      "type": "string"
+     },
+     "title": "Invalid",
+     "type": "array"
+    },
+    "items": {
+     "items": {
+      "$ref": "#/$defs/ConformanceItem"
+     },
+     "title": "Items",
+     "type": "array"
+    },
+    "locked_sha256": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Locked Sha256"
+    },
+    "nonconformant": {
+     "title": "Nonconformant",
+     "type": "integer"
+    },
+    "spec_schema": {
+     "title": "Spec Schema",
+     "type": "string"
+    },
+    "spec_sha256": {
+     "title": "Spec Sha256",
+     "type": "string"
+    },
+    "task": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Task"
+    },
+    "unreadable": {
+     "title": "Unreadable",
+     "type": "integer"
+    }
+   },
+   "required": [
+    "spec_schema",
+    "spec_sha256",
+    "items",
+    "checked",
+    "nonconformant",
+    "unreadable"
+   ],
+   "title": "ConformanceBlock",
+   "type": "object"
+  },
+  "ConformanceItem": {
+   "additionalProperties": false,
+   "description": "One value the task specification names, against the case (PRD 2.0 P2-SPEC-2).",
+   "properties": {
+    "basis": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Basis"
+    },
+    "conforms": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Conforms"
+    },
+    "file": {
+     "title": "File",
+     "type": "string"
+    },
+    "found": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Found"
+    },
+    "location": {
+     "title": "Location",
+     "type": "string"
+    },
+    "modelling_choice": {
+     "default": false,
+     "title": "Modelling Choice",
+     "type": "boolean"
+    },
+    "name": {
+     "title": "Name",
+     "type": "string"
+    },
+    "note": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Note"
+    },
+    "specified": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Specified"
+    },
+    "tolerance": {
+     "title": "Tolerance",
+     "type": "string"
+    }
+   },
+   "required": [
+    "name",
+    "file",
+    "location",
+    "specified",
+    "found",
+    "conforms",
+    "tolerance"
+   ],
+   "title": "ConformanceItem",
+   "type": "object"
+  },
+  "ConvergenceBlock": {
+   "additionalProperties": false,
+   "description": "Where the monitored answer stopped changing (TRD CONV-12). Beside the verdict, not in it:\nVER-5.4b is off until the founder decides (H-CONV-POLICY).",
+   "properties": {
+    "binding_monitor": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Binding Monitor"
+    },
+    "change_after_stop": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Change After Stop"
+    },
+    "change_counts": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Change Counts"
+    },
+    "change_fraction": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Change Fraction"
+    },
+    "converged_at_step": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Converged At Step"
+    },
+    "enters_verdict": {
+     "title": "Enters Verdict",
+     "type": "boolean"
+    },
+    "messages": {
+     "default": [],
+     "items": {
+      "type": "string"
+     },
+     "title": "Messages",
+     "type": "array"
+    },
+    "monitors_assessed": {
+     "title": "Monitors Assessed",
+     "type": "integer"
+    },
+    "monitors_found": {
+     "title": "Monitors Found",
+     "type": "integer"
+    },
+    "regime": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Regime"
+    },
+    "status": {
+     "enum": [
+      "PASS",
+      "WARN",
+      "FAIL",
+      "NOT_ASSESSABLE"
+     ],
+     "title": "Status",
+     "type": "string"
+    },
+    "steps_total": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Steps Total"
+    },
+    "wasted_core_hours": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Wasted Core Hours"
+    },
+    "wasted_fraction": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Wasted Fraction"
+    },
+    "wasted_steps": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Wasted Steps"
+    },
+    "wasted_wall_clock_s": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Wasted Wall Clock S"
+    }
+   },
+   "required": [
+    "status",
+    "regime",
+    "enters_verdict",
+    "converged_at_step",
+    "binding_monitor",
+    "change_after_stop",
+    "change_counts",
+    "change_fraction",
+    "wasted_steps",
+    "steps_total",
+    "wasted_fraction",
+    "wasted_wall_clock_s",
+    "wasted_core_hours",
+    "monitors_assessed",
+    "monitors_found"
+   ],
+   "title": "ConvergenceBlock",
+   "type": "object"
+  },
+  "InputFile": {
+   "additionalProperties": false,
+   "properties": {
+    "bytes": {
+     "title": "Bytes",
+     "type": "integer"
+    },
+    "path": {
+     "title": "Path",
+     "type": "string"
+    },
+    "sha256": {
+     "title": "Sha256",
+     "type": "string"
+    }
+   },
+   "required": [
+    "path",
+    "bytes",
+    "sha256"
+   ],
+   "title": "InputFile",
+   "type": "object"
+  },
+  "ProbableCause": {
+   "additionalProperties": false,
+   "properties": {
+    "code": {
+     "title": "Code",
+     "type": "string"
+    },
+    "name": {
+     "title": "Name",
+     "type": "string"
+    },
+    "rank": {
+     "title": "Rank",
+     "type": "integer"
+    }
+   },
+   "required": [
+    "rank",
+    "code",
+    "name"
+   ],
+   "title": "ProbableCause",
+   "type": "object"
+  },
+  "Reason": {
+   "additionalProperties": false,
+   "description": "One cited observation behind a verdict (INV-2).",
+   "properties": {
+    "code": {
+     "title": "Code",
+     "type": "string"
+    },
+    "input": {
+     "title": "Input",
+     "type": "string"
+    },
+    "kind": {
+     "enum": [
+      "event",
+      "finding",
+      "check",
+      "conformance",
+      "insufficient"
+     ],
+     "title": "Kind",
+     "type": "string"
+    },
+    "log_offset": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Log Offset"
+    },
+    "method": {
+     "title": "Method",
+     "type": "string"
+    },
+    "severity": {
+     "enum": [
+      "critical",
+      "major",
+      "warn",
+      "minor"
+     ],
+     "title": "Severity",
+     "type": "string"
+    },
+    "summary": {
+     "title": "Summary",
+     "type": "string"
+    },
+    "threshold": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Threshold"
+    },
+    "value": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Value"
+    }
+   },
+   "required": [
+    "code",
+    "kind",
+    "severity",
+    "summary",
+    "input",
+    "method"
+   ],
+   "title": "Reason",
+   "type": "object"
+  },
+  "RunInfoV2": {
+   "additionalProperties": false,
+   "properties": {
+    "fork": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Fork"
+    },
+    "id": {
+     "title": "Id",
+     "type": "string"
+    },
+    "inputs": {
+     "items": {
+      "$ref": "#/$defs/InputFile"
+     },
+     "title": "Inputs",
+     "type": "array"
+    },
+    "solver": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "title": "Solver"
+    },
+    "solver_version": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Solver Version"
+    },
+    "source": {
+     "enum": [
+      "case_dir",
+      "log",
+      "corpus"
+     ],
+     "title": "Source",
+     "type": "string"
+    }
+   },
+   "required": [
+    "id",
+    "source",
+    "solver",
+    "inputs"
+   ],
+   "title": "RunInfoV2",
+   "type": "object"
+  },
+  "Stats": {
+   "additionalProperties": false,
+   "properties": {
+    "crashes": {
+     "title": "Crashes",
+     "type": "integer"
+    },
+    "divergences": {
+     "title": "Divergences",
+     "type": "integer"
+    },
+    "events": {
+     "title": "Events",
+     "type": "integer"
+    },
+    "findings_by_severity": {
+     "additionalProperties": {
+      "type": "integer"
+     },
+     "title": "Findings By Severity",
+     "type": "object"
+    },
+    "residual_steps": {
+     "title": "Residual Steps",
+     "type": "integer"
+    }
+   },
+   "required": [
+    "events",
+    "residual_steps",
+    "crashes",
+    "divergences",
+    "findings_by_severity"
+   ],
+   "title": "Stats",
+   "type": "object"
+  },
+  "ToolInfo": {
+   "additionalProperties": false,
+   "properties": {
+    "checks": {
+     "anyOf": [
+      {
+       "const": "next",
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Checks"
+    },
+    "name": {
+     "default": "courant",
+     "title": "Name",
+     "type": "string"
+    },
+    "version": {
+     "title": "Version",
+     "type": "string"
+    }
+   },
+   "required": [
+    "version"
+   ],
+   "title": "ToolInfo",
+   "type": "object"
+  }
+ },
+ "$id": "urn:courant:verdict:2",
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "additionalProperties": false,
+ "description": "The verdict, version 2 (\u00a732). Field for field version 1, plus `basis`, `run.fork` and\n`run.solver_version`, with `verdict` in version 2's words.",
+ "properties": {
+  "basis": {
+   "enum": [
+    "validity",
+    "validity+conformance",
+    "validity+unlocked-spec",
+    "validity+extracted-spec"
+   ],
+   "title": "Basis",
+   "type": "string"
+  },
+  "conformance": {
+   "anyOf": [
+    {
+     "$ref": "#/$defs/ConformanceBlock"
+    },
+    {
+     "type": "null"
+    }
+   ],
+   "default": null
+  },
+  "convergence": {
+   "anyOf": [
+    {
+     "$ref": "#/$defs/ConvergenceBlock"
+    },
+    {
+     "type": "null"
+    }
+   ],
+   "default": null
+  },
+  "grade": {
+   "anyOf": [
+    {
+     "enum": [
+      "A",
+      "B",
+      "C",
+      "D"
+     ],
+     "type": "string"
+    },
+    {
+     "type": "null"
+    }
+   ],
+   "title": "Grade"
+  },
+  "next_action": {
+   "anyOf": [
+    {
+     "type": "string"
+    },
+    {
+     "type": "null"
+    }
+   ],
+   "title": "Next Action"
+  },
+  "not_assessed": {
+   "items": {
+    "type": "string"
+   },
+   "title": "Not Assessed",
+   "type": "array"
+  },
+  "probable_causes": {
+   "items": {
+    "$ref": "#/$defs/ProbableCause"
+   },
+   "title": "Probable Causes",
+   "type": "array"
+  },
+  "reasons": {
+   "items": {
+    "$ref": "#/$defs/Reason"
+   },
+   "title": "Reasons",
+   "type": "array"
+  },
+  "rule": {
+   "title": "Rule",
+   "type": "string"
+  },
+  "run": {
+   "$ref": "#/$defs/RunInfoV2"
+  },
+  "schema": {
+   "const": "courant.verdict/2"
+  },
+  "stats": {
+   "$ref": "#/$defs/Stats"
+  },
+  "tool": {
+   "$ref": "#/$defs/ToolInfo"
+  },
+  "verdict": {
+   "enum": [
+    "accept",
+    "reject",
+    "insufficient"
+   ],
+   "title": "Verdict",
+   "type": "string"
+  }
+ },
+ "required": [
+  "basis",
+  "grade",
+  "next_action",
+  "not_assessed",
+  "probable_causes",
+  "reasons",
+  "rule",
+  "run",
+  "schema",
+  "stats",
+  "tool",
+  "verdict"
+ ],
+ "title": "courant.verdict/2",
+ "type": "object"
+}

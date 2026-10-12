@@ -1,0 +1,269 @@
+name: release
+
+# A release of the open-source gate: the gate (lint, tests, the tag names this version), then the
+# wheel and sdist of `courant-dev` and a single-file binary per platform, each binary run through
+# packaging/test_binary.sh; then SHA256SUMS over every artefact (and the installer), signed with
+# the release key in the environment `release`; then the GitHub release; then PyPI by trusted
+# publishing in the environment `pypi`.
+#
+#     git tag v0.4.0 && git push origin v0.4.0
+#
+# Both environments name their required reviewers and allow only `v*` tags (Settings >
+# Environments), so no branch's code sees the key and nothing publishes without a reviewer.
+# The release key's private half is the environment secret COURANT_RELEASE_SIGNING_KEY_PEM,
+# written outside the workspace and never printed; `courant update` installs nothing unless the
+# signature verifies against the public key pinned in courant/release.py. PyPI needs no token:
+# the `pypi` job's OIDC identity (id-token: write) is what PyPI trusts for `courant-dev`.
+#
+# A manual dispatch is a dry run: it builds, tests and signs with a throwaway key, and publishes
+# nothing.
+#
+# Supply chain: every action is pinned to a commit (its tag in a comment), and every job that
+# installs anything installs from packaging/requirements-release.lock (and, for the gate's test
+# tools, packaging/requirements-dev.lock) with --require-hashes, and builds without isolation,
+# so nothing unhashed is fetched: not pip, not setuptools, not the signing job's cryptography.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: release gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: Install (every file checked by hash)
+        run: |
+          pip install --require-hashes -r packaging/requirements-release.lock -r packaging/requirements-dev.lock
+          pip install --no-deps --no-build-isolation -e .
+      - name: ruff
+        run: python -m ruff check --select F,E9 courant tests scripts
+      - name: Tests
+        run: python -m pytest -q -m "not slow"
+      - name: The tag names this version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          CODE="$(python -c 'import courant; print(courant.__version__)')"
+          if [ "$TAG" != "$CODE" ]; then
+            echo "::error::tag v$TAG does not match courant/__init__.py ($CODE)"
+            exit 1
+          fi
+
+  dist:
+    name: wheel and sdist (courant-dev)
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: Install the build backend (every file checked by hash)
+        run: pip install --require-hashes -r packaging/requirements-release.lock
+      # No build isolation: setuptools comes from the lock, not from an unhashed download. The
+      # PyPI job's action checks the metadata (twine check) before it uploads.
+      - name: Build
+        run: |
+          python -m pip wheel --no-deps --no-build-isolation -w artifacts .
+          python -c "from setuptools import build_meta as b; print(b.build_sdist('artifacts'))"
+          python -m zipfile -l artifacts/*.whl
+          ls -l artifacts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: courant-dev-dist
+          path: artifacts/*
+          if-no-files-found: error
+
+  binary:
+    name: ${{ matrix.target }}
+    needs: gate
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            runner: macos-14
+          - target: darwin-x86_64
+            runner: macos-13
+          # Built inside a RHEL 8 container (glibc 2.28): a PyInstaller binary links the glibc of
+          # the machine that built it and will not run on anything older.
+          - target: linux-x86_64
+            runner: ubuntu-latest
+            container: rockylinux/rockylinux:8
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+            container: rockylinux/rockylinux:8
+    container: ${{ matrix.container || '' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        if: ${{ !matrix.container }}
+        with:
+          python-version: "3.11"
+      - name: Install a shared Python (RHEL 8 container)
+        if: ${{ matrix.container }}
+        run: |
+          dnf install -y -q python3.11 python3.11-devel binutils
+          python3.11 -m venv /opt/build-venv
+          echo "/opt/build-venv/bin" >> "$GITHUB_PATH"
+      - name: Install (every file checked by hash)
+        run: |
+          # the binary is built from the locked closure, every file checked by hash
+          pip install --require-hashes -r packaging/requirements-release.lock
+          pip install --no-deps --no-build-isolation -e .
+      - name: Build
+        run: pyinstaller packaging/courant.spec --clean --noconfirm --distpath dist/agent
+      - name: Confirm the glibc floor
+        if: ${{ matrix.container }}
+        run: |
+          floor=$(objdump -T dist/agent/courant 2>/dev/null \
+            | grep -oE 'GLIBC_2\.[0-9]+' | sort -uV | tail -1)
+          echo "highest glibc symbol required: ${floor:-none}"
+          case "${floor:-GLIBC_2.28}" in
+            GLIBC_2.1?|GLIBC_2.2[0-8]) ;;
+            *) echo "::error::binary requires $floor; RHEL 8 has 2.28"; exit 1 ;;
+          esac
+      - name: Test the binary
+        run: ./packaging/test_binary.sh dist/agent/courant
+      - name: Name and checksum
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          cp dist/agent/courant "artifacts/courant-${{ matrix.target }}"
+          cd artifacts
+          if command -v sha256sum >/dev/null; then
+            sha256sum "courant-${{ matrix.target }}" > "courant-${{ matrix.target }}.sha256"
+          else
+            shasum -a 256 "courant-${{ matrix.target }}" > "courant-${{ matrix.target }}.sha256"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: courant-${{ matrix.target }}
+          path: artifacts/*
+          if-no-files-found: error
+
+  sign:
+    name: checksums and signature
+    needs: [dist, binary]
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      # The job that holds the key installs nothing unhashed: cryptography and its closure come
+      # from the release lock, every file checked.
+      - name: Install (every file checked by hash)
+        run: pip install --require-hashes -r packaging/requirements-release.lock
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Add the installer
+        run: cp packaging/install.sh artifacts/install.sh
+      # Without the key the release is refused: an unsigned release is not published.
+      - name: Sign SHA256SUMS
+        env:
+          KEY_PEM: ${{ secrets.COURANT_RELEASE_SIGNING_KEY_PEM }}
+        run: |
+          if [ -z "$KEY_PEM" ]; then
+            echo "::error::no signing key: set the secret COURANT_RELEASE_SIGNING_KEY_PEM in the environment release"
+            exit 1
+          fi
+          umask 077
+          printf '%s\n' "$KEY_PEM" > "$RUNNER_TEMP/release.pem"
+          COURANT_RELEASE_SIGNING_KEY="$RUNNER_TEMP/release.pem" \
+            python scripts/sign_release.py artifacts --version "${GITHUB_REF_NAME#v}"
+          rm -f "$RUNNER_TEMP/release.pem"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: courant-release-signed
+          path: artifacts/*
+          if-no-files-found: error
+
+  sign-dry-run:
+    name: checksums and signature (dry run, throwaway key)
+    needs: [dist, binary]
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: Install (every file checked by hash)
+        run: pip install --require-hashes -r packaging/requirements-release.lock
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Sign with a throwaway key
+        run: |
+          cp packaging/install.sh artifacts/install.sh
+          umask 077
+          python - "$RUNNER_TEMP/throwaway.pem" <<'PY'
+          import sys
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+          from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
+          key = Ed25519PrivateKey.generate()
+          open(sys.argv[1], "wb").write(key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()))
+          PY
+          COURANT_RELEASE_SIGNING_KEY="$RUNNER_TEMP/throwaway.pem" \
+            python scripts/sign_release.py artifacts --dry-run
+          rm -f "$RUNNER_TEMP/throwaway.pem"
+
+  github-release:
+    name: GitHub release
+    needs: sign
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: courant-release-signed
+          path: artifacts
+      - name: Publish the release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+
+  pypi:
+    name: PyPI (trusted publishing)
+    needs: github-release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/courant-dev/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: courant-release-signed
+          path: artifacts
+      - name: The wheel and the sdist only
+        run: |
+          mkdir dist
+          cp artifacts/*.whl artifacts/*.tar.gz dist/
+          ls -l dist
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/

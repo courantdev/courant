@@ -1,0 +1,68 @@
+{
+ "case_id": "icoFoam_cavity",
+ "config": {
+  "boundary": {
+   "fixedWalls": {
+    "U": "noSlip",
+    "p": "zeroGradient"
+   },
+   "frontAndBack": {
+    "U": "empty",
+    "p": "empty"
+   },
+   "movingWall": {
+    "U": "fixedValue",
+    "p": "zeroGradient"
+   }
+  },
+  "ddt_scheme": "Euler",
+  "delta_t": 0.05,
+  "div_schemes": {
+   "default": "none",
+   "div(phi,U)": "Gauss linear"
+  },
+  "end_time": 0.5,
+  "linear_solvers": {
+   "U": {
+    "field": "U",
+    "rel_tol": 0.0,
+    "solver": "smoothSolver",
+    "tolerance": 1e-05
+   },
+   "p": {
+    "field": "p",
+    "rel_tol": 0.05,
+    "solver": "PCG",
+    "tolerance": 1e-06
+   },
+   "pFinal": {
+    "field": "pFinal",
+    "rel_tol": 0.0
+   }
+  },
+  "regions": [],
+  "relaxation_factors": {},
+  "relaxation_scopes": {},
+  "solver": "icoFoam",
+  "transport": {
+   "nu": 0.01
+  },
+  "unreadable": {},
+  "write_control": "timeStep",
+  "write_interval": 20.0
+ },
+ "expects_code": "NUM.CFL_VIOLATION",
+ "fault_id": "cfl_blowup",
+ "label": "broken",
+ "mesh": {
+  "average_non_orthogonality": 0.0,
+  "max_aspect_ratio": 1.0,
+  "max_non_orthogonality": 0.0,
+  "max_skewness": 1.81581e-14,
+  "mesh_ok": true,
+  "n_cells": 400,
+  "n_negative_volume_cells": 0
+ },
+ "scenario_id": "icoFoam_cavity::cfl_blowup",
+ "solver": "icoFoam"
+}

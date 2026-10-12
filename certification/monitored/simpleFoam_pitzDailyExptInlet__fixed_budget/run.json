@@ -1,0 +1,16 @@
+{
+  "container_wall_s": 15.8,
+  "cpus": 1,
+  "date": "2026-10-01",
+  "edits": [
+    "foamDictionary -entry SIMPLE/residualControl -remove system/fvSolution > /dev/null"
+  ],
+  "id": "simpleFoam_pitzDailyExptInlet__fixed_budget",
+  "image": "opencfd/openfoam-default:2406",
+  "pre": [
+    "blockMesh"
+  ],
+  "solver": "simpleFoam",
+  "solver_exit_code": 0,
+  "tutorial": "incompressible/simpleFoam/pitzDailyExptInlet"
+}

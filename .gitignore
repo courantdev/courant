@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Environment and keys: never committed
+.env
+.env.*
+*.pem
+
+# Solver output (committed test fixtures are kept)
+*.log
+!tests/fixtures/**/*.log

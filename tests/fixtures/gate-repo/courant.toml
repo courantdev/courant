@@ -1,0 +1,9 @@
+# A fixture repository for the courant-gate Action (TRD GATE-7, GATE-8).
+# Its check is meant to FAIL: runs/cavity_blowup is a real icoFoam run whose Courant number
+# climbs past 9, and the gate must say so, citing the reason (VER-5.3, cfl.max).
+
+fail-on = "not-accept"
+pack-store = "evidence"
+
+[[run]]
+paths = ["runs/*.log.gz"]

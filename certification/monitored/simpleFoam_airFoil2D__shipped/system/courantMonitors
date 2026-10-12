@@ -1,0 +1,20 @@
+
+courantForceCoeffs
+{
+    type            forceCoeffs;
+    libs            (forces);
+    writeControl    timeStep;
+    writeInterval   1;
+    log             false;
+    patches         (walls);
+    rho             rhoInf;
+    rhoInf          1;
+    liftDir         (-0.139214 0.990262 0);
+    dragDir         (0.990262 0.139214 0);
+    CofR            (0.25 0 0);
+    pitchAxis       (0 0 1);
+    magUInf         26.003209;
+    lRef            1;
+    Aref            1;
+}
+

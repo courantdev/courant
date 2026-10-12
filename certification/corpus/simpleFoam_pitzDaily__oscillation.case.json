@@ -1,0 +1,112 @@
+{
+ "case_id": "simpleFoam_pitzDaily",
+ "config": {
+  "boundary": {
+   "frontAndBack": {
+    "U": "empty",
+    "epsilon": "empty",
+    "k": "empty",
+    "nuTilda": "empty",
+    "nut": "empty",
+    "omega": "empty",
+    "p": "empty"
+   },
+   "inlet": {
+    "U": "fixedValue",
+    "epsilon": "fixedValue",
+    "k": "fixedValue",
+    "nuTilda": "fixedValue",
+    "nut": "calculated",
+    "omega": "fixedValue",
+    "p": "zeroGradient"
+   },
+   "lowerWall": {
+    "U": "noSlip",
+    "epsilon": "epsilonWallFunction",
+    "k": "kqRWallFunction",
+    "nuTilda": "zeroGradient",
+    "nut": "nutkWallFunction",
+    "omega": "omegaWallFunction",
+    "p": "zeroGradient"
+   },
+   "outlet": {
+    "U": "zeroGradient",
+    "epsilon": "zeroGradient",
+    "k": "zeroGradient",
+    "nuTilda": "zeroGradient",
+    "nut": "calculated",
+    "omega": "zeroGradient",
+    "p": "fixedValue"
+   },
+   "upperWall": {
+    "U": "noSlip",
+    "epsilon": "epsilonWallFunction",
+    "k": "kqRWallFunction",
+    "nuTilda": "zeroGradient",
+    "nut": "nutkWallFunction",
+    "omega": "omegaWallFunction",
+    "p": "zeroGradient"
+   }
+  },
+  "ddt_scheme": "steadyState",
+  "delta_t": 1.0,
+  "div_schemes": {
+   "default": "none",
+   "div((nuEff*dev2(T(grad(U)))))": "Gauss linear",
+   "div(nonlinearStress)": "Gauss linear",
+   "div(phi,U)": "Gauss linear",
+   "div(phi,epsilon)": "bounded Gauss limitedLinear 1",
+   "div(phi,k)": "bounded Gauss limitedLinear 1",
+   "div(phi,omega)": "bounded Gauss limitedLinear 1",
+   "turbulence": "bounded Gauss limitedLinear 1"
+  },
+  "end_time": 300.0,
+  "linear_solvers": {
+   "\"(U|k|epsilon|omega|f|v2)\"": {
+    "field": "\"(U|k|epsilon|omega|f|v2)\"",
+    "rel_tol": 0.1,
+    "solver": "smoothSolver",
+    "tolerance": 1e-05
+   },
+   "p": {
+    "field": "p",
+    "rel_tol": 0.1,
+    "solver": "GAMG",
+    "tolerance": 1e-06
+   }
+  },
+  "n_non_orthogonal_correctors": 0,
+  "regions": [],
+  "relaxation_factors": {
+   "\".*\"": 0.9,
+   "U": 1.0
+  },
+  "relaxation_scopes": {
+   "\".*\"": "equations",
+   "U": "equations"
+  },
+  "solver": "simpleFoam",
+  "transport": {
+   "nu": 1e-05
+  },
+  "turbulence_model": "kEpsilon",
+  "turbulence_type": "RAS",
+  "unreadable": {},
+  "write_control": "timeStep",
+  "write_interval": 300.0
+ },
+ "expects_code": "NUM.OVER_RELAXATION",
+ "fault_id": "oscillation",
+ "label": "broken",
+ "mesh": {
+  "average_non_orthogonality": 1.63034,
+  "max_aspect_ratio": 8.1407,
+  "max_non_orthogonality": 5.95045,
+  "max_skewness": 0.260575,
+  "mesh_ok": true,
+  "n_cells": 12225,
+  "n_negative_volume_cells": 0
+ },
+ "scenario_id": "simpleFoam_pitzDaily::oscillation",
+ "solver": "simpleFoam"
+}

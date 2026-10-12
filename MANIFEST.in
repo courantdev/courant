@@ -1,0 +1,2 @@
+# The sdist: the packages pyproject.toml lists with their data, pyproject.toml, the README and
+# the licence files (setuptools' defaults).

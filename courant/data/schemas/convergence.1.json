@@ -1,0 +1,112 @@
+{
+ "$id": "urn:courant:convergence:1",
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "additionalProperties": false,
+ "description": "TRD CONV-*. Where the monitored answer stopped changing.",
+ "properties": {
+  "convergence": {
+   "additionalProperties": false,
+   "properties": {
+    "data": {
+     "type": "object"
+    },
+    "findings": {
+     "items": {
+      "type": "object"
+     },
+     "type": "array"
+    },
+    "inputs": {
+     "items": {
+      "additionalProperties": false,
+      "properties": {
+       "bytes": {
+        "minimum": 0,
+        "type": "integer"
+       },
+       "path": {
+        "type": "string"
+       },
+       "sha256": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+       }
+      },
+      "required": [
+       "path",
+       "bytes",
+       "sha256"
+      ],
+      "type": "object"
+     },
+     "type": "array"
+    },
+    "regime": {
+     "type": "string"
+    },
+    "status": {
+     "enum": [
+      "PASS",
+      "WARN",
+      "FAIL",
+      "NOT_ASSESSABLE"
+     ]
+    }
+   },
+   "required": [
+    "data",
+    "findings",
+    "inputs",
+    "regime",
+    "status"
+   ],
+   "type": "object"
+  },
+  "run": {
+   "additionalProperties": false,
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "solver": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "required": [
+    "id",
+    "solver"
+   ],
+   "type": "object"
+  },
+  "schema": {
+   "const": "courant.convergence/1"
+  },
+  "tool": {
+   "additionalProperties": false,
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "version": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "name",
+    "version"
+   ],
+   "type": "object"
+  }
+ },
+ "required": [
+  "convergence",
+  "run",
+  "schema",
+  "tool"
+ ],
+ "title": "courant.convergence/1",
+ "type": "object"
+}

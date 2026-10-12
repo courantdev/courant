@@ -1,0 +1,60 @@
+name: gate-action
+
+# TRD GATE-7: the courant-gate Action, run on the fixture repository whose check must fail with
+# the cited reason. The fixture's check failing is the test passing. Nothing here needs a
+# secret, starts a solver or a model call, or publishes anything. The Action is used by path,
+# with `install: false`, against the checkout of this repository. Its public home is
+# github.com/courantdev/courant, where this workflow runs too.
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - ".github/actions/courant-gate/**"
+      - ".github/workflows/gate-action.yml"
+      - "courant/gate/**"
+      - "courant/verify/**"
+      - "tests/fixtures/gate-repo/**"
+  pull_request:
+    paths:
+      - ".github/actions/courant-gate/**"
+      - ".github/workflows/gate-action.yml"
+      - "courant/gate/**"
+      - "courant/verify/**"
+      - "tests/fixtures/gate-repo/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fixture-fails-with-its-reason:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: Install (every file checked by hash)
+        run: |
+          pip install --require-hashes -r packaging/requirements-release.lock
+          pip install --no-deps --no-build-isolation .
+      - name: The Action, on the fixture
+        id: gate
+        uses: ./.github/actions/courant-gate
+        continue-on-error: true
+        with:
+          install: "false"
+          working-directory: tests/fixtures/gate-repo
+      - name: The check failed, and the packs were written
+        env:
+          OUTCOME: ${{ steps.gate.outcome }}
+          CODE: ${{ steps.gate.outputs.exit-code }}
+          PACKS: ${{ steps.gate.outputs.packs }}
+        run: |
+          test "$OUTCOME" = "failure"
+          test "$CODE" = "1"
+          test -f "$PACKS/runs__cavity_blowup/verdict.json"
+          grep -q '"verdict":"reject"' "$PACKS/runs__cavity_blowup/verdict.json"
+          grep -q 'cfl.max' "$PACKS/runs__cavity_blowup/verdict.json"
+          grep -q '"verdict":"accept"' "$PACKS/runs__cavity_healthy/verdict.json"

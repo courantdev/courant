@@ -1,0 +1,129 @@
+{
+ "$id": "urn:courant:audit:1",
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "additionalProperties": false,
+ "description": "The governance view of a directory of runs (courant audit). Verdict words are version 1's.",
+ "properties": {
+  "causes": {
+   "additionalProperties": {
+    "minimum": 0,
+    "type": "integer"
+   },
+   "type": "object"
+  },
+  "money": {
+   "type": [
+    "object",
+    "null"
+   ]
+  },
+  "root": {
+   "type": "string"
+  },
+  "runs": {
+   "items": {
+    "additionalProperties": true,
+    "properties": {
+     "cause": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "convergence": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "core_hours": {
+      "type": [
+       "number",
+       "null"
+      ]
+     },
+     "grade": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "preflight": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "ranks": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "rule": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "run": {
+      "type": "string"
+     },
+     "verdict": {
+      "type": "string"
+     },
+     "wasted_core_hours": {
+      "type": [
+       "number",
+       "null"
+      ]
+     },
+     "wasted_fraction": {
+      "type": [
+       "number",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "run"
+    ],
+    "type": "object"
+   },
+   "type": "array"
+  },
+  "schema": {
+   "const": "courant.audit/1"
+  },
+  "tool": {
+   "additionalProperties": false,
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "version": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "name",
+    "version"
+   ],
+   "type": "object"
+  },
+  "totals": {
+   "type": "object"
+  }
+ },
+ "required": [
+  "causes",
+  "money",
+  "root",
+  "runs",
+  "schema",
+  "tool",
+  "totals"
+ ],
+ "title": "courant.audit/1",
+ "type": "object"
+}

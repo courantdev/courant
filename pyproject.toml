@@ -1,0 +1,155 @@
+[project]
+# The distribution is `courant-dev`: PyPI's `courant` is an unrelated project, so
+# installing that name would give you someone else's code. The import package stays `courant` and
+# the commands stay `courant` and `courant-mcp` (courant.DISTRIBUTION; tests/unit/test_network.py).
+name = "courant-dev"
+# Single source of truth: courant/__init__.py. A frozen binary has no package
+# metadata to read, so the agent takes its version from the module — and two
+# numbers that can disagree is one number too many when the server refuses
+# agents below a minimum version.
+dynamic = ["version"]
+description = "Courant: physics acceptance testing for machine-produced simulation. A read-only, deterministic gate that accepts, rejects or abstains on an OpenFOAM run, with the reasons it read."
+# The PyPI page. The source is public/README.md here; scripts/export_public.py writes it to the
+# public repository's root as README.md (scripts/claims.py --check holds its numbers).
+readme = "README.md"
+requires-python = ">=3.11"
+# The gate is open source (S, 11 Oct 2026, H-LICENSE): Apache-2.0, SPDX expression (PEP 639).
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+# The copyright holder today is the founder: no company exists yet, so none is named until its
+# certificate exists. Contact: the address the site publishes.
+authors = [{name = "Shivanshu Dwivedi"}]
+maintainers = [{name = "Courant", email = "hello@courant.dev"}]
+keywords = ["openfoam", "cfd", "simulation", "verification", "ai-agents", "mcp", "ci"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Testing",
+]
+# The agent's runtime closure, and nothing else. `courant watch` runs on an
+# engineer's laptop and on HPC login nodes; every dependency here is one more
+# thing that can fail to build on a machine we have never seen. The server's
+# dependencies (FastAPI, SQLAlchemy, Alembic) are deliberately NOT here — the
+# CLI never imports them, which is what keeps the packaged binary small.
+dependencies = [
+    "pydantic>=2.6",
+    "typer>=0.12",
+    "rich>=13.7",
+    "numpy>=1.26",
+    "foamlib>=1.6",
+    # HTTP for the commands whose purpose is a network call (docs/NETWORK.md): `courant update`
+    # (github.com) and the model door (openrouter.ai). The checks never import it.
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+# Phase 0 sandbox execution. Solution fields are read with foamlib, a core dependency
+# (courant/verification/_fluid_reader.py), so every install reads them the same way.
+sandbox = [
+    "docker>=7.0",
+]
+# Phase 1+ (LLM diagnosis, KB, orchestrator)
+diagnosis = [
+    "anthropic>=0.40",
+]
+# Building the distributable agent binaries (see packaging/).
+build = [
+    "pyinstaller>=6.6",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    # The build graph and the self-improving loop (devtools/, TRD §11).
+    "pyyaml>=6.0",
+    # The schema registry's tests validate every artefact against its JSON Schema (ARC-15).
+    "jsonschema>=4.20",
+]
+# The MCP server for agents (courant/mcp/, TRD §8).
+mcp = [
+    # 2.x: FastMCP was renamed MCPServer (courant/mcp/server.py uses the 2.x API).
+    "mcp>=2.2,<3",
+]
+
+[project.urls]
+Homepage = "https://courant.dev"
+Repository = "https://github.com/courantdev/courant"
+Releases = "https://github.com/courantdev/courant/releases"
+Issues = "https://github.com/courantdev/courant/issues"
+
+[project.scripts]
+courant = "courant.cli.main:app"
+courant-mcp = "courant.mcp.server:main"
+
+[build-system]
+# 77: the SPDX `license` string and `license-files` (PEP 639).
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+version = {attr = "courant.__version__"}
+
+# The open-source gate, and nothing else: the wheel, the sdist, the binary
+# (packaging/courant.spec) and the public repository (scripts/export_public.py) carry exactly
+# these packages, named one by one so that a new package is private until it is listed here.
+# Every other package under courant/ stays in this repository (SilentBench, the training
+# environment, private evaluations, certification, the previous product).
+# tests/unit/test_public_boundary.py holds that no package listed imports one that is not.
+[tool.setuptools.packages.find]
+include = [
+    "courant",
+    "courant.case",
+    "courant.cli",
+    "courant.cli.commands",
+    "courant.converge",
+    "courant.ctest",
+    "courant.ctest.judges",
+    "courant.data",
+    "courant.diagnosis",
+    "courant.events",
+    "courant.gate",
+    "courant.live",
+    "courant.llm",
+    "courant.mcp",
+    "courant.record",
+    "courant.spec",
+    "courant.verification",
+    "courant.verify",
+    "courant.watcher",
+]
+
+# PKG-5, PKG-7: an installed copy carries its certification summary, the Courant Test tasks
+# and the demo runs, so it works outside this repository.
+[tool.setuptools.package-data]
+"courant.data" = ["*.json", "demo/*", "schemas/*.json"]
+"courant.ctest" = ["data/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+markers = [
+    # Real OpenFOAM in Docker: a live solve takes ~100s, against ~30s for the
+    # whole rest of the suite. Skipped automatically without a daemon; deselect
+    # with `-m "not slow"` when iterating.
+    "slow: needs Docker and runs a real solver",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint.per-file-ignores]
+# Hash-locked grader (DEV-9): it changes only with a recorded relock, never for style.
+"courant/ctest/score.py" = ["E741"]
