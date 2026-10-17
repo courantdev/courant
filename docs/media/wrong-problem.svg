@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="360" viewBox="0 0 560 360" role="img" aria-labelledby="t d">
+<title id="t">The right physics, the wrong problem</title>
+<desc id="d">RM-18 v2 (2026-10-03): 20 real runs that converged with one input wrong. Without the task, Courant rejected 8 of 20; with the task's specification, 20 of 20.</desc>
+<style>.s{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,'Liberation Sans',sans-serif}.m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace}</style>
+<rect width="560" height="360" fill="#121010"/>
+<text class="s" x="20.0" y="34.0" font-size="20" fill="#f4efe6" font-weight="600">The right physics, the wrong problem</text>
+<text class="s" x="540.0" y="34.0" font-size="12" fill="#837b70" text-anchor="end">RM-18 v2 · 2026-10-03</text>
+<text class="s" x="20.0" y="56.0" font-size="14" fill="#837b70">20 real runs that converged with one input wrong.</text>
+<text class="s" x="20.0" y="76.0" font-size="13" fill="#837b70">A boundary value, a viscosity, gravity, geometry, mesh, model or end time.</text>
+<text class="s" x="180.0" y="104.0" font-size="13" fill="#b9b1a4">without the task</text>
+<text class="s" x="370.0" y="104.0" font-size="13" fill="#b9b1a4">with the task</text>
+<text class="m" x="180.0" y="124.0" font-size="15" fill="#f4efe6">8 of 20 rejected</text>
+<text class="m" x="370.0" y="124.0" font-size="15" fill="#f4efe6">20 of 20 rejected</text>
+<text class="s" x="20.0" y="154.0" font-size="14" fill="#b9b1a4">cavity</text>
+<rect x="180.0" y="140.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>icoFoam_cavity lid_x2: lid speed doubled: Re 20, still laminar; rejected</title></rect>
+<rect x="370.0" y="140.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>icoFoam_cavity lid_x2: lid speed doubled: Re 20, still laminar; rejected</title></rect>
+<rect x="205.0" y="140.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>icoFoam_cavity nu_x3: viscosity x3 inside the laminar regime; rejected</title></rect>
+<rect x="395.0" y="140.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>icoFoam_cavity nu_x3: viscosity x3 inside the laminar regime; rejected</title></rect>
+<rect x="230.0" y="140.0" width="20.0" height="20.0" rx="2" fill="none" stroke="#e8420f" stroke-width="1.4"><title>icoFoam_cavity endtime_short: run stopped at a fifth of the asked time; accepted</title></rect>
+<rect x="420.0" y="140.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>icoFoam_cavity endtime_short: run stopped at a fifth of the asked time; rejected</title></rect>
+<rect x="255.0" y="140.0" width="20.0" height="20.0" rx="2" fill="none" stroke="#e8420f" stroke-width="1.4"><title>icoFoam_cavity scale_0p9: geometry 10% too small; accepted</title></rect>
+<rect x="445.0" y="140.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>icoFoam_cavity scale_0p9: geometry 10% too small; rejected</title></rect>
+<rect x="280.0" y="140.0" width="20.0" height="20.0" rx="2" fill="none" stroke="#e8420f" stroke-width="1.4"><title>icoFoam_cavity mesh_coarse: a quarter of the cells, converged; accepted</title></rect>
+<rect x="470.0" y="140.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>icoFoam_cavity mesh_coarse: a quarter of the cells, converged; rejected</title></rect>
+<text class="s" x="20.0" y="184.0" font-size="14" fill="#b9b1a4">pitzDaily</text>
+<rect x="180.0" y="170.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>simpleFoam_pitzDaily inlet_x2: inlet velocity doubled, still turbulent; rejected</title></rect>
+<rect x="370.0" y="170.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>simpleFoam_pitzDaily inlet_x2: inlet velocity doubled, still turbulent; rejected</title></rect>
+<rect x="205.0" y="170.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>simpleFoam_pitzDaily k_inlet_x25: inlet turbulence intensity x5; rejected</title></rect>
+<rect x="395.0" y="170.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>simpleFoam_pitzDaily k_inlet_x25: inlet turbulence intensity x5; rejected</title></rect>
+<rect x="230.0" y="170.0" width="20.0" height="20.0" rx="2" fill="none" stroke="#e8420f" stroke-width="1.4"><title>simpleFoam_pitzDaily eps_inlet_x10: inlet dissipation x10; accepted</title></rect>
+<rect x="420.0" y="170.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>simpleFoam_pitzDaily eps_inlet_x10: inlet dissipation x10; rejected</title></rect>
+<rect x="255.0" y="170.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>simpleFoam_pitzDaily model_komegasst: k-omega SST where k-epsilon was asked; rejected</title></rect>
+<rect x="445.0" y="170.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>simpleFoam_pitzDaily model_komegasst: k-omega SST where k-epsilon was asked; rejected</title></rect>
+<rect x="280.0" y="170.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>simpleFoam_pitzDaily nu_x3: viscosity x3, Re 25k to 8k, still turbulent; rejected</title></rect>
+<rect x="470.0" y="170.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>simpleFoam_pitzDaily nu_x3: viscosity x3, Re 25k to 8k, still turbulent; rejected</title></rect>
+<rect x="305.0" y="170.0" width="20.0" height="20.0" rx="2" fill="none" stroke="#e8420f" stroke-width="1.4"><title>simpleFoam_pitzDaily scale_0p9: geometry 10% too small; accepted</title></rect>
+<rect x="495.0" y="170.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>simpleFoam_pitzDaily scale_0p9: geometry 10% too small; rejected</title></rect>
+<rect x="330.0" y="170.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>simpleFoam_pitzDaily endtime_short: a third of the asked iterations; rejected</title></rect>
+<rect x="520.0" y="170.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>simpleFoam_pitzDaily endtime_short: a third of the asked iterations; rejected</title></rect>
+<text class="s" x="20.0" y="214.0" font-size="14" fill="#b9b1a4">planarContraction</text>
+<rect x="180.0" y="200.0" width="20.0" height="20.0" rx="2" fill="none" stroke="#e8420f" stroke-width="1.4"><title>pimpleFoam_planarContraction inlet_x2: inlet velocity doubled, laminar; accepted</title></rect>
+<rect x="370.0" y="200.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>pimpleFoam_planarContraction inlet_x2: inlet velocity doubled, laminar; rejected</title></rect>
+<rect x="205.0" y="200.0" width="20.0" height="20.0" rx="2" fill="none" stroke="#e8420f" stroke-width="1.4"><title>pimpleFoam_planarContraction nu_x3: viscosity x3, laminar; accepted</title></rect>
+<rect x="395.0" y="200.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>pimpleFoam_planarContraction nu_x3: viscosity x3, laminar; rejected</title></rect>
+<text class="s" x="20.0" y="244.0" font-size="14" fill="#b9b1a4">hotRoom</text>
+<rect x="180.0" y="230.0" width="20.0" height="20.0" rx="2" fill="none" stroke="#e8420f" stroke-width="1.4"><title>buoyantPimpleFoam_hotRoom g_rot10: gravity rotated 10 degrees; accepted</title></rect>
+<rect x="370.0" y="230.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>buoyantPimpleFoam_hotRoom g_rot10: gravity rotated 10 degrees; rejected</title></rect>
+<rect x="205.0" y="230.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>buoyantPimpleFoam_hotRoom floor_T_320: floor 20 K warmer than asked; rejected</title></rect>
+<rect x="395.0" y="230.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>buoyantPimpleFoam_hotRoom floor_T_320: floor 20 K warmer than asked; rejected</title></rect>
+<text class="s" x="20.0" y="274.0" font-size="14" fill="#b9b1a4">damBreak</text>
+<rect x="180.0" y="260.0" width="20.0" height="20.0" rx="2" fill="none" stroke="#e8420f" stroke-width="1.4"><title>interFoam_damBreak water_nu_x3: water viscosity x3; accepted</title></rect>
+<rect x="370.0" y="260.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>interFoam_damBreak water_nu_x3: water viscosity x3; rejected</title></rect>
+<rect x="205.0" y="260.0" width="20.0" height="20.0" rx="2" fill="none" stroke="#e8420f" stroke-width="1.4"><title>interFoam_damBreak g_rot10: gravity rotated 10 degrees; accepted</title></rect>
+<rect x="395.0" y="260.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>interFoam_damBreak g_rot10: gravity rotated 10 degrees; rejected</title></rect>
+<text class="s" x="20.0" y="304.0" font-size="14" fill="#b9b1a4">RAS cavity</text>
+<rect x="180.0" y="290.0" width="20.0" height="20.0" rx="2" fill="none" stroke="#e8420f" stroke-width="1.4"><title>rhoPimpleFoam_RAS_cavity lid_x2: lid speed doubled; accepted</title></rect>
+<rect x="370.0" y="290.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>rhoPimpleFoam_RAS_cavity lid_x2: lid speed doubled; rejected</title></rect>
+<rect x="205.0" y="290.0" width="20.0" height="20.0" rx="2" fill="none" stroke="#e8420f" stroke-width="1.4"><title>rhoPimpleFoam_RAS_cavity mu_x3: dynamic viscosity x3; accepted</title></rect>
+<rect x="395.0" y="290.0" width="20.0" height="20.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.4"><title>rhoPimpleFoam_RAS_cavity mu_x3: dynamic viscosity x3; rejected</title></rect>
+<rect x="20.0" y="325.0" width="10.0" height="10.0" rx="2" fill="#e8420f" fill-opacity="0.85" stroke="#e8420f" stroke-width="1.2"/>
+<text class="s" x="35.0" y="334.0" font-size="12" fill="#837b70">a wrong run, rejected</text>
+<rect x="190.0" y="325.0" width="10.0" height="10.0" rx="2" fill="none" stroke="#e8420f" stroke-width="1.2"/>
+<text class="s" x="205.0" y="334.0" font-size="12" fill="#837b70">a wrong run, accepted</text>
+<text class="s" x="20.0" y="354.0" font-size="12" fill="#837b70">2 more runs did not converge cleanly and are left out, as registered.</text>
+</svg>

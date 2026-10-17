@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="360" viewBox="0 0 560 360" role="img" aria-labelledby="t d">
+<title id="t">At scale: 1,827 real runs</title>
+<desc id="d">RM-35, gate version 2: 1,827 real OpenFOAM runs, with the task's specification. Faulted runs accepted: 0 of 609, supported; Wrong-problem runs accepted: 0 of 609, supported; Right runs left insufficient: 0 of 609, supported; Verifier exceptions: 0 exceptions in 3654 verifications, supported; Right runs rejected: 34 of 609, refuted.</desc>
+<style>.s{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,'Liberation Sans',sans-serif}.m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace}</style>
+<rect width="560" height="360" fill="#121010"/>
+<text class="s" x="20.0" y="34.0" font-size="20" fill="#f4efe6" font-weight="600">At scale: 1,827 real runs</text>
+<text class="s" x="540.0" y="34.0" font-size="12" fill="#837b70" text-anchor="end">RM-35 v2 · 2026-10-14</text>
+<text class="s" x="20.0" y="56.0" font-size="14" fill="#837b70">Courant-10K, gate version 2, with the task's specification.</text>
+<text class="s" x="20.0" y="76.0" font-size="13" fill="#837b70">Wilson 95% intervals; each bar was fixed before the first run.</text>
+<line x1="246.0" y1="96.0" x2="246.0" y2="314.0" stroke="#2d2b2a" stroke-width="1.0"/>
+<text class="m" x="246.0" y="330.0" font-size="12" fill="#837b70" text-anchor="middle">0%</text>
+<line x1="281.0" y1="96.0" x2="281.0" y2="314.0" stroke="#2d2b2a" stroke-width="1.0"/>
+<text class="m" x="281.0" y="330.0" font-size="12" fill="#837b70" text-anchor="middle">2%</text>
+<line x1="316.0" y1="96.0" x2="316.0" y2="314.0" stroke="#2d2b2a" stroke-width="1.0"/>
+<text class="m" x="316.0" y="330.0" font-size="12" fill="#837b70" text-anchor="middle">4%</text>
+<line x1="351.0" y1="96.0" x2="351.0" y2="314.0" stroke="#2d2b2a" stroke-width="1.0"/>
+<text class="m" x="351.0" y="330.0" font-size="12" fill="#837b70" text-anchor="middle">6%</text>
+<line x1="386.0" y1="96.0" x2="386.0" y2="314.0" stroke="#2d2b2a" stroke-width="1.0"/>
+<text class="m" x="386.0" y="330.0" font-size="12" fill="#837b70" text-anchor="middle">8%</text>
+<text class="s" x="20.0" y="116.0" font-size="14" fill="#f4efe6">Faulted runs accepted</text>
+<text class="s" x="20.0" y="133.0" font-size="12" fill="#837b70">bar: at most 1%</text>
+<line x1="263.5" y1="105.0" x2="263.5" y2="131.0" stroke="#f4efe6" stroke-width="1.2" stroke-dasharray="3 3"/>
+<line x1="246.0" y1="118.0" x2="257.0" y2="118.0" stroke="#e8420f" stroke-width="2.4" stroke-linecap="round"/>
+<circle cx="246.0" cy="118.0" r="3.6" fill="#e8420f"/>
+<text class="m" x="396.0" y="123.0" font-size="13" fill="#f4efe6">0 of 609</text>
+<text class="s" x="540.0" y="123.0" font-size="13" fill="#837b70" text-anchor="end">supported</text>
+<text class="s" x="20.0" y="160.0" font-size="14" fill="#f4efe6">Wrong-problem runs accepted</text>
+<text class="s" x="20.0" y="177.0" font-size="12" fill="#837b70">bar: at most 1%</text>
+<line x1="263.5" y1="149.0" x2="263.5" y2="175.0" stroke="#f4efe6" stroke-width="1.2" stroke-dasharray="3 3"/>
+<line x1="246.0" y1="162.0" x2="257.0" y2="162.0" stroke="#e8420f" stroke-width="2.4" stroke-linecap="round"/>
+<circle cx="246.0" cy="162.0" r="3.6" fill="#e8420f"/>
+<text class="m" x="396.0" y="167.0" font-size="13" fill="#f4efe6">0 of 609</text>
+<text class="s" x="540.0" y="167.0" font-size="13" fill="#837b70" text-anchor="end">supported</text>
+<text class="s" x="20.0" y="204.0" font-size="14" fill="#f4efe6">Right runs left insufficient</text>
+<text class="s" x="20.0" y="221.0" font-size="12" fill="#837b70">bar: at most 5%</text>
+<line x1="333.5" y1="193.0" x2="333.5" y2="219.0" stroke="#f4efe6" stroke-width="1.2" stroke-dasharray="3 3"/>
+<line x1="246.0" y1="206.0" x2="257.0" y2="206.0" stroke="#b9b1a4" stroke-width="2.4" stroke-linecap="round"/>
+<circle cx="246.0" cy="206.0" r="3.6" fill="#b9b1a4"/>
+<text class="m" x="396.0" y="211.0" font-size="13" fill="#f4efe6">0 of 609</text>
+<text class="s" x="540.0" y="211.0" font-size="13" fill="#837b70" text-anchor="end">supported</text>
+<text class="s" x="20.0" y="248.0" font-size="14" fill="#f4efe6">Verifier exceptions</text>
+<text class="s" x="20.0" y="265.0" font-size="12" fill="#837b70">bar: 0 exceptions</text>
+<rect x="242.0" y="240.0" width="200.0" height="20.0" rx="0" fill="#121010"/>
+<text class="m" x="246.0" y="255.0" font-size="13" fill="#b9b1a4">0 in 3,654 verifications</text>
+<text class="s" x="540.0" y="255.0" font-size="13" fill="#837b70" text-anchor="end">supported</text>
+<text class="s" x="20.0" y="292.0" font-size="14" fill="#f4efe6">Right runs rejected</text>
+<text class="s" x="20.0" y="309.0" font-size="12" fill="#837b70">bar: at most 2%</text>
+<line x1="281.0" y1="281.0" x2="281.0" y2="307.0" stroke="#f4efe6" stroke-width="1.2" stroke-dasharray="3 3"/>
+<line x1="316.4" y1="294.0" x2="380.8" y2="294.0" stroke="#b9b1a4" stroke-width="2.4" stroke-linecap="round"/>
+<circle cx="343.7" cy="294.0" r="3.6" fill="#b9b1a4"/>
+<text class="m" x="396.0" y="299.0" font-size="13" fill="#f4efe6">34 of 609</text>
+<text class="s" x="540.0" y="299.0" font-size="13" fill="#f4efe6" text-anchor="end" font-weight="700">refuted</text>
+<text class="s" x="20.0" y="352.0" font-size="12" fill="#837b70">Right runs rejected: 30 pitzDaily and 4 hotRoom references that never settle.</text>
+</svg>
