@@ -83,6 +83,15 @@ the rates that ship with each version):
   and 547 of 999 (54.8%, T3A) came after it.
 - **Reproducible:** evidence packs re-derive byte for byte, 31 of 31.
 
+- **Beside frontier models:** on the same 420 real runs, given the task's specification, Courant
+  accepted 0 of 264 wrong runs; Claude Opus 5.5 accepted 69 of 264, Claude Sonnet 5.5 76 of 263
+  and Claude Haiku 5.5 52 of 249. Courant rejected 10 of 140 right runs.
+- **At scale:** on 1,827 real runs, 0 of 609 faulted and 0 of 609 wrong-problem runs were
+  accepted with the task's specification.
+
+Every figure, its interval and its pre-registered bar, including the one that missed, are in
+[RESULTS.md](https://github.com/courantdev/courant/blob/main/RESULTS.md).
+
 "Certified" here means measured against a real solver, with the error rate published. It is not
 a regulator's approval. Courant has no account, no telemetry and no service of its own.
 
