@@ -142,3 +142,21 @@ def test_the_documented_verdict_words_are_the_current_ones():
     for word in ("accept", "reject", "insufficient"):
         assert f"`{word}`" in text
     assert "insufficient." in text                   # the closed vocabulary is named
+
+
+def test_the_version_the_documents_name_is_the_release():
+    """The documents say which release they describe: Getting started in its opening line, the
+    README in the tag it pins the GitHub Action to. Each is `courant.__version__`, so a release
+    cannot leave a document one version behind."""
+    import courant
+
+    text = (ROOT / "docs" / "GETTING-STARTED.md").read_text()
+    named = re.findall(r"^Version (\d+\.\d+\.\d+)\b", text, re.MULTILINE)
+    assert named == [courant.__version__], (
+        f"GETTING-STARTED.md names {named or 'no version'}; this is Courant {courant.__version__}: "
+        "change its opening line ('Version X.Y.Z.') when the version changes")
+    pins = [(doc.name, v) for doc in DOCS
+            for v in re.findall(r"courant-gate@v(\d+\.\d+\.\d+)", doc.read_text())]
+    assert pins, "no document pins the Action to a release: the README's example is gone"
+    assert all(v == courant.__version__ for _, v in pins), (
+        f"a document pins the Action to another release than {courant.__version__}: {pins}")

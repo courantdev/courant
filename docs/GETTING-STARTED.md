@@ -10,7 +10,7 @@ checks never use the network; the few commands whose purpose is a network call (
 update`, and a language model you name) say what they contact first. [NETWORK.md](NETWORK.md)
 lists them.
 
-Version 0.4.0. Measured on OpenFOAM v2406. Every figure quoted below carries its denominator;
+Version 0.5.0. Measured on OpenFOAM v2406. Every figure quoted below carries its denominator;
 `courant verify --about` prints the error rates measured for this version.
 
 <!-- Every bash block below is run by tests/integration/test_docs_commands.py on the demo data

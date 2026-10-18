@@ -4,11 +4,20 @@ The rule (TRD SEC-1): no Courant command opens a network connection unless that 
 documented purpose, you ran it, and it names what it contacts before it does. Courant has no
 account, no telemetry and no service of its own: nothing is sent to Courant, ever.
 
-`tests/unit/test_network.py` holds this true. It runs every visible command and every tool of
-the MCP server on the demo data with network connections refused, and fails if any of them
-tries to connect. The commands below that do contact something are run the same
-way: each must name its host first and then stop cleanly, or contact nothing at all when the
-call would be refused anyway.
+These tests in this repository hold this true:
+
+- `tests/unit/test_public_network.py` runs `courant verify` on the demo runs that ship inside the
+  package, in each of its outputs, with every socket and every new process refused, and fails
+  if it makes one. It then runs every visible command and every tool of the MCP server on the
+  demo data with network connections refused, and fails if any of them tries to connect. The
+  commands below that do contact something are run the same way: each must name its host first
+  and then stop cleanly, or contact nothing at all when the call would be refused anyway.
+- `tests/unit/test_public_verdict_path.py` reads the code the verdict is made of: the gate, the
+  checks it calls, and the commands and tools that read a run, with everything they import.
+  No module of it imports a language-model client or a network library, names a model
+  provider's endpoint, or starts a process (but for the workers `--jobs` asks for), and
+  importing all of it loads no model client. A verdict is neither made by a model nor fetched
+  over a network.
 
 ## Commands that contact something
 
@@ -22,6 +31,14 @@ call would be refused anyway.
 Each of these prints the host before the first request, for example
 `contacting openrouter.ai (openrouter) with your OPENROUTER_API_KEY`. The key's value is never
 printed or logged.
+
+An Anthropic key that is not scoped to a workspace needs every request to name one. Set
+`ANTHROPIC_WORKSPACE_ID` (in the environment or `.env`, like the key) and each request to
+api.anthropic.com carries it as the `anthropic-workspace-id` header. Nothing else is added, and
+its value is never printed or logged. Without it, such a key is answered HTTP 400
+`invalid_request_error`, and the command stops with
+`Anthropic rejected the request (HTTP 400, invalid_request_error): the key is not scoped to a workspace ...`:
+a request the provider rejected is never scored as the model's answer (TRD ARC-19).
 
 
 ## Commands that contact nothing

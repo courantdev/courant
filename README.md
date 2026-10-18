@@ -154,8 +154,19 @@ edits a case, never runs a solver, and its checks never use the network. A pull 
 lets a model, a threshold nobody recorded or the network into the verdict's path is not merged
 ([CONTRIBUTING.md](https://github.com/courantdev/courant/blob/main/CONTRIBUTING.md)).
 
-These tests in this repository hold the read-only, offline and reproducible parts of it:
+These tests in this repository hold the model-free, read-only, offline and reproducible parts of
+it:
 
+- `tests/unit/test_public_verdict_path.py`: no module the verdict is made of (the gate, the
+  checks it calls, and the commands and tools that read a run) imports a language-model client
+  or a network library, names a model provider's endpoint or starts a process (but for the
+  workers `--jobs` asks for), and importing all of it loads no model client. The lint reads the
+  code's syntax, and is first run on code that breaks each of its rules.
+- `tests/unit/test_public_network.py`: `courant verify` on the demo runs, in each of its
+  outputs, opens no socket and starts no process; every visible command and every tool of the
+  MCP server runs on the demo data with network connections refused; and each command whose
+  purpose is a network call names its host first
+  ([NETWORK.md](https://github.com/courantdev/courant/blob/main/docs/NETWORK.md)).
 - `tests/unit/test_mcp_tools.py` and `tests/unit/test_mcp_e2e.py`: the agent tools refuse a path
   outside the directories named, change no file and open no network connection.
 - `tests/unit/test_action.py`: the CI gate opens no network connection and writes only where it
