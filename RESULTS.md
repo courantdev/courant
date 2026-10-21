@@ -29,6 +29,14 @@ Each draw run right, with a catalogue fault, and as the wrong problem.
 
 The right runs rejected are 30 pitzDaily, 4 hotRoom references that never settle under the tutorial's own settings: the gate's reason holds by OpenFOAM's semantics. The next corpus version restricts those draws.
 
+## SilentBench round 1: committed before any agent is scored
+
+The hidden split (210 tasks: `buoyantPimpleFoam_hotRoom` 30, `icoFoam_cavity` 30, `interFoam_damBreak` 30, `pimpleFoam_planarContraction` 30, `pisoFoam_RAS_cavity` 30, `rhoPimpleFoam_RAS_cavity` 30, `simpleFoam_pitzDaily` 30) was committed on 2026-10-03 by its SHA-256:
+
+`ff5cc6170cca8fb206adab930ccc097fc790a9f09446ccf2f56e052136c348c0`
+
+At the reveal the task list is published as JSONL and must hash to this value. Tasks whose reference answer the gate does not accept (feasibility) are excluded before scoring, and the excluded task ids are published with the reveal.
+
 ## The Courant Test (31 runs)
 
 Judged correctly 31 of 31; wrong results accepted 0 of 23; good results rejected 0 of 8.
