@@ -39,16 +39,19 @@ def _committed_fvschemes() -> list[Path]:
 
 
 def test_every_committed_fvschemes_is_read_as_foamlib_reads_it_or_holds_a_macro():
-    """25 committed `fvSchemes`: the scan gives foamlib's top-level keywords, in order, on every
-    one that writes no `$` or `#` (20), and refuses the rest (5, the certification corpus's
-    simpleFoam cases), each of which writes a `$macro` (pitzDaily's `$turbulence`, and the like):
-    nothing else is refused."""
+    """Every committed `fvSchemes`: the scan gives foamlib's top-level keywords, in order, on every
+    one that writes no `$` or `#`, and refuses the rest, each of which writes a `$macro`
+    (pitzDaily's `$turbulence`, and the like): nothing else is refused. 25 files here (20 read,
+    5 refused, the certification corpus's simpleFoam cases); the public tree holds fewer, since the
+    corpus stays private, so the counts are the tree's own (0.6.0's public release gate, 26 Oct)."""
     from foamlib import FoamFile
 
     from courant.case._foam_reader import _entries_of
 
     files = _committed_fvschemes()
-    assert len(files) == 25
+    assert len(files) >= 10
+    with_macro = sum(1 for f in files
+                     if re.search(r"[$#]", deck.strip_comments(f.read_text(errors="replace"))))
     followed = 0
     for f in files:
         text = f.read_text(errors="replace")
@@ -61,7 +64,7 @@ def test_every_committed_fvschemes_is_read_as_foamlib_reads_it_or_holds_a_macro(
             continue
         followed += 1
         assert [k for k in keys if k != "FoamFile"] == top, f
-    assert followed == 20
+    assert followed == len(files) - with_macro
 
 
 # ---------------------------------------------------------------- as v2406 reads it
