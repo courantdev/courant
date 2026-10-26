@@ -15,6 +15,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
 
+from courant.case.reads import refuse_outside
+
 SCHEMA = "courant.verdict/1"
 VerdictValue = Literal["TRUSTWORTHY", "NOT_TRUSTWORTHY", "NOT_ASSESSABLE"]
 Source = Literal["case_dir", "log", "corpus"]
@@ -34,6 +36,7 @@ class InputFile(BaseModel):
 
     @classmethod
     def of(cls, path: Path, name: str) -> InputFile:
+        refuse_outside(path)            # MCP-3: hashed only inside the roots
         data = path.read_bytes()
         return cls(path=name, bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
 
@@ -376,7 +379,13 @@ def executed_in_log(log_text: str) -> bool:
     """Whether a solver log shows a run that executed to its end: it prints `End` on a line of
     its own and carries no fatal error. The one reading of an agent's own log; for scoring, the
     re-solve's process record replaces it (SB-18). Only the advisory paths pass its answer to
-    `outcome_of` (`executed_source: agent_log`)."""
+    `outcome_of` (`executed_source: agent_log`).
+
+    This is not `courant.watcher.exitcode`'s reading of End, which the verdict uses: a line
+    `End` anywhere counts here, so a utility's End ahead of a cut solver is `executed` while
+    `--checks next` (VER-3a) calls the same log `truncated_log`. Routing it through
+    `exitcode.verdict_exit_code` is graph node T-EXECUTED-ONE (TRD VER-3), measured first,
+    since it feeds SilentBench's scoring."""
     import re
 
     return bool(re.search(r"^End\s*$", log_text, re.MULTILINE)) and "FOAM FATAL" not in log_text

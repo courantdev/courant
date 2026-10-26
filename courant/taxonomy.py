@@ -126,9 +126,14 @@ _ENTRIES: list[TaxonomyEntry] = [
                   "judgement about a regime the log does not report. It needs a "
                   "Reynolds number, which needs a length scale, which is a "
                   "property of the geometry rather than of anything the solver "
-                  "prints. PHYS.LAMINAR_TURBULENT covers the one case that can "
-                  "be read from the case file — a laminar setup in a turbulent "
-                  "regime — and this entry is what is left over."),
+                  "prints. PHYS.LAMINAR_TURBULENT covers what the case and the "
+                  "log can show: a laminar setup on a run that will not settle "
+                  "(physics.laminar_unstable), and, under --checks next, a "
+                  "buoyant laminar case whose own numbers make it turbulent "
+                  "(TRD VER-17). A laminar run of a turbulent flow that "
+                  "converges is not judged on its regime by default (the "
+                  "Reynolds-number check is not implemented, TRD VER-7c), and "
+                  "this entry is what is left over."),
     TaxonomyEntry("PHYS.LAMINAR_TURBULENT", "Laminar/turbulent mismatch",
                   FailureClass.PHYSICS, EscalationTier.SCHEMES,
                   "Laminar setup for a turbulent regime (or vice versa)."),

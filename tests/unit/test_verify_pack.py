@@ -178,12 +178,12 @@ def _observe(root: Path):
     assert not watch["writes"], f"verification opened case files for writing: {watch['writes']}"
 
 
-def _verify_observed(case: Path, spec: Path | None = None):
+def _verify_observed(case: Path, spec: Path | None = None, checks: str = "default"):
     """(verdict, files the readers opened) over `from_path` + `with_spec` + `verify_inputs`."""
     from courant.verify import from_path, verify_inputs, with_spec
 
     with _observe(case) as opened:
-        inputs = from_path(case)
+        inputs = from_path(case, checks=checks)
         if spec is not None:
             inputs = with_spec(inputs, spec)
         verdict = verify_inputs(inputs)
@@ -299,7 +299,9 @@ _T_ITEM = {"name": "initial T", "file": "0/T", "key": "internalField", "value": 
 def _case(tmp: Path) -> Path:
     """The T-MANIFEST-1 test case: `mini_case`, plus real solver output for the log, the
     checkMesh log and a monitor, `0/` with an `#include`, a `0.orig/` file with no `0/` twin, a
-    solved time directory, and three files no reader reads."""
+    solved time directory, two files no reader reads, and `constant/g`, which the case reader
+    reads for the buoyant regime under `--checks next` (TRD VER-17, GATE-13) and conformance
+    reads when the drafted specification names gravity."""
     from tests.unit.test_case_shapes import FIELD
 
     case = tmp / "cavity"
@@ -329,8 +331,9 @@ def _spec(case: Path, out: Path, *extra: dict) -> Path:
     return path
 
 
+@pytest.mark.parametrize("mode", ["default", "next"])
 @pytest.mark.parametrize("subject", ["case", "case_with_spec", "demo", "demo_with_spec"])
-def test_the_manifest_is_exactly_what_the_readers_opened(tmp_path, subject):
+def test_the_manifest_is_exactly_what_the_readers_opened(tmp_path, subject, mode):
     """C1. Read means listed, and listed means read: on the test case and on the bundled demo
     case (a real simpleFoam/pitzDaily run), with and without a specification."""
     if subject.startswith("case"):
@@ -341,7 +344,7 @@ def test_the_manifest_is_exactly_what_the_readers_opened(tmp_path, subject):
         case, extra = extract_demo_case(tmp_path / "demo"), ()
     spec = _spec(case, tmp_path, *extra) if subject.endswith("with_spec") else None
 
-    verdict, opened = _verify_observed(case, spec)
+    verdict, opened = _verify_observed(case, spec, mode)
 
     listed = {f.path for f in verdict.run.inputs}
     assert {"system/controlDict", "system/fvSolution"} <= opened, "the observer sees no reader"
@@ -349,22 +352,24 @@ def test_the_manifest_is_exactly_what_the_readers_opened(tmp_path, subject):
                               f"listed but not read: {sorted(listed - opened)}")
 
 
+@pytest.mark.parametrize("mode", ["default", "next"])
 @pytest.mark.parametrize("with_spec", [False, True], ids=["no_spec", "spec"])
-def test_editing_each_file_changes_the_manifest_only_if_it_was_read(tmp_path, with_spec):
+def test_editing_each_file_changes_the_manifest_only_if_it_was_read(tmp_path, with_spec, mode):
     """C2 and C8. Append to one file at a time and re-verify. A file the pipeline read changes
     the manifest, in that file's own entry; a file it did not read changes neither the manifest
     nor the verdict."""
     case = _case(tmp_path)
     spec = _spec(case, tmp_path, _T_ITEM) if with_spec else None
-    base, read = _verify_observed(case, spec)
-    again = verify_path(case, spec=spec)
+    base, read = _verify_observed(case, spec, mode)
+    again = verify_path(case, spec=spec, checks=mode)
     manifest = _manifest(base)
     assert _manifest(again) == manifest and again.to_json() == base.to_json()       # TST-3
     assert [e["path"] for e in manifest] == sorted(e["path"] for e in manifest)
     # The oracle is the observer, so first check it saw what this case is built around.
     assert {"0/U", "0.5/U", "log.checkMesh"} <= read, sorted(read)
     assert not {"system/decomposeParDict", "Allrun"} & read, sorted(read)
-    assert with_spec or "constant/g" not in read, sorted(read)
+    # The case reader's under --checks next (VER-17), conformance's when the spec names it.
+    assert ("constant/g" in read) == (mode == "next" or with_spec), sorted(read)
 
     problems = []
     for rel in sorted(p.relative_to(case).as_posix() for p in case.rglob("*") if p.is_file()):
@@ -372,7 +377,7 @@ def test_editing_each_file_changes_the_manifest_only_if_it_was_read(tmp_path, wi
         original = path.read_bytes()
         path.write_bytes(original + b"\n")
         try:
-            edited = verify_path(case, spec=spec)
+            edited = verify_path(case, spec=spec, checks=mode)
         finally:
             path.write_bytes(original)
         after = _manifest(edited)
@@ -491,7 +496,19 @@ def test_an_unreadable_file_is_left_out_and_the_verdict_stands(tmp_path, rel, wi
     absent = verify_path(gone, spec=spec)
     assert _manifest(verdict) == _manifest(absent)
     if not with_spec:
-        assert _without_inputs(verdict) == _without_inputs(absent)
+        expected = _without_inputs(absent)
+        if rel == "0.5/U":
+            # TRD VER-7b (the review of 21 Oct 2026): a field file that is there and could not be
+            # opened is named, not called missing: NO_FIELDS gives way to the sentence naming it,
+            # and nothing else in the document moves.
+            from courant.verify import sentences
+            from courant.verify.pipeline import _dedupe
+
+            lines = [s for s in expected["not_assessed"] if s != sentences.NO_FIELDS]
+            assert lines[-1] == sentences.NO_SPEC
+            expected["not_assessed"] = [*_dedupe([*lines[:-1], sentences.fields_unread(
+                "0.5", ["U"])]), sentences.NO_SPEC]
+        assert _without_inputs(verdict) == expected
     else:
         assert (verdict.verdict, verdict.rule) == (absent.verdict, absent.rule)
 
@@ -535,8 +552,8 @@ def test_a_file_that_vanishes_before_it_is_hashed_is_an_input_error_naming_it(tm
     field = (case / "0.5" / "U").read_text()
     real = _fluid_reader.read_fields
 
-    def read_then_purge(case_dir, time=None):
-        data = real(case_dir, time)
+    def read_then_purge(case_dir, time=None, **kw):     # kw: `fluxes`, VER-18
+        data = real(case_dir, time, **kw)
         (Path(case_dir) / "0.5" / "U").unlink(missing_ok=True)
         return data
 
@@ -569,4 +586,364 @@ def test_a_recording_inside_a_recording_is_seen_by_both(tmp_path):
         with pytest.raises(ValueError), reading(tmp_path / "c"):
             raise ValueError("read, did not parse")
     assert inner.paths() == ["a"] and outer.paths() == ["a", "c"]
+
+
+# ------------------------------------------------------------------ a pack never chooses where its run is (REP-5)
+#
+# Hard-proofing audit, security (21 Oct 2026). The manifest is the pack's own claim, so nothing in
+# it may decide which file is verified: `check_pack` took `meta.target` and `meta.case_json` from
+# it and joined them to the root unconfined, and re-hashed only the lines the manifest still
+# listed. A pack made from a good log, with its manifest rewritten to name a copy of that log
+# inside the pack (or anywhere on disk) and no input lines, re-derived "identical" with exit 0
+# while the run under --root rejects: a log verdict names only the log's file name, so any copy
+# of a good log gives the same bytes. Now the pack names its log by file name, directly under the
+# root; every listed file resolves under the root; the lines must be the re-derived verdict's
+# inputs, line for line; and a pack that lists none is refused.
+
+GOOD_LOG, BAD_LOG = REAL / "cavity_converged.log", REAL / "cavity_cfl_diverged.log"
+
+
+def _rewrite(pack: Path, lines: list[str], **meta) -> None:
+    """Rewrite only `inputs.manifest`, as anyone holding the pack can."""
+    _entries, old = read_manifest(pack)
+    (pack / MANIFEST).write_text("".join(f"{ln}\n" for ln in lines)
+                                 + "# meta " + json.dumps({**old, **meta}, sort_keys=True))
+
+
+def _line(path: Path, name: str) -> str:
+    import hashlib
+
+    data = path.read_bytes()
+    return f"{hashlib.sha256(data).hexdigest()}  {len(data)}  {name}"
+
+
+def _good_and_bad(tmp: Path, *, pack_in_run: bool = True) -> tuple[Path, Path, Path]:
+    """(good, run, pack): a pack honestly made from `good/log.icoFoam` (accept), and a run
+    whose own `log.icoFoam` rejects; the pack sits inside the run, as an agent hands it over."""
+    good, run = tmp / "good", tmp / "run"
+    good.mkdir()
+    run.mkdir()
+    shutil.copy(GOOD_LOG, good / "log.icoFoam")
+    shutil.copy(BAD_LOG, run / "log.icoFoam")
+    assert verify_path(good / "log.icoFoam").verdict == "accept"
+    assert verify_path(run / "log.icoFoam").verdict == "reject"
+    pack = write_pack(verify_path(good / "log.icoFoam"),
+                      run / "evidence" if pack_in_run else tmp / "evidence", "log.icoFoam")
+    ok, msg = check_pack(pack, run)                     # untampered: the run's own log differs
+    assert not ok and msg.startswith("input changed: log.icoFoam"), msg
+    return good, run, pack
+
+
+def test_a_pack_cannot_name_a_copy_of_a_good_log_inside_itself(tmp_path):
+    """The audit's reproduction (A): a copy of the good log inside the pack, the target pointed
+    at it, every input line deleted. It was `identical: 0 inputs re-hashed`, exit 0."""
+    good, run, pack = _good_and_bad(tmp_path)
+    (pack / ".src").mkdir()
+    shutil.copy(good / "log.icoFoam", pack / ".src" / "log.icoFoam")
+    _rewrite(pack, [], target="evidence/.src/log.icoFoam")
+
+    ok, msg = check_pack(pack, run)
+
+    assert not ok, msg
+    assert "evidence/.src/log.icoFoam" in msg and "file name" in msg, msg
+
+
+def test_a_pack_cannot_list_the_copy_it_points_at(tmp_path):
+    """(B) the same, with the copy listed, so the check said `1 inputs re-hashed`."""
+    good, run, pack = _good_and_bad(tmp_path)
+    (pack / ".src").mkdir()
+    shutil.copy(good / "log.icoFoam", pack / ".src" / "log.icoFoam")
+    _rewrite(pack, [_line(pack / ".src" / "log.icoFoam", "evidence/.src/log.icoFoam")],
+             target="evidence/.src/log.icoFoam")
+
+    ok, msg = check_pack(pack, run)
+
+    assert not ok, msg
+    assert "evidence/.src/log.icoFoam" in msg and "file name" in msg, msg   # refused for B, not by chance
+
+
+@pytest.mark.parametrize("how", ["absolute", "dotdot"])
+def test_a_pack_cannot_name_a_run_outside_the_root(tmp_path, how):
+    """(C, D) the pack outside the root, its target an absolute path or `../good/log.icoFoam`:
+    no copy needed. Each was `identical`, exit 0."""
+    good, run, pack = _good_and_bad(tmp_path, pack_in_run=False)
+    target = str(good / "log.icoFoam") if how == "absolute" else "../good/log.icoFoam"
+    _rewrite(pack, [], target=target)
+
+    ok, msg = check_pack(pack, run)
+
+    assert not ok and target in msg, msg
+    _rewrite(pack, [_line(good / "log.icoFoam", target)], target=target)
+    ok, msg = check_pack(pack, run)
+    assert not ok and target in msg, msg
+
+
+def test_the_cli_exits_5_on_the_audit_reproduction(tmp_path):
+    """`courant verify --check-pack run/evidence --root run` on (A): MISMATCH, exit 5."""
+    good, run, pack = _good_and_bad(tmp_path)
+    (pack / ".src").mkdir()
+    shutil.copy(good / "log.icoFoam", pack / ".src" / "log.icoFoam")
+    _rewrite(pack, [], target="evidence/.src/log.icoFoam")
+
+    r = CliRunner().invoke(_app(), ["verify", "--check-pack", str(pack), "--root", str(run)])
+
+    assert r.exit_code == 5 and r.output.startswith("MISMATCH "), (r.exit_code, r.output)
+
+
+def test_a_pack_that_lists_no_inputs_is_refused(tmp_path):
+    """Even naming the right run: with no line, nothing is re-hashed and nothing ties the
+    pack to the run's bytes."""
+    good, _run, pack = _good_and_bad(tmp_path)
+    assert check_pack(pack, good)[0]
+    _rewrite(pack, [])
+
+    ok, msg = check_pack(pack, good)
+
+    assert not ok and "lists no inputs" in msg, msg
+
+
+def test_a_listed_file_must_resolve_under_the_root(tmp_path):
+    """A line naming `..`, an absolute path, or a link in the root that leads out of it."""
+    good, run, pack = _good_and_bad(tmp_path)
+    for rel in ("../good/log.icoFoam", str(good / "log.icoFoam")):
+        _rewrite(pack, [_line(good / "log.icoFoam", rel)])
+        ok, msg = check_pack(pack, run)
+        assert not ok and rel in msg and "under the root" in msg, (rel, msg)
+
+    (run / "log.good").symlink_to(good / "log.icoFoam")    # the target alone links out
+    _rewrite(pack, [_line(run / "log.icoFoam", "log.icoFoam")], target="log.good")
+    ok, msg = check_pack(pack, run)
+    assert not ok and "log.good" in msg and "under the root" in msg, msg
+
+    (run / "log.icoFoam").unlink()
+    (run / "log.icoFoam").symlink_to(good / "log.icoFoam")
+    _rewrite(pack, [_line(good / "log.icoFoam", "log.icoFoam")], target="log.icoFoam")
+    ok, msg = check_pack(pack, run)
+    assert not ok and "log.icoFoam" in msg and "under the root" in msg, msg
+    assert str(good) not in msg, msg                     # never where a link leads (MCP-3)
+
+
+def test_a_case_json_and_a_specification_are_named_by_file_name(tmp_path):
+    log, cj = _copy(tmp_path, "icoFoam_cavity__healthy")
+    pack = write_pack(verify_path(log, cj), tmp_path / "pack", log.name, cj.name)
+    assert check_pack(pack, tmp_path)[0]
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    shutil.copy(cj, other / cj.name)
+    entries, _meta = read_manifest(pack)
+    lines = [f"{s}  {b}  {p}" for s, b, p in entries]
+
+    _rewrite(pack, lines, case_json=f"elsewhere/{cj.name}")
+    ok, msg = check_pack(pack, tmp_path)
+    assert not ok and f"elsewhere/{cj.name}" in msg and "file name" in msg, msg
+
+    _rewrite(pack, lines, case_json=cj.name, spec="../spec.json")
+    ok, msg = check_pack(pack, tmp_path)
+    assert not ok and "../spec.json" in msg and "file name" in msg, msg
+
+
+def test_the_manifest_lines_must_be_the_verdicts_inputs(tmp_path):
+    """A line dropped (the file is no longer re-hashed) or one added (a file the verdict never
+    read) is a pack that does not say what decided it, as `admit` holds for a record."""
+    case = _case(tmp_path)
+    pack = write_pack(verify_path(case), tmp_path / "pack", case.name)
+    assert check_pack(pack, case)[0]
+    entries, _meta = read_manifest(pack)
+    lines = [f"{s}  {b}  {p}" for s, b, p in entries]
+    assert any(p == "0/U" for _s, _b, p in entries)
+
+    _rewrite(pack, [ln for ln in lines if not ln.endswith("  0/U")])
+    ok, msg = check_pack(pack, case)
+    assert not ok and "0/U" in msg and "not listed" in msg, msg
+
+    (case / "notes.txt").write_text("not read by any reader\n")
+    _rewrite(pack, sorted(lines + [_line(case / "notes.txt", "notes.txt")],
+                          key=lambda ln: ln.split("  ", 2)[2]))
+    ok, msg = check_pack(pack, case)
+    assert not ok and "notes.txt" in msg and "not read" in msg, msg
+
+
+def test_an_identical_pack_says_which_run_it_re_verified(tmp_path):
+    """A log pack names its log by file name in the root, and the OK line says which, so a
+    reviewer sees the file that was judged."""
+    good, _run, pack = _good_and_bad(tmp_path)
+
+    ok, msg = check_pack(pack, good)
+
+    assert ok and msg.startswith("identical: log.icoFoam under "), msg
+    assert "1 inputs re-hashed" in msg, msg
+    case = _case(tmp_path)
+    ok, msg = check_pack(write_pack(verify_path(case), tmp_path / "case_pack", case.name), case)
+    assert ok and msg.startswith("identical: the case directory "), msg
+
+
+# ------------------------------------------------------------------ nor how its run is judged (REP-5, review)
+#
+# Review of 4a136e6 (21 Oct 2026). The pack no longer chose where its run is, and still chose how
+# it is judged: whether a log goes with the sidecar beside it, whether a case directory is judged
+# by its log alone, which hash its specification was locked at, and, under a name a reviewer
+# cannot tell from the solver's (a zero-width space, a trailing space, a lookalike), which log.
+# An honest pack of the reduced run re-derived "identical", exit 0, while `courant verify` on the
+# run as it stands rejects. Now the root decides each of them, or the reviewer does.
+
+OVERCONSTRAINED = "simpleFoam_pitzDaily__overconstrained_pu"   # accepts alone, rejects with its sidecar
+
+
+def test_a_log_pack_is_checked_with_the_sidecar_the_root_holds(tmp_path):
+    """Scenario 1: an honest pack of the log alone (`courant verify x.log.gz --pack P`), beside
+    the sidecar `--batch` pairs it with. The pack can neither leave that sidecar out nor name
+    another; with no sidecar in the root, the log alone still checks."""
+    run = tmp_path / "run"
+    run.mkdir()
+    log, cj = _copy(run, OVERCONSTRAINED)
+    assert verify_path(log, cj).verdict == "reject"          # the setup, read from the sidecar
+    assert verify_path(log).verdict == "accept"
+    pack = write_pack(verify_path(log), tmp_path / "pack", log.name)
+
+    ok, msg = check_pack(pack, run)
+
+    assert not ok and cj.name in msg and "sidecar" in msg, msg
+    r = CliRunner().invoke(_app(), ["verify", "--check-pack", str(pack), "--root", str(run)])
+    assert r.exit_code == 5 and r.output.startswith("MISMATCH "), (r.exit_code, r.output)
+
+    lenient = run / "lenient.case.json"
+    shutil.copy(CORPUS / "simpleFoam_pitzDaily__healthy.case.json", lenient)
+    other = write_pack(verify_path(log, lenient), tmp_path / "other", log.name, lenient.name)
+    ok, msg = check_pack(other, run)
+    assert not ok and lenient.name in msg and cj.name in msg, msg
+
+    cj.unlink()                                              # the root holds no sidecar for it
+    ok, msg = check_pack(other, run)
+    assert not ok and lenient.name in msg, msg
+    ok, msg = check_pack(pack, run)
+    assert ok, msg
+
+
+def test_a_log_pack_does_not_re_verify_a_case_directory(tmp_path):
+    """Scenario 2: a case directory `courant verify R` rejects on its setup (mini_case sets nu
+    5.0 m^2/s) and an honest pack of its log alone, which accepts. A log pack checks under a case
+    directory only when `courant verify R` reads nothing there that its verdict did not."""
+    case = tmp_path / "cavity"
+    shutil.copytree(MINI, case)
+    with gzip.open(CORPUS / "icoFoam_cavity__healthy.log.gz", "rt") as fh:
+        (case / "log.icoFoam").write_text(fh.read())
+    assert verify_path(case).verdict == "reject"
+    assert verify_path(case / "log.icoFoam").verdict == "accept"
+    pack = write_pack(verify_path(case / "log.icoFoam"), tmp_path / "pack", "log.icoFoam")
+
+    ok, msg = check_pack(pack, case)
+
+    assert not ok and "case directory" in msg and "system/controlDict" in msg, msg
+    assert check_pack(write_pack(verify_path(case), tmp_path / "case_pack", case.name), case)[0]
+
+
+def test_a_log_beside_the_runs_own_cannot_stand_in_for_it(tmp_path):
+    """Major 2: the run's own `log.icoFoam` rejects; a copy of a good log sits beside it under a
+    name that reads the same (a zero-width space, a trailing space, a tab) or nearly (`l` for
+    `i`), with the copy's own honest pack. Each was `identical: log.icoFoam under R`, exit 0."""
+    good, run, _pack = _good_and_bad(tmp_path)
+    for i, name in enumerate(("log.icoFoam​", "log.icoFoam ", "log.icoFoam\t")):
+        shutil.copy(good / "log.icoFoam", run / name)
+        pack = write_pack(verify_path(run / name), tmp_path / f"copy{i}", name)
+        ok, msg = check_pack(pack, run)
+        assert not ok and repr(name) in msg and "printable ASCII" in msg, (name, msg)
+        (run / name).unlink()
+
+    shutil.copy(good / "log.icoFoam", run / "log.lcoFoam")
+    pack = write_pack(verify_path(run / "log.lcoFoam"), tmp_path / "lookalike", "log.lcoFoam")
+    ok, msg = check_pack(pack, run)
+    assert not ok and "case directory" in msg and "log.icoFoam" in msg, msg   # the run's own
+
+
+def test_the_reviewer_gives_the_locked_hash_not_the_pack(tmp_path):
+    """Scenario 3: the pack drops its specification, or carries a lenient one locked at that
+    file's own hash. With `--spec-sha256` the hash is the reviewer's and the pack is held to it;
+    without, the OK line says whose hash it was."""
+    from courant.spec import draft_spec, spec_sha256
+
+    case = _case(tmp_path)
+    spec = tmp_path / "spec.json"
+    spec.write_text(draft_spec(case).to_json())
+    locked = spec_sha256(spec)
+    honest = write_pack(verify_path(case, spec=spec, spec_locked_sha256=locked),
+                        tmp_path / "honest", case.name, spec_path=spec, spec_locked_sha256=locked)
+    ok, msg = check_pack(honest, case, spec_sha256=locked)
+    assert ok and f"specification {locked[:12]}, locked at the hash you gave" in msg, msg
+    ok, msg = check_pack(honest, case)
+    assert ok and f"specification {locked[:12]}, locked at the hash the pack carries" in msg, msg
+
+    dropped = write_pack(verify_path(case), tmp_path / "dropped", case.name)
+    assert check_pack(dropped, case)[0]
+    ok, msg = check_pack(dropped, case, spec_sha256=locked)
+    assert not ok and "carries no specification" in msg and locked[:12] in msg, msg
+
+    lenient = tmp_path / "lenient.json"
+    lenient.write_text(spec.read_text() + "\n")
+    mine = spec_sha256(lenient)
+    swapped = write_pack(verify_path(case, spec=lenient, spec_locked_sha256=mine),
+                         tmp_path / "swapped", case.name, spec_path=lenient,
+                         spec_locked_sha256=mine)
+    assert check_pack(swapped, case)[0]                  # locked at its own hash, it re-derives
+    ok, msg = check_pack(swapped, case, spec_sha256=locked)
+    assert not ok and mine[:12] in msg and locked[:12] in msg, msg
+
+    unlocked = write_pack(verify_path(case, spec=spec), tmp_path / "unlocked", case.name,
+                          spec_path=spec)
+    ok, msg = check_pack(unlocked, case)
+    assert ok and f"specification {locked[:12]}, not locked" in msg, msg
+    ok, msg = check_pack(unlocked, case, spec_sha256=locked.upper())
+    assert not ok and "not locked" in msg and locked[:12] in msg, msg
+
+    def cli(pack):
+        return CliRunner().invoke(_app(), ["verify", "--check-pack", str(pack), "--root",
+                                           str(case), "--spec-sha256", locked])
+
+    assert cli(honest).exit_code == 0, cli(honest).output
+    r = cli(swapped)
+    assert r.exit_code == 5 and r.output.startswith("MISMATCH "), (r.exit_code, r.output)
+
+
+def test_the_ok_line_says_how_the_run_was_judged(tmp_path):
+    """The scope a pack re-derived, at exit 0: a log alone or with its sidecar, a case
+    directory, and the specification (above)."""
+    good, _run, pack = _good_and_bad(tmp_path)
+    ok, msg = check_pack(pack, good)
+    assert ok and "re-verified (a log, no sidecar, no specification)" in msg, msg
+    log, cj = _copy(tmp_path, "icoFoam_cavity__healthy")
+    ok, msg = check_pack(write_pack(verify_path(log, cj), tmp_path / "p", log.name, cj.name),
+                         tmp_path)
+    assert ok and f"re-verified (a log with its sidecar {cj.name}, no specification)" in msg, msg
+    case = _case(tmp_path)
+    ok, msg = check_pack(write_pack(verify_path(case), tmp_path / "c", case.name), case)
+    assert ok and "re-verified (no specification)" in msg, msg
+
+
+def test_a_log_pack_names_a_file_not_a_directory(tmp_path):
+    """A log pack's target that is a directory under R: the hash loop hashed R/<line> while the
+    verdict read R/<target>/<line>, so a refusal named another file than the one read."""
+    good, run, pack = _good_and_bad(tmp_path)
+    (run / "sub").mkdir()
+    shutil.copy(good / "log.icoFoam", run / "sub" / "log.icoFoam")
+    _rewrite(pack, [_line(run / "log.icoFoam", "log.icoFoam")], target="sub")
+
+    ok, msg = check_pack(pack, run)
+
+    assert not ok and "'sub'" in msg and "not a file" in msg, msg
+
+
+def test_a_root_that_is_a_link_loop_is_refused_without_a_traceback(tmp_path):
+    """Python 3.11 raises RuntimeError resolving a link loop; the root's resolution did not
+    catch it (MCP-3's `Confinement` caught it for a path, not for a root)."""
+    from courant.case.reads import Confinement
+
+    _good, _run, pack = _good_and_bad(tmp_path)
+    loop = tmp_path / "loop"
+    loop.symlink_to(loop)
+    Confinement([loop])                                  # does not raise
+
+    ok, msg = check_pack(pack, loop)
+
+    assert not ok and "not a directory" in msg, msg
+    r = CliRunner().invoke(_app(), ["verify", "--check-pack", str(pack), "--root", str(loop)])
+    assert r.exit_code == 5 and r.output.startswith("MISMATCH "), (r.exit_code, r.output)
 

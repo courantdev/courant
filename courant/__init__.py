@@ -6,7 +6,7 @@ task specification it decides whether a run is valid; with one, whether it is th
 was asked. First integration: OpenFOAM.
 """
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 #: The public repository of the open-source gate (H-DISTRIBUTION, 11 Oct 2026): its source, its
 #: releases (the signed binaries, the wheel and the installer) and its GitHub Action.

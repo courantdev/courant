@@ -1,0 +1,14 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  Courant test fixture: a laminar axisymmetric pipe on a wedge (T-WEDGE-MESH)
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      transportProperties;
+}
+
+transportModel  Newtonian;
+nu              1e-05;
+DT              1.4e-05;

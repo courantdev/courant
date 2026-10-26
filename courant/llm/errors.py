@@ -36,8 +36,76 @@ class Refused(LLMError):
     """
 
 
+#: Why a provider rejected a request, as a transport recognised it, in fixed words. A transport
+#: names a key of this table (``error.courant_reason`` in the body it hands the door), never
+#: the provider's own text, which may quote the request (SEC-1).
+REJECTION_REASONS = {
+    "workspace_required": ("the key is not scoped to a workspace (set ANTHROPIC_WORKSPACE_ID "
+                           "to the workspace's id)"),
+}
+
+#: The status classes, in words, of a rejection with no recognised reason.
+_STATUS_CLASS = {400: "the request is invalid", 401: "the key was rejected",
+                 402: "the account has no credit for this request",
+                 403: "the key may not make this request", 404: "the model is not served"}
+
+
+class Rejected(Refused):
+    """The provider rejected the request with a 4xx that is not a rate limit (400, 401, 402,
+    403 and the like): no model was asked, so it is not the model's answer, nor its
+    abstention. A batch stops on it, resumably, and nothing is checkpointed for the item
+    (ARC-19). ``status`` is the HTTP status, ``error_type`` the provider's error type when it
+    named one (Anthropic's ``invalid_request_error``), ``reason`` a key of
+    ``REJECTION_REASONS`` or None. ``line`` says all of it in one line, naming no request
+    content and no key."""
+
+    def __init__(self, message: str = "", *, provider: str = "", status: int | None = None,
+                 error_type: str | None = None, reason: str | None = None,
+                 records=()) -> None:
+        super().__init__(message or rejection_line(provider, status, error_type, reason),
+                         records=records)
+        self.provider, self.status = provider, status
+        self.error_type, self.reason = error_type, reason
+
+    @property
+    def line(self) -> str:
+        return rejection_line(self.provider, self.status, self.error_type, self.reason)
+
+
+#: A provider's name as a sentence says it.
+PROVIDER_NAMES = {"openrouter": "OpenRouter", "anthropic": "Anthropic"}
+
+
+def provider_name(provider: str) -> str:
+    return PROVIDER_NAMES.get(provider, provider or "the provider")
+
+
+def rejection_line(provider: str, status: int | None, error_type: str | None,
+                   reason: str | None) -> str:
+    """``Anthropic rejected the request (HTTP 400, invalid_request_error): the key is not
+    scoped to a workspace (...)``: who, the status class, and why in fixed words."""
+    said = ", ".join(part for part in (f"HTTP {status}" if status else None, error_type) if part)
+    why = REJECTION_REASONS.get(reason or "") or _STATUS_CLASS.get(status or 0) \
+        or "the provider rejected it"
+    return (f"{provider_name(provider)} rejected the request ({said or 'no status'}): {why}; "
+            f"it is not the model's answer, so the batch stops and nothing is checkpointed "
+            f"for this item (ARC-19)")
+
+
 class BudgetRefused(Refused):
     """A batch cannot finish inside the day's allowance (ARC-8). Nothing was sent."""
+
+
+class SpendCapReached(BudgetRefused):
+    """A paid request whose upper-bound cost would take its spend key past the cap S set
+    (ARC-21). Nothing was sent: the batch stops, and resumes only under a higher cap. ``key``
+    names what the cap holds (a batch), ``cap`` and ``spent`` are US dollars, ``bound`` is the
+    refused request's upper-bound cost."""
+
+    def __init__(self, message: str = "", *, key: str = "", cap: float = 0.0,
+                 spent: float = 0.0, bound: float = 0.0, records=()) -> None:
+        super().__init__(message, records=records)
+        self.key, self.cap, self.spent, self.bound = key, cap, spent, bound
 
 
 class Halted(Refused):
@@ -96,9 +164,13 @@ def stops_batch(exc: BaseException) -> bool:
     A quota stop (a rate limit that outlasted its retries included, ARC-20), a paid response,
     an unwritable ledger and any refusal by the door (a halt, a batch's budget, a rejected key
     or an account out of credit, and a model that is not served included) are not a model's
-    answer: the batch stops, leaves its checkpoint, and nothing is scored. An invalid answer, a
-    failed exchange and anything that is not an ``LLMError`` are the model's failure on that
-    item. The door raises a failed exchange only when nothing else stopped the call
+    answer: the batch stops, leaves its checkpoint, and nothing is scored. So is a request the
+    provider rejected with any other 4xx that is not a rate limit (``Rejected``: a 400
+    ``invalid_request_error``, a 403), and a transport that could not send at all (no SDK, no
+    key): no model was asked. Only an answer the provider returned is the model's: an invalid
+    answer (a refusal, no JSON, off-schema) is its failure on that item, and so are a 5xx or a
+    dropped connection that outlasted their retries and anything that is not an ``LLMError``.
+    The door raises a failed exchange only when nothing else stopped the call
     (``door._no_answer``). This is the only place the line is drawn; the judge, the diagnoser
     and the batch runners all ask it.
     """

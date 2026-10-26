@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from courant.case.config import CaseConfig
 from courant.case.schemes import unbounded_convection_schemes
+from courant.case.viscosity import kinematic
 from courant.diagnosis.findings import FindingSet
 from courant.taxonomy import EscalationTier, get as taxo_get
 
@@ -69,30 +70,40 @@ class KBMatch(BaseModel):
     canonical_fixes: list[CanonicalFix]
 
 
-# Named config predicates the signatures can reference.
-CONFIG_PREDICATES: dict[str, Callable[[CaseConfig], bool]] = {
+# Named config predicates the signatures can reference. Each takes the case and `--checks`
+# (GATE-13), so a predicate that restates a checker's question asks it in the checker's mode:
+# under `next` the steady test has two answers (`is_steady`, `marches_to_steady_state`; TRD VER-21,
+# VER-19), and the ranking must not answer it differently from the checks inside one verdict.
+CONFIG_PREDICATES: dict[str, Callable[..., bool]] = {
     # 1.0 and steady-only, matching `SchemeToleranceChecker`. At >= 0.9 with no
     # solver gate this scored `NUM.OVER_RELAXATION` +2.0 on `simpleFoam/pitzDaily`
     # and `interFoam/damBreak` — two unmodified tutorials that ship those values
-    # and converge fine. See the checker for the argument.
-    "relaxation_high": lambda c: c.is_steady() and any(
+    # and converge fine. See the checker for the argument. Steady as `scheme.relaxation` asks
+    # it, `is_steady(checks)`: a local-time-stepping case is not steady there.
+    "relaxation_high": lambda c, checks="default": c.is_steady(checks) and any(
         v >= 1.0 for v in c.relaxation_factors.values()),
-    "fixed_dt_no_adaptivity": lambda c: c.adjust_timestep is False and not c.is_steady(),
-    "laminar": lambda c: c.is_laminar(),
-    "nu_out_of_range": lambda c: (
-        (nu := c.transport.get("nu")) is not None and (nu <= 0 or nu > 1e-2 or nu < 1e-8)
-    ),
-    "overconstrained_pu": lambda c: any(
-        f.get("p") == "fixedValue" and f.get("U") == "fixedValue"
-        for f in c.boundary.values()
-    ),
+    # Not marching to a steady state, as `scheme.fixed_dt` asks it: under `next` a
+    # local-time-stepping case's step is per cell, set from maxCo, whatever adjustTimeStep says.
+    "fixed_dt_no_adaptivity": lambda c, checks="default": (
+        c.adjust_timestep is False and not c.marches_to_steady_state(checks)),
+    # `CaseConfig.is_laminar`, in the checker's mode (VER-17a: a RAS or LES case whose
+    # `turbulence` switch is off, under `next`).
+    "laminar": lambda c, checks="default": c.is_laminar(checks),
+    # `courant.case.viscosity.kinematic`, `physics.nu`'s own definition, in the checker's mode:
+    # v0.5.0's reading under the default, every viscosity the solver reads under `next` (PRE-6).
+    "nu_out_of_range": lambda c, checks="default": (
+        (v := kinematic(c, checks)) is not None and v.out_of_range),
+    # `CaseConfig.overconstrained_patches`, the checker's own definition, in the checker's mode:
+    # under `next` the pressure the solver solves, `p_rgh` when the case has it (PRE-5).
+    "overconstrained_pu": lambda c, checks="default": bool(c.overconstrained_patches(checks)),
     # Shared with the checker rather than reimplemented. This predicate carried
     # the *original* rule — `"bounded" not in s and "upwind" not in s` — for a
     # full phase after the checker's copy was corrected, so it went on scoring
     # `NUM.UNBOUNDED_SCHEME` +2.0 on every RAS case for `limitedLinear`, a
     # definitionally limited scheme. Nothing noticed, because nothing tested the
     # two implementations against each other. See `courant/case/schemes.py`.
-    "unbounded_div": lambda c: bool(unbounded_convection_schemes(c.div_schemes)),
+    "unbounded_div": lambda c, checks="default": bool(
+        unbounded_convection_schemes(c.div_schemes)),
 }
 
 
@@ -137,7 +148,10 @@ class KnowledgeBase:
         }
 
     def query(self, findings: FindingSet | None = None, log_text: str = "",
-              config: CaseConfig | None = None, top_k: int = 5) -> list[KBMatch]:
+              config: CaseConfig | None = None, top_k: int = 5,
+              checks: str = "default") -> list[KBMatch]:
+        """The entries whose signatures match, best first. `checks` is `--checks` (GATE-13),
+        for the configuration predicates."""
         finding_ids = findings.ids if findings else set()
         suggested = set((findings.suggested_codes() if findings else []))
 
@@ -166,7 +180,7 @@ class KnowledgeBase:
             if config is not None:
                 for pred in sig.config_predicates:
                     fn = CONFIG_PREDICATES.get(pred)
-                    if fn and fn(config):
+                    if fn and fn(config, checks):
                         score += self.W_CONFIG
                         why.append(f"config:{pred}")
 

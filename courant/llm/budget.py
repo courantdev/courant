@@ -18,6 +18,15 @@ decided by ``door.draws_on_free_allowance``, ARC-20): the day's allowance counts
 that do, and a line that does not say (an older ledger) is counted as one that does. The
 rolling window counts every request, paid or free.
 
+A paid request under a spend cap (ARC-21) also carries, on its reservation, the cap's ``spend``
+key and its ``cost_bound``, the most it can cost (``prices.request_bound``); its outcome line
+carries its ``cost``. What a key has spent is counted from the whole ledger in the same locked
+step: each of its reservations at its outcome's recorded cost, at nothing when the provider
+answered with an HTTP error (not billed), and at its bound while its answer has not arrived or
+when no answer did (a dropped connection may still be billed). A request whose bound would take
+the key past its cap is refused with ``SpendCapReached`` and nothing is appended, so two doors or
+processes sharing the state directory can never together send past the cap.
+
 The ledger holds no prompt, no answer and no key (C5d, SEC-1). The state directory is
 ``COURANT_LLM_STATE`` or ``~/.courant/llm/``, never a case directory (TST-4), and it and the
 lock file are created on the first reservation, so constructing a door writes nothing.
@@ -39,7 +48,7 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
-from courant.llm.errors import LedgerError, QuotaExhausted
+from courant.llm.errors import LedgerError, QuotaExhausted, SpendCapReached
 
 #: OpenRouter allows 20 requests a minute on free models; the door stays one under (C4a).
 PER_MINUTE = 19
@@ -101,6 +110,21 @@ def parse_stamp(value) -> datetime | None:
 
 
 # ---------------------------------------------------------------------------------- ledger
+
+
+@dataclass(frozen=True)
+class SpendCap:
+    """At most ``usd`` US dollars on paid requests reserved under ``key`` (ARC-21)."""
+
+    key: str
+    usd: float
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.key, str) or not self.key.strip():
+            raise ValueError("a spend cap names its key (the batch it holds)")
+        if isinstance(self.usd, bool) or not isinstance(self.usd, (int, float)) \
+                or not math.isfinite(self.usd) or self.usd <= 0:
+            raise ValueError("a spend cap is a positive number of US dollars")
 
 
 @dataclass(frozen=True)
@@ -167,9 +191,28 @@ class Ledger:
         now = utc(now)
         return _cap_lifts(self.since(start_of_utc_day(now)), now)
 
+    def spent(self, key: str) -> float:
+        """US dollars spent under spend key ``key``, as a reservation counts it (module
+        docstring): recorded costs, in-flight bounds included."""
+        return _spent(self._all(), key)
+
+    def _all(self) -> list[dict]:
+        if not self.path.exists():
+            return []
+        out = []
+        for raw in self.path.read_bytes().splitlines():
+            try:
+                record = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(record, dict):
+                out.append(record)
+        return out
+
     def reserve(self, fields: Mapping, *, clock, per_minute: int = PER_MINUTE,
                 window: timedelta = WINDOW,
                 day_limit: int | Callable[[date], int | None] | None = None,
+                spend_cap: SpendCap | None = None, cost_bound: float | None = None,
                 ) -> Reservation | float:
         """Append one request's reservation, or say how long to wait for room (ARC-18 C1-C4).
 
@@ -185,6 +228,8 @@ class Ledger:
           * so does today's (UTC) count of free requests at or above ``day_limit``: an int,
             or a callable giving it for the UTC date. None, a paid model's, is held to no
             allowance;
+          * with ``spend_cap``, a request whose ``cost_bound`` would take what the cap's key
+            has spent past the cap refuses with ``SpendCapReached`` (ARC-21);
           * a full rolling window returns the seconds until a place frees, and appends
             nothing. The caller sleeps with the lock released and asks again: nothing here
             sleeps;
@@ -198,6 +243,13 @@ class Ledger:
         line = {"provider": self.provider, "model": fields["model"], "task": fields["task"],
                 "data": fields["data"], "measurement": fields.get("measurement"),
                 "paid": bool(fields.get("paid", False))}
+        if fields.get("note"):           # what a reservation that is not a request stands for
+            line["note"] = str(fields["note"])
+        if spend_cap is not None:
+            if isinstance(cost_bound, bool) or not isinstance(cost_bound, (int, float)) \
+                    or not math.isfinite(cost_bound) or cost_bound < 0:
+                raise ValueError("a request under a spend cap states its cost bound")
+            line.update(spend=spend_cap.key, cost_bound=float(cost_bound))
         try:  # lazily, so courant.llm imports on a platform without fcntl
             import fcntl
         except ImportError:
@@ -208,14 +260,15 @@ class Ledger:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.lock_path, "a", encoding="utf-8") as lock:
                 fcntl.flock(lock.fileno(), fcntl.LOCK_EX)     # released when the file closes
-                return self._reserve_locked(line, clock, per_minute, window, day_limit)
+                return self._reserve_locked(line, clock, per_minute, window, day_limit,
+                                            spend_cap)
         except OSError as exc:
             raise LedgerError(f"cannot write the {self.provider} ledger ({type(exc).__name__}), "
                               f"so its quota cannot be counted; nothing was sent (ARC-18)",
                               sent=False) from None
 
     def _reserve_locked(self, line: dict, clock, per_minute: int, window: timedelta,
-                        day_limit) -> Reservation | float:
+                        day_limit, spend_cap: SpendCap | None = None) -> Reservation | float:
         """``reserve``'s one locked step. The clock is read here, under the lock, so a
         reservation is stamped after every one appended before it and is counted by every
         one appended after it."""
@@ -235,6 +288,16 @@ class Ledger:
                     f"today (UTC) by every door on this state directory; nothing more is sent "
                     f"to it until {until:%Y-%m-%d %H:%M} UTC (ARC-8, ARC-18)",
                     provider=self.provider, until=until)
+
+        if spend_cap is not None:
+            spent = self.spent(spend_cap.key)
+            if spent + line["cost_bound"] > spend_cap.usd + 1e-12:
+                raise SpendCapReached(
+                    f"{spend_cap.key}: ${spent:.6f} of its ${spend_cap.usd:.2f} cap is spent or "
+                    f"reserved on {self.provider}, and the next request may cost up to "
+                    f"${line['cost_bound']:.6f}; it is not sent, and the batch resumes only "
+                    f"under a higher cap (ARC-21)", key=spend_cap.key, cap=spend_cap.usd,
+                    spent=spent, bound=line["cost_bound"])
 
         recent = _in_window(seen, now, window)
         if len(recent) >= per_minute:
@@ -269,6 +332,31 @@ def _draws_on_allowance(record: Mapping) -> bool:
 def _count_on(seen, day: date) -> int:
     return sum(1 for when, record in seen
                if when.date() == day and _draws_on_allowance(record))
+
+
+def _spent(records, key: str) -> float:
+    """What spend key ``key`` has spent over ``records`` (a whole ledger), in US dollars."""
+    bounds: dict[str, float] = {}
+    for record in records:
+        if record.get("status") == RESERVED and record.get("spend") == key \
+                and isinstance(record.get("rid"), str):
+            bound = record.get("cost_bound")
+            ok = isinstance(bound, (int, float)) and not isinstance(bound, bool) \
+                and math.isfinite(bound)
+            bounds[record["rid"]] = float(bound) if ok else math.inf
+    outcomes = {record["rid"]: record for record in records
+                if record.get("status") != RESERVED and record.get("rid") in bounds}
+    total = 0.0
+    for rid, bound in bounds.items():
+        outcome = outcomes.get(rid)
+        cost = outcome.get("cost") if outcome is not None else None
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool) and math.isfinite(cost):
+            total += max(0.0, float(cost))
+        elif outcome is not None and str(outcome.get("status", "")).startswith("http-"):
+            continue                        # the provider answered with an error: not billed
+        else:
+            total += bound                  # in flight, or no answer arrived
+    return total
 
 
 def _cap_lifts(seen, now: datetime) -> datetime | None:

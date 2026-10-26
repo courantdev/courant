@@ -61,6 +61,12 @@ class ResidualPayload(BaseModel):
     time: float | None = None                       # simulation time
     iteration: int | None = None                    # global step index
     initial_residuals: dict[str, float] = Field(default_factory=dict)
+    #: Each field's initial residual at its FIRST solve in this step. `initial_residuals` keeps
+    #: the last solve (a field solved several times in a step, p under non-orthogonal
+    #: correctors or p_rgh under PISO correctors, overwrites it). OpenFOAM's residualControl
+    #: compares the first (`simpleControl::criteriaSatisfied`, `sp.first()`), so the gate's
+    #: declared-tolerance bar reads this map (TRD VER-16).
+    first_initial_residuals: dict[str, float] = Field(default_factory=dict)
     final_residuals: dict[str, float] = Field(default_factory=dict)
     solver_iterations: dict[str, int] = Field(default_factory=dict)
     courant_mean: float | None = None

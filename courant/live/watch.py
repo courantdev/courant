@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from courant.live.engine import CONVERGED, FAILING, FINISHED, RUNNING, LiveEngine, LiveState
+from courant.watcher.exitcode import ends_in_end
 
 #: Either verdict major's answer to its exit code (GATE-1: accept 0, reject 2, insufficient 3).
 EXIT = {"TRUSTWORTHY": 0, "NOT_TRUSTWORTHY": 2, "NOT_ASSESSABLE": 3,
@@ -23,6 +24,8 @@ EXIT = {"TRUSTWORTHY": 0, "NOT_TRUSTWORTHY": 2, "NOT_ASSESSABLE": 3,
 EXIT_IDLE = 3
 EXIT_FAILING = 2
 HEAD_BYTES = 20_000
+#: How much of the log's end `End` is looked for in: enough for a parallel run's finalize lines.
+TAIL_BYTES = 4_096
 #: LIVE-6: never spend more than about a fifth of a core on evaluation.
 OVERHEAD_FACTOR = 5.0
 CONVERGENCE_MIN_STEPS = 200
@@ -93,8 +96,12 @@ def run_watch(chunks: Iterable, *, case_dir: Path | None, log_path: Path,
         if len(head) < HEAD_BYTES:
             head = (head + text)[:HEAD_BYTES]
         engine.feed(text)
-        tail = (tail + text)[-64:]
-        if tail.rstrip().endswith("\nEnd") or tail.rstrip() == "End":
+        tail = (tail + text)[-TAIL_BYTES:]
+        # VER-3's one reading of End, as it applies to a log still being written: the last End,
+        # followed by nothing but what a finished parallel run prints after it ("Finalising
+        # parallel run", Open MPI's help lines), which `courant verify` reads as ended too. A
+        # utility's End with the solver's banner arriving after it is not the run's end.
+        if ends_in_end(tail, last=True):
             ended = True
             break
         now = clock()
@@ -115,6 +122,7 @@ def run_watch(chunks: Iterable, *, case_dir: Path | None, log_path: Path,
         if st.state == FAILING and exit_on_fail:
             return WatchOutcome(EXIT_FAILING, st, None, evaluations, eval_cost)
 
+    ended = ended or ends_in_end(tail, last=True)       # the stream is over: its last line too
     st = engine.state()
     show(st, advisory)
     if st.state == FAILING and exit_on_fail:

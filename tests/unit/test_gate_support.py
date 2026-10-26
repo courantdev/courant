@@ -66,3 +66,13 @@ def test_the_cli_pseudonymise_flag_writes_a_pseudonymised_bundle(tmp_path):
     assert doc["pseudonymised"] is True and doc["verdict"]["run"]["id"] == "run1"
     assert "cfl_blowup" not in out.read_text()
     assert str(tmp_path) not in out.read_text()
+
+
+def test_openfoams_own_file_names_are_kept_whether_or_not_they_are_compressed():
+    """OpenFOAM reads `phi.gz` where `phi` is absent; the name is its vocabulary either way. A
+    customer's own file name is pseudonymised, compressed or not."""
+    names = support._names({"run": {"inputs": [
+        {"path": p} for p in ("2111/phi", "2111/phi.gz", "2111/U.gz", "constant/fvModels",
+                              "constant/fvOptions.gz", "system/fvOptions",
+                              "constant/myNozzleDict.gz")]}})
+    assert names == {"myNozzleDict.gz": "file1"}

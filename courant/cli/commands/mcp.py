@@ -38,10 +38,16 @@ def client_config(roots: list[str]) -> str:
 
 
 def mcp(
-    root: list[str] = typer.Option(None, "--root", help="A directory the agent may read runs from. Repeatable. Default: the current directory."),
+    root: list[str] = typer.Option(None, "--root", help="A directory the agent may read runs from. Repeatable. Default: the current directory, unless that is /, your home directory or a directory that holds it (/Users, /home)."),
     print_config: bool = typer.Option(False, "--print-config", help="Print the client configuration (Claude Code, Cursor, Codex) for this server and exit."),
+    timeout: float = typer.Option(None, "--timeout", help="Seconds a tool call blocked on I/O or running Python code may run before it is answered with an error (default 600; 0: no limit). A call inside C code that holds the interpreter's lock is answered when that code returns (MCP-5)."),
 ) -> None:
     """Serve Courant's read-only tools to an AI agent over MCP (stdio)."""
+    from courant.mcp.server import unconfined_default
+
+    if (why := unconfined_default(list(root or []))) is not None:
+        print(f"courant mcp: {why}", file=sys.stderr)
+        raise typer.Exit(2)
     if print_config:
         sys.stdout.write(client_config([str(Path(r).resolve())
                                         for r in (root or ["."])]))
@@ -52,6 +58,7 @@ def mcp(
         print("courant mcp needs the MCP extra: pip install 'courant-dev[mcp]' "
               "(this build was made without it)", file=sys.stderr)
         raise typer.Exit(4)
-    from courant.mcp.server import build
+    from courant.mcp.server import TIMEOUT, build
 
-    build(list(root) if root else ["."]).run("stdio")
+    build(list(root) if root else ["."],
+          timeout=TIMEOUT if timeout is None else timeout).run("stdio")

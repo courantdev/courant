@@ -1,0 +1,26 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  pitzDaily's SIMPLE dictionary with residualControl removed, as a team with a
+  fixed iteration budget runs it (certification/monitored/*__fixed_budget).
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      fvSolution;
+}
+
+SIMPLE
+{
+    nNonOrthogonalCorrectors 0;
+    consistent      yes;
+}
+
+relaxationFactors
+{
+    equations
+    {
+        U               0.9;
+        ".*"            0.9;
+    }
+}

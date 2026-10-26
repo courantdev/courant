@@ -31,6 +31,9 @@ ones a wrong answer costs us.
 
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
+
 #: Solvers that read `adjustTimeStep`, verified against v2406 sources.
 ADAPTIVE_TIMESTEP_SOLVERS = frozenset({
     "pimpleFoam", "rhoPimpleFoam", "rhoPimpleAdiabaticFoam", "SRFPimpleFoam",
@@ -87,23 +90,206 @@ STEADY_SOLVERS = frozenset({
 })
 
 
-def honours_adjust_time_step(solver: str | None) -> bool:
+# ------------------------------------------------------------------ v2406's own list (GATE-13)
+#
+# The sets above are v0.5.0's: a hand-picked subset, and an internal evaluation (20 Oct 2026)
+# ran a solver in none of them, `buoyantBoussinesqSimpleFoam`, whose `SIMPLE/residualControl`
+# VER-16 therefore could not read. The sets below complete them for ESI OpenFOAM v2406, read on
+# 20 Oct 2026 from the pinned image's own sources (`courant.config.OPENFOAM_IMAGE`), not
+# recalled. The facts are a generated file, `tests/fixtures/solvers/v2406.json`
+# (`scripts/v2406_solvers.py`), and `tests/unit/test_solvers_v2406.py` holds every table below
+# to it: every executable a `Make/files` under `applications/solvers` builds, and in its main
+# `.C` file (or the one it `#include`s whole: MPPICFoam is DPMFoam.C, MPPICDyMFoam is
+# DPMDyMFoam.C, reactingHeterogenousParcelFoam is reactingParcelFoam.C, simpleSprayFoam is
+# simpleReactingParcelFoam.C) the control it builds and the time-step file it includes:
+#
+#   simpleControl + `simple.loop()`        the run ends when SIMPLE/residualControl is met
+#   setDeltaT.H, setMultiRegionDeltaT.H    reads `adjustTimeStep` (each such file in v2406 does)
+#   no fvm::ddt in its equations           steady by construction
+#
+# Solvers from `modules/` (OpenQBMM's pbeFoam and the like) are not in `applications/solvers` and
+# are in no set. Every name ends in "Foam", so `_base` already resolved each one; what changes is
+# what the tables say about it, and only under `--checks next` (`solvers.v2406`, TRD VER-21):
+# under the default the sets above decide, as in v0.5.0.
+
+#: Steady by construction and missing above. All but two loop on `simple.loop()`
+#: (`V2406_SIMPLE_LOOP`): `chtMultiRegionSimpleFoam` reads each region's `SIMPLE` dictionary for
+#: its correctors and has no `residualControl` at all, and `overPotentialFoam` has no time loop.
+V2406_STEADY = frozenset({
+    "buoyantBoussinesqSimpleFoam", "overSimpleFoam", "overRhoSimpleFoam",
+    "simpleReactingParcelFoam", "simpleCoalParcelFoam", "simpleSprayFoam",
+    "chtMultiRegionSimpleFoam", "overPotentialFoam",
+})
+
+#: The steady solvers whose run ends on `SIMPLE/residualControl` (`simpleControl::loop`), beyond
+#: `STEADY_SOLVERS`. `residual_control_loop` reads them in either mode: it is consulted only by
+#: the bar per field, which is itself behind `--checks next` (`residual.control`, VER-16).
+V2406_SIMPLE_LOOP = frozenset({
+    "buoyantBoussinesqSimpleFoam", "overSimpleFoam", "overRhoSimpleFoam",
+    "simpleReactingParcelFoam", "simpleCoalParcelFoam", "simpleSprayFoam",
+})
+
+#: Transient solvers that loop on `simple.loop()` too, so their run also ends when
+#: `SIMPLE/residualControl` is met (`residual_control_loop`). Each solves a time derivative.
+V2406_TRANSIENT_SIMPLE_LOOP = frozenset({
+    "scalarTransportFoam", "thermoFoam", "overLaplacianDyMFoam", "solidFoam",
+})
+
+#: In `STEADY_SOLVERS` with no `simple.loop()`: v2406's `potentialFoam.C` has no time loop (it
+#: iterates `potentialFlow.correctNonOrthogonal()` once through), so no `residualControl` ends it.
+V2406_NO_SIMPLE_LOOP = frozenset({"potentialFoam"})
+
+#: In `STEADY_SOLVERS` and wrong there: v2406's `laplacianFoam.C` solves `fvm::ddt(T)` (its
+#: tutorial, flange, marches in time with Euler). Not steady under `--checks next`.
+V2406_NOT_STEADY = frozenset({"laplacianFoam"})
+
+#: Read `adjustTimeStep` (their main file includes setDeltaT.H or setMultiRegionDeltaT.H) and are
+#: missing from `ADAPTIVE_TIMESTEP_SOLVERS`.
+V2406_ADAPTIVE = frozenset({
+    "XiDyMFoam", "coldEngineFoam", "sonicDyMFoam", "liquidFilmFoam",
+    "chtMultiRegionTwoPhaseEulerFoam", "solidFoam",
+    "DPMDyMFoam", "MPPICFoam", "MPPICDyMFoam", "coalChemistryFoam", "kinematicParcelFoam",
+    "reactingParcelFoam", "reactingHeterogenousParcelFoam", "sprayDyMFoam",
+    "cavitatingDyMFoam", "compressibleInterDyMFoam", "compressibleInterFilmFoam",
+    "compressibleInterIsoFoam", "overCompressibleInterDyMFoam",
+    "compressibleMultiphaseInterFoam", "icoReactingMultiphaseInterFoam",
+    "interCondensatingEvaporatingFoam", "interPhaseChangeDyMFoam",
+    "overInterPhaseChangeDyMFoam", "potentialFreeSurfaceDyMFoam",
+    "reactingMultiphaseEulerFoam", "reactingTwoPhaseEulerFoam",
+})
+
+#: In `ADAPTIVE_TIMESTEP_SOLVERS` and wrong there: v2406's `overPotentialFoam.C` builds a
+#: `pisoControl` for its non-orthogonal correctors, has no time loop and includes no setDeltaT.H.
+V2406_NOT_ADAPTIVE = frozenset({"overPotentialFoam"})
+
+#: Ignore `adjustTimeStep` (no setDeltaT.H, no setMultiRegionDeltaT.H) and are missing from
+#: `FIXED_TIMESTEP_SOLVERS`; named so `is_known` knows them.
+V2406_FIXED = frozenset({
+    "dnsFoam", "acousticFoam", "overLaplacianDyMFoam", "overPotentialFoam", "overRhoSimpleFoam",
+    "sonicLiquidFoam", "dsmcFoam", "mdEquilibrationFoam", "mdFoam", "magneticFoam", "mhdFoam",
+    "financialFoam", "sphereSurfactantFoam", "surfactantFoam", "buoyantBoussinesqSimpleFoam",
+    "chtMultiRegionSimpleFoam", "thermoFoam", "adjointOptimisationFoam", "nonNewtonianIcoFoam",
+    "overSimpleFoam", "icoUncoupledKinematicParcelFoam", "icoUncoupledKinematicParcelDyMFoam",
+    "simpleReactingParcelFoam", "simpleCoalParcelFoam", "simpleSprayFoam",
+    "uncoupledKinematicParcelFoam", "uncoupledKinematicParcelDyMFoam", "solidDisplacementFoam",
+    "solidEquilibriumDisplacementFoam",
+})
+
+
+def _v2406(checks: str) -> bool:
+    from courant.verify.checks import enabled
+
+    return enabled("solvers.v2406", checks)
+
+
+def _steady_set(checks: str) -> frozenset[str]:
+    if _v2406(checks):
+        return (STEADY_SOLVERS | V2406_STEADY) - V2406_NOT_STEADY
+    return STEADY_SOLVERS
+
+
+def _adaptive_set(checks: str) -> frozenset[str]:
+    if _v2406(checks):
+        return (ADAPTIVE_TIMESTEP_SOLVERS | V2406_ADAPTIVE) - V2406_NOT_ADAPTIVE
+    return ADAPTIVE_TIMESTEP_SOLVERS
+
+
+def _known_set(checks: str) -> frozenset[str]:
+    known = ADAPTIVE_TIMESTEP_SOLVERS | FIXED_TIMESTEP_SOLVERS | STEADY_SOLVERS
+    return known | V2406_STEADY | V2406_ADAPTIVE | V2406_FIXED if _v2406(checks) else known
+
+
+#: Solvers whose volumetric face flux `phi` is divergence-free at every step, steady or
+#: transient: each solves a pressure (or `p_rgh`) equation that is continuity for a fluid, or a
+#: mixture of phases, of constant density (the Boussinesq solvers' density varies only in the
+#: buoyancy term). On a fixed mesh the net flux through the boundary of such a run is zero to
+#: the pressure solver's tolerance (TRD VER-18). Not here: a solver whose volumetric flux carries
+#: an expansion (compressible phases: `compressibleInterFoam`; phase change: `cavitatingFoam`,
+#: `interPhaseChangeFoam`; a dispersed phase's volume fraction: `DPMFoam`, the Euler-Euler
+#: solvers), a free surface the mesh does not follow (`potentialFreeSurfaceFoam`), and every
+#: solver that writes a mass flux, whose boundary balances only at a steady state. A listed
+#: solver's flux is divergence-free only when the case adds no mass or volume itself: from
+#: OpenFOAM.org 9 phase change is interFoam with the `VoFCavitation` fvModel, and `massSource`
+#: and `volumeSource` add to continuity on any solver. The case's `fvModels` and `fvOptions`
+#: decide that, not this table (`courant.verification._fluid_reader`, VER-18).
+SOLENOIDAL_SOLVERS = frozenset({
+    "icoFoam", "nonNewtonianIcoFoam", "pisoFoam", "pimpleFoam", "SRFPimpleFoam",
+    "simpleFoam", "SRFSimpleFoam", "porousSimpleFoam", "adjointShapeOptimizationFoam",
+    "buoyantBoussinesqSimpleFoam", "buoyantBoussinesqPimpleFoam",
+    "interFoam", "interIsoFoam", "interMixingFoam", "multiphaseInterFoam",
+})
+
+
+def keeps_volume_flux_solenoidal(solver: str | None) -> bool:
+    """Whether this solver's volumetric `phi` is divergence-free at every step (VER-18). An
+    unknown solver gets False: a balance it need not keep is not judged."""
+    return bool(solver) and _base(solver) in SOLENOIDAL_SOLVERS
+
+
+#: The solvers whose run ends on a `PIMPLE/residualControl` met, OpenFOAM.org's `foamRun` and
+#: `foamMultiRun` (v11 on): their PIMPLE `residualControl` holds one scalar per field and is the
+#: run's convergence criterion, while the outer loop's is `outerCorrectorResidualControl`.
+#: ESI's PIMPLE `residualControl` (a dictionary per field, `tolerance` and `relTol`) only ends
+#: the outer-corrector loop inside a time step, so it is no run criterion.
+PIMPLE_CONVERGENCE_SOLVERS = frozenset({"foamRun", "foamMultiRun"})
+
+
+def is_multi_run(solver: str | None) -> bool:
+    """Whether this is OpenFOAM.org's `foamMultiRun`, whose log names each line's region in a
+    prefix (`courant.watcher.parser`, TRD VER-20)."""
+    return bool(solver) and _base(solver) == "foamMultiRun"
+
+
+def residual_control_loop(solver: str | None) -> str | None:
+    """Which `fvSolution` dictionary holds this solver's run-level `residualControl`.
+
+    `"SIMPLE"` for the solvers that loop on `simple.loop()` (`simpleControl::criteriaSatisfied`
+    ends the run), the transient ones among them; `"PIMPLE"` for OpenFOAM.org's `foamRun`
+    family; None for everything else: a transient ESI solver's PIMPLE `residualControl` is a
+    tolerance on the outer loop, potentialFoam has no time loop, and an unknown solver's is not
+    known to be read at all. Read by the solver's algorithm, never by which dictionaries the
+    file happens to contain: a `PIMPLE` block left in a simpleFoam case is never read, and a
+    stale `SIMPLE` block in a foamRun case is not either. Asked only by VER-16's bar per field
+    (behind `--checks next`, and only on a run that marches to a steady state), so it takes
+    v2406's reading in either mode.
+    """
+    if not solver:
+        return None
+    base = _base(solver)
+    if ((base in STEADY_SOLVERS and base not in V2406_NO_SIMPLE_LOOP)
+            or base in V2406_SIMPLE_LOOP or base in V2406_TRANSIENT_SIMPLE_LOOP):
+        return "SIMPLE"
+    if base in PIMPLE_CONVERGENCE_SOLVERS:
+        return "PIMPLE"
+    return None
+
+
+def honours_adjust_time_step(solver: str | None, checks: str = "default") -> bool:
     """Whether setting `adjustTimeStep` on this solver does anything.
 
     Unknown solvers get ``False``. That is the conservative direction: proposing
     a fix that silently does nothing wastes an attempt from a small budget and
     misinforms the report, whereas declining to propose it only means the loop
     reaches for the timestep reduction instead — which works on every solver.
+
+    Under `--checks next` (`solvers.v2406`) the table is v2406's own list (`V2406_ADAPTIVE`,
+    less `V2406_NOT_ADAPTIVE`); under the default, v0.5.0's.
     """
     if not solver:
         return False
-    return _base(solver) in ADAPTIVE_TIMESTEP_SOLVERS
+    return _base(solver) in _adaptive_set(checks)
 
 
-def is_steady(solver: str | None) -> bool:
+def is_steady(solver: str | None, checks: str = "default") -> bool:
+    """Whether this solver is steady by construction (no time derivative in its equations).
+
+    Under `--checks next` (`solvers.v2406`) with v2406's own steady solvers (`V2406_STEADY`);
+    under the default, v0.5.0's `STEADY_SOLVERS`. A case's declared `ddtSchemes` comes first
+    (`CaseConfig.is_steady`); this is the fallback when it was not read.
+    """
     if not solver:
         return False
-    return _base(solver) in STEADY_SOLVERS
+    return _base(solver) in _steady_set(checks)
 
 
 #: Parallel launchers. A production OpenFOAM run is never invoked bare — it is
@@ -139,7 +325,9 @@ def _base(solver: str) -> str:
     if not tokens:
         return ""
 
-    known = ADAPTIVE_TIMESTEP_SOLVERS | FIXED_TIMESTEP_SOLVERS | STEADY_SOLVERS
+    # Every table, v2406's included, in either mode: which token is the solver is a fact about
+    # the command line, and each v2406 name ends in "Foam", which the rule below already takes.
+    known = _known_set("next")
     for tok in tokens:
         if tok in known:
             return tok
@@ -163,8 +351,81 @@ def _base(solver: str) -> str:
     return tokens[0]
 
 
-def is_known(solver: str | None) -> bool:
-    """Whether the capability table names this solver (after stripping any MPI wrapper)."""
+def same_solver(a: str, b: str) -> bool:
+    """Whether two commands run the same solver executable, decoration removed (`_base`)."""
+    return _base(a) == _base(b)
+
+
+def is_known(solver: str | None, checks: str = "default") -> bool:
+    """Whether the capability table names this solver (after stripping any MPI wrapper); under
+    `--checks next` (`solvers.v2406`), v2406's own list included."""
     if not solver:
         return False
-    return _base(solver) in (ADAPTIVE_TIMESTEP_SOLVERS | FIXED_TIMESTEP_SOLVERS | STEADY_SOLVERS)
+    return _base(solver) in _known_set(checks)
+
+
+# ---------------------------------------------------------------- the log's Exec lines
+#: An OpenFOAM banner's `Exec   : <program> <arguments>` line.
+_EXEC_LINE = re.compile(r"^Exec[ \t]*:[ \t]*(\S+)([^\n]*)$", re.M)
+#: `nProcs : N` in a banner: printed by a parallel run only.
+_NPROCS = re.compile(r"^nProcs[ \t]*:[ \t]*(\d{1,9})", re.M)
+#: How far past its Exec line a banner's `nProcs` is looked for (a banner is about 12 lines).
+_BANNER = 2000
+
+
+@dataclass(frozen=True)
+class Exec:
+    """One `Exec :` line of a log: the program, without its directory, its arguments, and the
+    `nProcs` its own banner printed (None when the banner prints none, as a serial run's)."""
+
+    program: str
+    args: tuple[str, ...] = ()
+    nprocs: int | None = None
+
+    @property
+    def parallel(self) -> bool:
+        """`-parallel` among its arguments, or its banner's `nProcs` above 1."""
+        return "-parallel" in self.args or (self.nprocs or 0) > 1
+
+    def option(self, name: str) -> str | None:
+        """The value after `-<name>` among its arguments (`foamRun -solver incompressibleFluid`)."""
+        for i, a in enumerate(self.args[:-1]):
+            if a == f"-{name}":
+                return self.args[i + 1]
+        return None
+
+
+def exec_lines(log_text: str | None) -> list[Exec]:
+    """Every `Exec :` line of the log, in order. A log written by several applications
+    (`(blockMesh; icoFoam) > log.run`) has one per application."""
+    text = log_text or ""
+    found = list(_EXEC_LINE.finditer(text))
+    out = []
+    for i, m in enumerate(found):
+        stop = found[i + 1].start() if i + 1 < len(found) else len(text)
+        banner = _NPROCS.search(text, m.end(), min(stop, m.end() + _BANNER))
+        out.append(Exec(m.group(1).rsplit("/", 1)[-1], tuple(m.group(2).split()),
+                        int(banner.group(1)) if banner else None))
+    return out
+
+
+def names_a_solver(program: str | None) -> bool:
+    """Whether `program` is a solver: one the capability tables name or, by OpenFOAM's naming of
+    its solvers, a program whose name ends in `Foam` (a custom or in-house solver, as `_base`
+    reads one). A utility (blockMesh, decomposePar, postProcess, setFields) is not."""
+    if not program:
+        return False
+    known = ADAPTIVE_TIMESTEP_SOLVERS | FIXED_TIMESTEP_SOLVERS | STEADY_SOLVERS
+    return program in known or (program.endswith("Foam") and program not in _LAUNCHERS)
+
+
+def solver_exec(log_text: str | None) -> Exec | None:
+    """The log's solver: its last `Exec :` line that names a solver (`names_a_solver`). A log
+    written by several applications names each (`(blockMesh; icoFoam) > log.run`): its first is
+    blockMesh, and the solver is the last solver among them. None when no Exec line names one (a
+    utility's log, a log cut at its head, `-noBanner`): which solver ran is then not known.
+
+    The one reading of which program ran: conformance's solver item and the verdict's
+    `run.solver` (`courant.spec.as_run`, `courant.verify.pipeline`), and the log's parallel
+    signal (`courant.case.mesh.ran_parallel`)."""
+    return next((e for e in reversed(exec_lines(log_text)) if names_a_solver(e.program)), None)

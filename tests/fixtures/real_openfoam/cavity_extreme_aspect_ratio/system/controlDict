@@ -1,0 +1,42 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  The icoFoam cavity tutorial's controlDict (ESI v2406) with the RM-35 run
+  c10k.icoFoam_cavity.019.catalogue's own edit: deltaT 0.0035. Its mesh is written by
+  the test (tests/unit/test_mesh_polymesh_aspect.py) as the fault's blockMeshDict meshes it.
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      controlDict;
+}
+
+application     icoFoam;
+
+startFrom       startTime;
+
+startTime       0;
+
+stopAt          endTime;
+
+endTime         0.5;
+
+deltaT          0.0035;
+
+writeControl    timeStep;
+
+writeInterval   20;
+
+purgeWrite      0;
+
+writeFormat     ascii;
+
+writePrecision  6;
+
+writeCompression off;
+
+timeFormat      general;
+
+timePrecision   6;
+
+runTimeModifiable true;

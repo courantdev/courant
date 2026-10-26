@@ -28,15 +28,24 @@ def init(
     out: str = typer.Option(None, "-o", "--out", help="Write the specification here (default: stdout)."),
     task: str = typer.Option(None, "--task", help="One line saying what the task asks for."),
     no_mesh: bool = typer.Option(False, "--no-mesh", help="Leave the mesh cell counts out (they are a modelling choice)."),
+    checks: str = typer.Option("default", "--checks", help="'default', or 'next': leave out "
+                               "blockMeshDict's cells or scale when the case's own mesh does "
+                               "not give them, as `--checks next` compares them with the mesh "
+                               "the solver read (TRD SPEC-13)."),
 ) -> None:
     """Draft a specification from a reference case. Review it, then lock it with `courant spec hash`."""
     from courant.spec import draft_spec
+    from courant.verify.checks import MODES
 
+    if checks not in MODES:
+        print(f"courant spec init: --checks is one of {', '.join(MODES)}, not {checks!r}",
+              file=sys.stderr)
+        raise typer.Exit(4)
     if not Path(case).is_dir():
         print(f"courant spec init: no such case directory: {case}", file=sys.stderr)
         raise typer.Exit(4)
     try:
-        spec = draft_spec(case, task=task, include_mesh=not no_mesh)
+        spec = draft_spec(case, task=task, include_mesh=not no_mesh, checks=checks)
     except ValueError as exc:
         print(f"courant spec init: {exc}", file=sys.stderr)
         raise typer.Exit(4) from exc
@@ -70,11 +79,20 @@ def check(
     spec: str = typer.Option(..., "--spec", help="The task specification (courant.spec/1)."),
     spec_sha256: str = typer.Option(None, "--spec-sha256", help="The hash it was locked at."),
     as_json: bool = typer.Option(False, "--json", help="Print the conformance block as JSON."),
+    checks: str = typer.Option("default", "--checks", help="'default', or 'next': also compare "
+                               "the mesh items with the mesh the solver read, read stopAt and "
+                               "the turbulence switch, and read 0/ values at the time the run "
+                               "starts from (TRD SPEC-13). No log is read here."),
 ) -> None:
     """Is this case the problem that was asked? Every named value, compared to the case."""
     from courant.spec import SpecError, check_conformance, load_spec
+    from courant.verify.checks import MODES
     from courant.verify.schema import canonical_json
 
+    if checks not in MODES:
+        print(f"courant spec check: --checks is one of {', '.join(MODES)}, not {checks!r}",
+              file=sys.stderr)
+        raise typer.Exit(4)
     if not Path(case).is_dir():
         print(f"courant spec check: no such case directory: {case}", file=sys.stderr)
         raise typer.Exit(4)
@@ -84,7 +102,8 @@ def check(
         print(f"courant spec check: {exc}", file=sys.stderr)
         raise typer.Exit(4) from exc
     locked = spec_sha256.strip().lower() if spec_sha256 else None
-    block = check_conformance(spec_model, case, spec_sha256=sha, locked_sha256=locked)
+    block = check_conformance(spec_model, case, spec_sha256=sha, locked_sha256=locked,
+                              checks=checks)
     if locked and locked != sha:
         print(f"SPECIFICATION CHANGED  {spec} is {sha[:12]}, locked at {locked[:12]}")
         raise typer.Exit(3)

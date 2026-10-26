@@ -236,7 +236,8 @@ CONFIG_FIELDS_VERBATIM: frozenset[str] = frozenset({
     "ddt_scheme", "div_schemes",
     "relaxation_factors", "relaxation_scopes", "linear_solvers",
     "n_non_orthogonal_correctors", "n_correctors", "n_outer_correctors",
-    "turbulence_type", "turbulence_model", "transport",
+    "residual_control",                 # field name or pattern -> tolerance, like relaxation
+    "turbulence_type", "turbulence_model", "turbulence_switch", "transport",
 })
 
 #: `boundary` maps **patch name** -> {field: bcType}. Patch names *are*

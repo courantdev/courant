@@ -172,10 +172,10 @@ def _chart(series: dict[str, list[tuple[float, float]]], *, log_y: bool, title: 
 def _series_from_inputs(inputs) -> tuple[dict, dict, dict, int | None, str | None]:
     """Residuals, Courant number and the binding monitor's series, from the run's own files."""
     from courant.events.core import EventKind
-    from courant.watcher.exitcode import infer_exit_code
+    from courant.watcher.exitcode import verdict_exit_code
     from courant.watcher.parser import LogParser
 
-    code = inputs.exit_code if inputs.exit_code is not None else infer_exit_code(inputs.log_text)
+    code = verdict_exit_code(inputs.log_text, inputs.exit_code, inputs.checks)   # the verdict's
     events = LogParser(run_id=inputs.run_id).parse_text(inputs.log_text, return_code=code)
     res: dict[str, list] = {}
     co: dict[str, list] = {}
@@ -193,7 +193,8 @@ def _series_from_inputs(inputs) -> tuple[dict, dict, dict, int | None, str | Non
     if inputs.case_dir:
         from courant.converge.series import assess_case
 
-        conv = assess_case(inputs.case_dir, log_text=inputs.log_text, events=events)
+        conv = assess_case(inputs.case_dir, log_text=inputs.log_text, events=events,
+                           exit_code=code)
         binding = conv.data.get("binding_monitor")
         stop = conv.data.get("converged_at_step")
         rows = conv.data.get("monitors") or {}

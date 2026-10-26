@@ -19,8 +19,9 @@ What version 2 adds:
   states what the policy was already told: the pipeline passes the same `extracted` flag to
   `policy.apply_conformance`, where VER-5.12 turns a mismatch into `insufficient`, so the label
   never stands in for the rule.
-- `run.fork` and `run.solver_version` (ADP-1). Always present; `null` until the banner reader
-  fills them.
+- `run.fork` and `run.solver_version` (ADP-1). Always present: what `courant.forks` read from
+  the log's banner or the header of a file the run wrote, `null` where it read nothing (and
+  where only `system/controlDict`'s header, an input, names one).
 - With no specification, the not-checked list ends with `sentences.NO_SPEC` (GATE-2).
 
 Readers accept both majors (`load_verdict`). Every surface writes version 2 by default and
@@ -162,16 +163,28 @@ def extracted_unconfirmed(spec: Mapping | None) -> bool:
     return bool(prov.get("extracted_by")) and not prov.get("confirmed_by")
 
 
-def insufficient_reason(rule: str, conformance: ConformanceBlock | None = None) -> Reason:
+#: VER-5.16: the value `insufficient.truncated_log` carries, what was inferred said as inferred.
+#: Courant 0.5.0 printed "return code 1" for the same log, a value no process had returned.
+TRUNCATED_LOG_VALUE = "exit code unknown, inferred: the log does not end in End"
+
+
+def insufficient_reason(rule: str, conformance: ConformanceBlock | None = None, *,
+                        fork: str | None = None, solver_version: str | None = None) -> Reason:
     """GATE-4. The one reason an `insufficient` verdict carries: a code from the closed table
     in `sentences.INSUFFICIENT`, its fixed sentence, and (where the evidence is in the verdict)
-    the hashes or the items it rests on. A rule outside the table raises."""
+    the hashes, the items or the version it rests on. A rule outside the table raises."""
+    from courant import forks
+
     entry = sentences.insufficient_for(rule)
     threshold = value = None
-    if conformance is not None and entry.name == "spec_hash_mismatch":
+    if entry.name == "truncated_log":
+        value = TRUNCATED_LOG_VALUE
+    elif conformance is not None and entry.name == "spec_hash_mismatch":
         threshold, value = conformance.locked_sha256, conformance.spec_sha256
     elif conformance is not None and entry.name == "spec_value_unreadable":
         value = ", ".join(i.name for i in conformance.items if i.conforms is None) or None
+    elif entry.name == "unsupported_version":          # VER-5.10: what was read, against the set
+        threshold, value = forks.measured_label(), forks.label(fork, solver_version)
     return Reason(code=entry.code, kind="insufficient", severity="major", summary=entry.sentence,
                   input=entry.input, method=entry.method, threshold=threshold, value=value)
 
@@ -188,7 +201,9 @@ def to_v2(v1: Verdict, *, extracted: bool = False, fork: str | None = None,
     if v1.verdict == "NOT_ASSESSABLE":
         # After the conformance reasons, which VER-6 sorts first, and before everything else.
         lead = sum(1 for _ in itertools.takewhile(lambda r: r.kind == "conformance", reasons))
-        reasons = (*reasons[:lead], insufficient_reason(v1.rule, v1.conformance), *reasons[lead:])
+        reasons = (*reasons[:lead], insufficient_reason(v1.rule, v1.conformance, fork=fork,
+                                                        solver_version=solver_version),
+                   *reasons[lead:])
     return VerdictV2(
         tool=v1.tool,
         run=RunInfoV2(id=v1.run.id, source=v1.run.source, solver=v1.run.solver, fork=fork,

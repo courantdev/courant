@@ -121,8 +121,11 @@ def _event_window(events: list[Event]) -> list[dict]:
 def _config_view(config: CaseConfig | None) -> dict:
     if config is None:
         return {}
-    # curated, non-empty subset
-    d = config.model_dump(mode="json", exclude_none=True)
+    # curated, non-empty subset. `unread_values` quotes what the case wrote (TRD VER-3b) and stays
+    # on this machine: the bundle is what a model and the cloud are sent. `phases` lists the case
+    # author's phase names only so that a finding can name a phase by its place in it
+    # (`config.phase_pseudonym`); it stays here too.
+    d = config.model_dump(mode="json", exclude_none=True, exclude={"unread_values", "phases"})
     return {k: v for k, v in d.items() if v not in ({}, [], None)}
 
 
@@ -136,15 +139,18 @@ def assemble_bundle(
     log_text: str = "",
     cell_count: int | None = None,
     prior_attempts: list[PriorAttempt] | None = None,
+    checks: str = "default",
 ) -> EvidenceBundle:
-    """Deterministically assemble the Evidence Bundle from run artifacts."""
+    """Deterministically assemble the Evidence Bundle from run artifacts. `checks` is
+    `--checks` (GATE-13), for the knowledge base's configuration predicates."""
     config_view = _config_view(config)
     digest = hashlib.sha256(
         json.dumps(config_view, sort_keys=True).encode()
     ).hexdigest()[:12]
 
     series, iters = _extract_residual_series(events)
-    kb_matches = kb.query(findings=findings, log_text=log_text, config=config, top_k=5)
+    kb_matches = kb.query(findings=findings, log_text=log_text, config=config, top_k=5,
+                          checks=checks)
 
     from courant.diagnosis.redact import redact_log_lines, redact_log_window
 

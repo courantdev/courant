@@ -3,12 +3,17 @@
     courant-mcp --root ~/cases --root /scratch/runs
 
 Every tool is read-only and confined to the given roots (default: the
-current directory).
+current directory, unless that is /, the home directory or a directory that
+holds it): every file the tools read, a file reached through a link included,
+and every link in the case.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextvars
+import threading
+from pathlib import Path
 
 from courant.mcp import tools
 
@@ -24,7 +29,68 @@ INSTRUCTIONS = (
 )
 
 
-def build(roots: list[str] | None = None):
+def unconfined_default(roots: list[str]) -> str | None:
+    """Why the server will not start, or None (MCP-3). With no --root the root is the working
+    directory, and MCP hosts often start their servers in / or in the home directory, where that
+    root would let the tools read every file the user can: so in /, in the home directory, and
+    in any directory that holds it (/Users, /home), whose root would hold every user's home
+    directory, the roots must be named."""
+    if roots:
+        return None
+    cwd = Path.cwd().resolve()
+    try:
+        home = Path.home().resolve()
+    except RuntimeError:                                    # no home directory to compare
+        home = None
+    if cwd != Path(cwd.anchor) and (home is None or not home.is_relative_to(cwd)):
+        return None
+    return (f"no --root given, and the working directory is {cwd}, which would let the tools "
+            "read every file under it: name each directory they may read with --root DIR")
+
+
+#: MCP-5: the wall-clock limit on one tool call, in seconds. A call that has not answered by then
+#: is answered with an error, so an agent's call returns when a case file blocks the reader that
+#: opens it (a FIFO). It cannot answer a call stuck in C code that holds the interpreter's lock
+#: (`within`); the readers bound the one such work known, matching a case-written keyword
+#: pattern (`courant.case.wordre`, TRD SPEC-2).
+TIMEOUT = 600.0
+
+
+class TimedOut(Exception):
+    pass
+
+
+def within(seconds: float | None, call):
+    """`call()`, or `TimedOut` once it has run `seconds` without returning (None or 0: no limit).
+
+    It runs on a daemon thread, in a copy of the caller's context. A call that times out is left
+    running, since a thread cannot be stopped, and the answer it may give later is dropped. The
+    caller takes the interpreter's lock back to time out only when the call releases it: a call
+    blocked on I/O or running Python code is answered at `seconds`; one inside C code that holds
+    the lock (Python's `re` backtracking on a pattern, before the keyword matcher was bounded)
+    is not answered until that code returns (the final review of 0.6.0, 21 Oct 2026)."""
+    if not seconds:
+        return call()
+    box: dict = {}
+    context = contextvars.copy_context()
+
+    def run():
+        try:
+            box["value"] = context.run(call)
+        except BaseException as exc:                    # noqa: BLE001 - raised in the caller
+            box["error"] = exc
+
+    worker = threading.Thread(target=run, name="courant-mcp-call", daemon=True)
+    worker.start()
+    worker.join(seconds)
+    if worker.is_alive():
+        raise TimedOut(seconds)
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
+
+
+def build(roots: list[str] | None = None, timeout: float | None = TIMEOUT):
     from mcp.server.mcpserver import MCPServer
     from mcp.types import ToolAnnotations
 
@@ -41,7 +107,11 @@ def build(roots: list[str] | None = None):
         """GATE-10: an expected refusal is reported in words; an unexpected exception is one
         line naming the tool and the version, never a traceback."""
         try:
-            return call()
+            return within(timeout, call)
+        except TimedOut as exc:
+            raise ToolError(f"courant {tool}: no answer within {timeout:g} s, so the call was "
+                            "abandoned (MCP-5). A case file that blocks its reader, or a very "
+                            "large case, can do this.") from exc
         except tools.OutsideRoot as exc:
             raise ToolError(str(exc)) from exc
         except ToolError:
@@ -60,7 +130,9 @@ def build(roots: list[str] | None = None):
         suggested next action that is never applied. Pass `spec`, the task specification
         (courant.spec/1) you were given, and `spec_sha256`, the hash it was locked at, to have
         every value it names checked against the case: a run that solved a different problem
-        is rejected.
+        is rejected. A log still being written (no `End` yet and no fatal error) is
+        insufficient (`insufficient.truncated_log`), not a crash: verify again once the solver
+        has finished.
         """
         return _guard("verify_run", lambda: tools.verify_run(
             path, case_json, spec, spec_sha256, schema, confine=confine))
@@ -104,9 +176,17 @@ def build(roots: list[str] | None = None):
 def main() -> None:
     ap = argparse.ArgumentParser(prog="courant-mcp", description=__doc__)
     ap.add_argument("--root", action="append", default=[],
-                    help="a directory the tools may read (repeatable; default: cwd)")
+                    help="a directory the tools may read (repeatable; default: cwd, unless "
+                         "that is /, the home directory or a directory that holds it)")
+    ap.add_argument("--timeout", type=float, default=TIMEOUT,
+                    help=f"seconds a tool call blocked on I/O or running Python code may run "
+                         f"before it is answered with an error (default {TIMEOUT:g}; 0: no "
+                         "limit); a call inside C code that holds the interpreter's lock is "
+                         "answered when that code returns (MCP-5)")
     args = ap.parse_args()
-    build(args.root).run("stdio")
+    if (why := unconfined_default(args.root)) is not None:
+        ap.error(why)
+    build(args.root, timeout=args.timeout).run("stdio")
 
 
 if __name__ == "__main__":

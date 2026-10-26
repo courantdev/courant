@@ -23,10 +23,11 @@ SCHEMA = "courant.convergence/1"
 def from_run_inputs(inputs, options: Options = Options()) -> Convergence:
     """Assess a run the verifier has already ingested (one parse of the log)."""
     from courant.case.config import CaseConfig
-    from courant.watcher.exitcode import infer_exit_code
+    from courant.watcher.exitcode import verdict_exit_code
     from courant.watcher.parser import LogParser
 
-    exit_code = inputs.exit_code if inputs.exit_code is not None else infer_exit_code(inputs.log_text)
+    exit_code = verdict_exit_code(inputs.log_text, inputs.exit_code,
+                                  getattr(inputs, "checks", "default"))
     events = list(LogParser(run_id=inputs.run_id).parse_text(inputs.log_text, return_code=exit_code))
     config = None
     if inputs.config_view:
@@ -35,7 +36,8 @@ def from_run_inputs(inputs, options: Options = Options()) -> Convergence:
         except Exception:                                   # noqa: BLE001
             config = None
     return assess_case(inputs.case_dir, log_text=inputs.log_text, events=events, config=config,
-                       solver=inputs.solver_hint, options=options, read=inputs.inputs)
+                       solver=inputs.solver_hint, options=options, read=inputs.inputs,
+                       exit_code=exit_code)
 
 
 def convergence_path(path: str | Path, case_json: str | Path | None = None,

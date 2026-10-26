@@ -1,0 +1,961 @@
+{
+ "count": 108,
+ "generated_by": "scripts/v2406_solvers.py",
+ "schema": "v2406-solvers/1",
+ "solvers": {
+  "DPMDyMFoam": {
+   "delta_t": [
+    "setDeltaT.H"
+   ],
+   "dir": "lagrangian/DPMFoam/DPMDyMFoam",
+   "fvm_ddt": true,
+   "main": "lagrangian/DPMFoam/DPMDyMFoam/DPMDyMFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "DPMFoam": {
+   "delta_t": [
+    "setDeltaT.H"
+   ],
+   "dir": "lagrangian/DPMFoam",
+   "fvm_ddt": true,
+   "main": "lagrangian/DPMFoam/DPMFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "MPPICDyMFoam": {
+   "delta_t": [
+    "setDeltaT.H"
+   ],
+   "dir": "lagrangian/DPMFoam/DPMDyMFoam/MPPICDyMFoam",
+   "fvm_ddt": true,
+   "main": "lagrangian/DPMFoam/DPMDyMFoam/DPMDyMFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "MPPICFoam": {
+   "delta_t": [
+    "setDeltaT.H"
+   ],
+   "dir": "lagrangian/DPMFoam/MPPICFoam",
+   "fvm_ddt": true,
+   "main": "lagrangian/DPMFoam/DPMFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "MPPICInterFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H",
+    "setRDeltaT.H"
+   ],
+   "dir": "multiphase/MPPICInterFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/MPPICInterFoam/MPPICInterFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "PDRFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "combustion/PDRFoam",
+   "fvm_ddt": true,
+   "main": "combustion/PDRFoam/PDRFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "SRFPimpleFoam": {
+   "delta_t": [
+    "setDeltaT.H"
+   ],
+   "dir": "incompressible/pimpleFoam/SRFPimpleFoam",
+   "fvm_ddt": true,
+   "main": "incompressible/pimpleFoam/SRFPimpleFoam/SRFPimpleFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "SRFSimpleFoam": {
+   "delta_t": [],
+   "dir": "incompressible/simpleFoam/SRFSimpleFoam",
+   "fvm_ddt": false,
+   "main": "incompressible/simpleFoam/SRFSimpleFoam/SRFSimpleFoam.C",
+   "time_loop": "simple.loop"
+  },
+  "XiDyMFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "combustion/XiFoam/XiDyMFoam",
+   "fvm_ddt": true,
+   "main": "combustion/XiFoam/XiDyMFoam/XiDyMFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "XiEngineFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "combustion/XiFoam/XiEngineFoam",
+   "fvm_ddt": true,
+   "main": "combustion/XiFoam/XiEngineFoam/XiEngineFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "XiFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "combustion/XiFoam",
+   "fvm_ddt": true,
+   "main": "combustion/XiFoam/XiFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "acousticFoam": {
+   "delta_t": [],
+   "dir": "acoustic/acousticFoam",
+   "fvm_ddt": false,
+   "main": "acoustic/acousticFoam/acousticFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "adjointOptimisationFoam": {
+   "delta_t": [],
+   "dir": "incompressible/adjointOptimisationFoam",
+   "fvm_ddt": false,
+   "main": "incompressible/adjointOptimisationFoam/adjointOptimisationFoam.C",
+   "time_loop": null
+  },
+  "adjointShapeOptimizationFoam": {
+   "delta_t": [],
+   "dir": "incompressible/adjointShapeOptimizationFoam",
+   "fvm_ddt": false,
+   "main": "incompressible/adjointShapeOptimizationFoam/adjointShapeOptimizationFoam.C",
+   "time_loop": "simple.loop"
+  },
+  "boundaryFoam": {
+   "delta_t": [],
+   "dir": "incompressible/boundaryFoam",
+   "fvm_ddt": false,
+   "main": "incompressible/boundaryFoam/boundaryFoam.C",
+   "time_loop": "runTime.loop"
+  },
+  "buoyantBoussinesqPimpleFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "heatTransfer/buoyantBoussinesqPimpleFoam",
+   "fvm_ddt": true,
+   "main": "heatTransfer/buoyantBoussinesqPimpleFoam/buoyantBoussinesqPimpleFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "buoyantBoussinesqSimpleFoam": {
+   "delta_t": [],
+   "dir": "heatTransfer/buoyantBoussinesqSimpleFoam",
+   "fvm_ddt": false,
+   "main": "heatTransfer/buoyantBoussinesqSimpleFoam/buoyantBoussinesqSimpleFoam.C",
+   "time_loop": "simple.loop"
+  },
+  "buoyantPimpleFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H",
+    "setRDeltaT.H"
+   ],
+   "dir": "heatTransfer/buoyantPimpleFoam",
+   "fvm_ddt": true,
+   "main": "heatTransfer/buoyantPimpleFoam/buoyantPimpleFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "buoyantSimpleFoam": {
+   "delta_t": [],
+   "dir": "heatTransfer/buoyantSimpleFoam",
+   "fvm_ddt": false,
+   "main": "heatTransfer/buoyantSimpleFoam/buoyantSimpleFoam.C",
+   "time_loop": "simple.loop"
+  },
+  "cavitatingDyMFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "multiphase/cavitatingFoam/cavitatingDyMFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/cavitatingFoam/cavitatingDyMFoam/cavitatingDyMFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "cavitatingFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "multiphase/cavitatingFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/cavitatingFoam/cavitatingFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "chemFoam": {
+   "delta_t": [
+    "setDeltaT.H"
+   ],
+   "dir": "combustion/chemFoam",
+   "fvm_ddt": true,
+   "main": "combustion/chemFoam/chemFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "chtMultiRegionFoam": {
+   "delta_t": [
+    "setMultiRegionDeltaT.H"
+   ],
+   "dir": "heatTransfer/chtMultiRegionFoam",
+   "fvm_ddt": true,
+   "main": "heatTransfer/chtMultiRegionFoam/chtMultiRegionFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "chtMultiRegionSimpleFoam": {
+   "delta_t": [],
+   "dir": "heatTransfer/chtMultiRegionFoam/chtMultiRegionSimpleFoam",
+   "fvm_ddt": false,
+   "main": "heatTransfer/chtMultiRegionFoam/chtMultiRegionSimpleFoam/chtMultiRegionSimpleFoam.C",
+   "time_loop": "runTime.loop"
+  },
+  "chtMultiRegionTwoPhaseEulerFoam": {
+   "delta_t": [
+    "setMultiRegionDeltaT.H"
+   ],
+   "dir": "heatTransfer/chtMultiRegionFoam/chtMultiRegionTwoPhaseEulerFoam",
+   "fvm_ddt": true,
+   "main": "heatTransfer/chtMultiRegionFoam/chtMultiRegionTwoPhaseEulerFoam/chtMultiRegionTwoPhaseEulerFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "coalChemistryFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H",
+    "setRDeltaT.H"
+   ],
+   "dir": "lagrangian/coalChemistryFoam",
+   "fvm_ddt": true,
+   "main": "lagrangian/coalChemistryFoam/coalChemistryFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "coldEngineFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "combustion/coldEngineFoam",
+   "fvm_ddt": true,
+   "main": "combustion/coldEngineFoam/coldEngineFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "compressibleInterDyMFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H",
+    "setRDeltaT.H"
+   ],
+   "dir": "multiphase/compressibleInterFoam/compressibleInterDyMFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/compressibleInterFoam/compressibleInterDyMFoam/compressibleInterDyMFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "compressibleInterFilmFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H",
+    "setRDeltaT.H"
+   ],
+   "dir": "multiphase/compressibleInterFoam/compressibleInterFilmFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/compressibleInterFoam/compressibleInterFilmFoam/compressibleInterFilmFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "compressibleInterFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H",
+    "setRDeltaT.H"
+   ],
+   "dir": "multiphase/compressibleInterFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/compressibleInterFoam/compressibleInterFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "compressibleInterIsoFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "multiphase/compressibleInterFoam/compressibleInterIsoFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/compressibleInterFoam/compressibleInterIsoFoam/compressibleInterIsoFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "compressibleMultiphaseInterFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "multiphase/compressibleMultiphaseInterFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/compressibleMultiphaseInterFoam/compressibleMultiphaseInterFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "dnsFoam": {
+   "delta_t": [],
+   "dir": "DNS/dnsFoam",
+   "fvm_ddt": true,
+   "main": "DNS/dnsFoam/dnsFoam.C",
+   "time_loop": "runTime.loop"
+  },
+  "driftFluxFoam": {
+   "delta_t": [
+    "setDeltaT.H"
+   ],
+   "dir": "multiphase/driftFluxFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/driftFluxFoam/driftFluxFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "dsmcFoam": {
+   "delta_t": [],
+   "dir": "discreteMethods/dsmc/dsmcFoam",
+   "fvm_ddt": false,
+   "main": "discreteMethods/dsmc/dsmcFoam/dsmcFoam.C",
+   "time_loop": "runTime.loop"
+  },
+  "electrostaticFoam": {
+   "delta_t": [],
+   "dir": "electromagnetics/electrostaticFoam",
+   "fvm_ddt": true,
+   "main": "electromagnetics/electrostaticFoam/electrostaticFoam.C",
+   "time_loop": "runTime.loop"
+  },
+  "engineFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "lagrangian/sprayFoam/engineFoam",
+   "fvm_ddt": true,
+   "main": "lagrangian/sprayFoam/engineFoam/engineFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "financialFoam": {
+   "delta_t": [],
+   "dir": "financial/financialFoam",
+   "fvm_ddt": true,
+   "main": "financial/financialFoam/financialFoam.C",
+   "time_loop": "runTime.loop"
+  },
+  "fireFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H",
+    "setMultiRegionDeltaT.H"
+   ],
+   "dir": "combustion/fireFoam",
+   "fvm_ddt": true,
+   "main": "combustion/fireFoam/fireFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "icoFoam": {
+   "delta_t": [],
+   "dir": "incompressible/icoFoam",
+   "fvm_ddt": true,
+   "main": "incompressible/icoFoam/icoFoam.C",
+   "time_loop": "runTime.loop"
+  },
+  "icoReactingMultiphaseInterFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "multiphase/icoReactingMultiphaseInterFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/icoReactingMultiphaseInterFoam/icoReactingMultiphaseInterFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "icoUncoupledKinematicParcelDyMFoam": {
+   "delta_t": [],
+   "dir": "lagrangian/icoUncoupledKinematicParcelFoam/icoUncoupledKinematicParcelDyMFoam",
+   "fvm_ddt": false,
+   "main": "lagrangian/icoUncoupledKinematicParcelFoam/icoUncoupledKinematicParcelDyMFoam/icoUncoupledKinematicParcelDyMFoam.C",
+   "time_loop": "runTime.loop"
+  },
+  "icoUncoupledKinematicParcelFoam": {
+   "delta_t": [],
+   "dir": "lagrangian/icoUncoupledKinematicParcelFoam",
+   "fvm_ddt": false,
+   "main": "lagrangian/icoUncoupledKinematicParcelFoam/icoUncoupledKinematicParcelFoam.C",
+   "time_loop": "runTime.loop"
+  },
+  "interCondensatingEvaporatingFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "multiphase/interCondensatingEvaporatingFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/interCondensatingEvaporatingFoam/interCondensatingEvaporatingFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "interFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H",
+    "setRDeltaT.H"
+   ],
+   "dir": "multiphase/interFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/interFoam/interFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "interIsoFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "multiphase/interIsoFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/interIsoFoam/interIsoFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "interMixingFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H",
+    "setRDeltaT.H"
+   ],
+   "dir": "multiphase/interFoam/interMixingFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/interFoam/interMixingFoam/interMixingFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "interPhaseChangeDyMFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "multiphase/interPhaseChangeFoam/interPhaseChangeDyMFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/interPhaseChangeFoam/interPhaseChangeDyMFoam/interPhaseChangeDyMFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "interPhaseChangeFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "multiphase/interPhaseChangeFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/interPhaseChangeFoam/interPhaseChangeFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "kinematicParcelFoam": {
+   "delta_t": [
+    "setInitialDeltaT.H",
+    "setMultiRegionDeltaT.H"
+   ],
+   "dir": "lagrangian/kinematicParcelFoam",
+   "fvm_ddt": true,
+   "main": "lagrangian/kinematicParcelFoam/kinematicParcelFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "laplacianFoam": {
+   "delta_t": [],
+   "dir": "basic/laplacianFoam",
+   "fvm_ddt": true,
+   "main": "basic/laplacianFoam/laplacianFoam.C",
+   "time_loop": "simple.loop"
+  },
+  "liquidFilmFoam": {
+   "delta_t": [
+    "setDeltaT.H"
+   ],
+   "dir": "finiteArea/liquidFilmFoam",
+   "fvm_ddt": true,
+   "main": "finiteArea/liquidFilmFoam/liquidFilmFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "magneticFoam": {
+   "delta_t": [],
+   "dir": "electromagnetics/magneticFoam",
+   "fvm_ddt": false,
+   "main": "electromagnetics/magneticFoam/magneticFoam.C",
+   "time_loop": null
+  },
+  "mdEquilibrationFoam": {
+   "delta_t": [],
+   "dir": "discreteMethods/molecularDynamics/mdEquilibrationFoam",
+   "fvm_ddt": false,
+   "main": "discreteMethods/molecularDynamics/mdEquilibrationFoam/mdEquilibrationFoam.C",
+   "time_loop": "runTime.loop"
+  },
+  "mdFoam": {
+   "delta_t": [],
+   "dir": "discreteMethods/molecularDynamics/mdFoam",
+   "fvm_ddt": false,
+   "main": "discreteMethods/molecularDynamics/mdFoam/mdFoam.C",
+   "time_loop": "runTime.loop"
+  },
+  "mhdFoam": {
+   "delta_t": [],
+   "dir": "electromagnetics/mhdFoam",
+   "fvm_ddt": true,
+   "main": "electromagnetics/mhdFoam/mhdFoam.C",
+   "time_loop": "runTime.loop"
+  },
+  "multiphaseEulerFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "multiphase/multiphaseEulerFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/multiphaseEulerFoam/multiphaseEulerFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "multiphaseInterFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "multiphase/multiphaseInterFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/multiphaseInterFoam/multiphaseInterFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "nonNewtonianIcoFoam": {
+   "delta_t": [],
+   "dir": "incompressible/nonNewtonianIcoFoam",
+   "fvm_ddt": true,
+   "main": "incompressible/nonNewtonianIcoFoam/nonNewtonianIcoFoam.C",
+   "time_loop": "runTime.loop"
+  },
+  "overBuoyantPimpleDyMFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "heatTransfer/buoyantPimpleFoam/overBuoyantPimpleDyMFoam",
+   "fvm_ddt": true,
+   "main": "heatTransfer/buoyantPimpleFoam/overBuoyantPimpleDyMFoam/overBuoyantPimpleDyMFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "overCompressibleInterDyMFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H",
+    "setRDeltaT.H"
+   ],
+   "dir": "multiphase/compressibleInterFoam/overCompressibleInterDyMFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/compressibleInterFoam/overCompressibleInterDyMFoam/overCompressibleInterDyMFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "overInterDyMFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H",
+    "setRDeltaT.H"
+   ],
+   "dir": "multiphase/interFoam/overInterDyMFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/interFoam/overInterDyMFoam/overInterDyMFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "overInterPhaseChangeDyMFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "multiphase/interPhaseChangeFoam/overInterPhaseChangeDyMFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/interPhaseChangeFoam/overInterPhaseChangeDyMFoam/overInterPhaseChangeDyMFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "overLaplacianDyMFoam": {
+   "delta_t": [],
+   "dir": "basic/laplacianFoam/overLaplacianDyMFoam",
+   "fvm_ddt": true,
+   "main": "basic/laplacianFoam/overLaplacianDyMFoam/overLaplacianDyMFoam.C",
+   "time_loop": "simple.loop"
+  },
+  "overPimpleDyMFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "incompressible/pimpleFoam/overPimpleDyMFoam",
+   "fvm_ddt": true,
+   "main": "incompressible/pimpleFoam/overPimpleDyMFoam/overPimpleDyMFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "overPotentialFoam": {
+   "delta_t": [],
+   "dir": "basic/potentialFoam/overPotentialFoam",
+   "fvm_ddt": false,
+   "main": "basic/potentialFoam/overPotentialFoam/overPotentialFoam.C",
+   "time_loop": null
+  },
+  "overRhoPimpleDyMFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H",
+    "setRDeltaT.H"
+   ],
+   "dir": "compressible/rhoPimpleFoam/overRhoPimpleDyMFoam",
+   "fvm_ddt": true,
+   "main": "compressible/rhoPimpleFoam/overRhoPimpleDyMFoam/overRhoPimpleDyMFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "overRhoSimpleFoam": {
+   "delta_t": [],
+   "dir": "compressible/rhoSimpleFoam/overRhoSimpleFoam",
+   "fvm_ddt": false,
+   "main": "compressible/rhoSimpleFoam/overRhoSimpleFoam/overRhoSimpleFoam.C",
+   "time_loop": "simple.loop"
+  },
+  "overSimpleFoam": {
+   "delta_t": [],
+   "dir": "incompressible/simpleFoam/overSimpleFoam",
+   "fvm_ddt": false,
+   "main": "incompressible/simpleFoam/overSimpleFoam/overSimpleFoam.C",
+   "time_loop": "simple.loop"
+  },
+  "pimpleFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H",
+    "setRDeltaT.H"
+   ],
+   "dir": "incompressible/pimpleFoam",
+   "fvm_ddt": true,
+   "main": "incompressible/pimpleFoam/pimpleFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "pisoFoam": {
+   "delta_t": [],
+   "dir": "incompressible/pisoFoam",
+   "fvm_ddt": true,
+   "main": "incompressible/pisoFoam/pisoFoam.C",
+   "time_loop": "runTime.loop"
+  },
+  "porousSimpleFoam": {
+   "delta_t": [],
+   "dir": "incompressible/simpleFoam/porousSimpleFoam",
+   "fvm_ddt": false,
+   "main": "incompressible/simpleFoam/porousSimpleFoam/porousSimpleFoam.C",
+   "time_loop": "simple.loop"
+  },
+  "potentialFoam": {
+   "delta_t": [],
+   "dir": "basic/potentialFoam",
+   "fvm_ddt": false,
+   "main": "basic/potentialFoam/potentialFoam.C",
+   "time_loop": null
+  },
+  "potentialFreeSurfaceDyMFoam": {
+   "delta_t": [
+    "setDeltaT.H"
+   ],
+   "dir": "multiphase/potentialFreeSurfaceFoam/potentialFreeSurfaceDyMFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/potentialFreeSurfaceFoam/potentialFreeSurfaceDyMFoam/potentialFreeSurfaceDyMFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "potentialFreeSurfaceFoam": {
+   "delta_t": [
+    "setDeltaT.H"
+   ],
+   "dir": "multiphase/potentialFreeSurfaceFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/potentialFreeSurfaceFoam/potentialFreeSurfaceFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "reactingFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H",
+    "setRDeltaT.H"
+   ],
+   "dir": "combustion/reactingFoam",
+   "fvm_ddt": true,
+   "main": "combustion/reactingFoam/reactingFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "reactingHeterogenousParcelFoam": {
+   "delta_t": [
+    "setInitialDeltaT.H",
+    "setMultiRegionDeltaT.H",
+    "setRDeltaT.H"
+   ],
+   "dir": "lagrangian/reactingParcelFoam/reactingHeterogenousParcelFoam",
+   "fvm_ddt": true,
+   "main": "lagrangian/reactingParcelFoam/reactingParcelFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "reactingMultiphaseEulerFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H",
+    "setRDeltaT.H"
+   ],
+   "dir": "multiphase/reactingMultiphaseEulerFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/reactingMultiphaseEulerFoam/reactingMultiphaseEulerFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "reactingParcelFoam": {
+   "delta_t": [
+    "setInitialDeltaT.H",
+    "setMultiRegionDeltaT.H",
+    "setRDeltaT.H"
+   ],
+   "dir": "lagrangian/reactingParcelFoam",
+   "fvm_ddt": true,
+   "main": "lagrangian/reactingParcelFoam/reactingParcelFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "reactingTwoPhaseEulerFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H",
+    "setRDeltaT.H"
+   ],
+   "dir": "multiphase/reactingTwoPhaseEulerFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/reactingTwoPhaseEulerFoam/reactingTwoPhaseEulerFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "rhoCentralFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setRDeltaT.H"
+   ],
+   "dir": "compressible/rhoCentralFoam",
+   "fvm_ddt": true,
+   "main": "compressible/rhoCentralFoam/rhoCentralFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "rhoPimpleAdiabaticFoam": {
+   "delta_t": [
+    "setDeltaT.H"
+   ],
+   "dir": "compressible/rhoPimpleAdiabaticFoam",
+   "fvm_ddt": true,
+   "main": "compressible/rhoPimpleAdiabaticFoam/rhoPimpleAdiabaticFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "rhoPimpleFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H",
+    "setRDeltaT.H"
+   ],
+   "dir": "compressible/rhoPimpleFoam",
+   "fvm_ddt": true,
+   "main": "compressible/rhoPimpleFoam/rhoPimpleFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "rhoPorousSimpleFoam": {
+   "delta_t": [],
+   "dir": "compressible/rhoSimpleFoam/rhoPorousSimpleFoam",
+   "fvm_ddt": false,
+   "main": "compressible/rhoSimpleFoam/rhoPorousSimpleFoam/rhoPorousSimpleFoam.C",
+   "time_loop": "simple.loop"
+  },
+  "rhoReactingBuoyantFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H",
+    "setRDeltaT.H"
+   ],
+   "dir": "combustion/reactingFoam/rhoReactingBuoyantFoam",
+   "fvm_ddt": true,
+   "main": "combustion/reactingFoam/rhoReactingBuoyantFoam/rhoReactingBuoyantFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "rhoReactingFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H",
+    "setRDeltaT.H"
+   ],
+   "dir": "combustion/reactingFoam/rhoReactingFoam",
+   "fvm_ddt": true,
+   "main": "combustion/reactingFoam/rhoReactingFoam/rhoReactingFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "rhoSimpleFoam": {
+   "delta_t": [],
+   "dir": "compressible/rhoSimpleFoam",
+   "fvm_ddt": false,
+   "main": "compressible/rhoSimpleFoam/rhoSimpleFoam.C",
+   "time_loop": "simple.loop"
+  },
+  "scalarTransportFoam": {
+   "delta_t": [],
+   "dir": "basic/scalarTransportFoam",
+   "fvm_ddt": true,
+   "main": "basic/scalarTransportFoam/scalarTransportFoam.C",
+   "time_loop": "simple.loop"
+  },
+  "shallowWaterFoam": {
+   "delta_t": [],
+   "dir": "incompressible/shallowWaterFoam",
+   "fvm_ddt": true,
+   "main": "incompressible/shallowWaterFoam/shallowWaterFoam.C",
+   "time_loop": "runTime.loop"
+  },
+  "simpleCoalParcelFoam": {
+   "delta_t": [],
+   "dir": "lagrangian/simpleCoalParcelFoam",
+   "fvm_ddt": false,
+   "main": "lagrangian/simpleCoalParcelFoam/simpleCoalParcelFoam.C",
+   "time_loop": "simple.loop"
+  },
+  "simpleFoam": {
+   "delta_t": [],
+   "dir": "incompressible/simpleFoam",
+   "fvm_ddt": false,
+   "main": "incompressible/simpleFoam/simpleFoam.C",
+   "time_loop": "simple.loop"
+  },
+  "simpleReactingParcelFoam": {
+   "delta_t": [],
+   "dir": "lagrangian/reactingParcelFoam/simpleReactingParcelFoam",
+   "fvm_ddt": false,
+   "main": "lagrangian/reactingParcelFoam/simpleReactingParcelFoam/simpleReactingParcelFoam.C",
+   "time_loop": "simple.loop"
+  },
+  "simpleSprayFoam": {
+   "delta_t": [],
+   "dir": "lagrangian/sprayFoam/simpleSprayFoam",
+   "fvm_ddt": false,
+   "main": "lagrangian/reactingParcelFoam/simpleReactingParcelFoam/simpleReactingParcelFoam.C",
+   "time_loop": "simple.loop"
+  },
+  "solidDisplacementFoam": {
+   "delta_t": [],
+   "dir": "stressAnalysis/solidDisplacementFoam",
+   "fvm_ddt": true,
+   "main": "stressAnalysis/solidDisplacementFoam/solidDisplacementFoam.C",
+   "time_loop": "runTime.loop"
+  },
+  "solidEquilibriumDisplacementFoam": {
+   "delta_t": [],
+   "dir": "stressAnalysis/solidEquilibriumDisplacementFoam",
+   "fvm_ddt": false,
+   "main": "stressAnalysis/solidEquilibriumDisplacementFoam/solidEquilibriumDisplacementFoam.C",
+   "time_loop": "runTime.loop"
+  },
+  "solidFoam": {
+   "delta_t": [
+    "setMultiRegionDeltaT.H"
+   ],
+   "dir": "heatTransfer/solidFoam",
+   "fvm_ddt": true,
+   "main": "heatTransfer/solidFoam/solidFoam.C",
+   "time_loop": "simple.loop"
+  },
+  "sonicDyMFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "compressible/sonicFoam/sonicDyMFoam",
+   "fvm_ddt": true,
+   "main": "compressible/sonicFoam/sonicDyMFoam/sonicDyMFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "sonicFoam": {
+   "delta_t": [],
+   "dir": "compressible/sonicFoam",
+   "fvm_ddt": true,
+   "main": "compressible/sonicFoam/sonicFoam.C",
+   "time_loop": "runTime.loop"
+  },
+  "sonicLiquidFoam": {
+   "delta_t": [],
+   "dir": "compressible/sonicFoam/sonicLiquidFoam",
+   "fvm_ddt": true,
+   "main": "compressible/sonicFoam/sonicLiquidFoam/sonicLiquidFoam.C",
+   "time_loop": "runTime.loop"
+  },
+  "sphereSurfactantFoam": {
+   "delta_t": [],
+   "dir": "finiteArea/sphereSurfactantFoam",
+   "fvm_ddt": true,
+   "main": "finiteArea/sphereSurfactantFoam/sphereSurfactantFoam.C",
+   "time_loop": "runTime.loop"
+  },
+  "sprayDyMFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "lagrangian/sprayFoam/sprayDyMFoam",
+   "fvm_ddt": true,
+   "main": "lagrangian/sprayFoam/sprayDyMFoam/sprayDyMFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "sprayFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "lagrangian/sprayFoam",
+   "fvm_ddt": true,
+   "main": "lagrangian/sprayFoam/sprayFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "surfactantFoam": {
+   "delta_t": [],
+   "dir": "finiteArea/surfactantFoam",
+   "fvm_ddt": true,
+   "main": "finiteArea/surfactantFoam/surfactantFoam.C",
+   "time_loop": "runTime.loop"
+  },
+  "thermoFoam": {
+   "delta_t": [],
+   "dir": "heatTransfer/thermoFoam",
+   "fvm_ddt": true,
+   "main": "heatTransfer/thermoFoam/thermoFoam.C",
+   "time_loop": "simple.loop"
+  },
+  "twoLiquidMixingFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "multiphase/twoLiquidMixingFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/twoLiquidMixingFoam/twoLiquidMixingFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "twoPhaseEulerFoam": {
+   "delta_t": [
+    "setDeltaT.H",
+    "setInitialDeltaT.H"
+   ],
+   "dir": "multiphase/twoPhaseEulerFoam",
+   "fvm_ddt": true,
+   "main": "multiphase/twoPhaseEulerFoam/twoPhaseEulerFoam.C",
+   "time_loop": "runTime.run"
+  },
+  "uncoupledKinematicParcelDyMFoam": {
+   "delta_t": [],
+   "dir": "lagrangian/uncoupledKinematicParcelFoam/uncoupledKinematicParcelDyMFoam",
+   "fvm_ddt": false,
+   "main": "lagrangian/uncoupledKinematicParcelFoam/uncoupledKinematicParcelDyMFoam/uncoupledKinematicParcelDyMFoam.C",
+   "time_loop": "runTime.loop"
+  },
+  "uncoupledKinematicParcelFoam": {
+   "delta_t": [],
+   "dir": "lagrangian/uncoupledKinematicParcelFoam",
+   "fvm_ddt": false,
+   "main": "lagrangian/uncoupledKinematicParcelFoam/uncoupledKinematicParcelFoam.C",
+   "time_loop": "runTime.loop"
+  }
+ },
+ "source": "opencfd/openfoam-default@sha256:dd5aa20630a55722663bf83ba0cb74870cba130081303e32e3865007fa2aa35a",
+ "tree": "applications/solvers"
+}

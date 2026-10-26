@@ -57,12 +57,32 @@ class Found:
 
 # ---------------------------------------------------------------- text helpers
 def strip_comments(text: str) -> str:
-    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.DOTALL)
+    text = _without_block_comments(text)
     text = re.sub(r"//[^\n]*", "", text)
     # `${name}` is `$name`: its braces are not a block's, and counted as one they hid every
     # entry after them (TST-14's fuzzer found it). Followed by a word character the braces
     # delimit the name, so it is left alone and stays unresolved rather than misread.
     return _BRACED_MACRO.sub(r"$\1", text)
+
+
+def _without_block_comments(text: str) -> str:
+    """`re.sub(r"/\\*.*?\\*/", " ", text, flags=re.DOTALL)`, the same string, in time linear in
+    the text's length: each `/*` with a `*/` after it, through the first such `*/`, as one space.
+    The pattern tried every `/*` against the rest of the text, so a file of 500,000 unclosed
+    `/*x` took time in the square of its length and held `courant verify <case>` (the review of
+    hp6/final). With no `*/` after a `/*` there is none after any later one either, so the scan
+    stops there, as the pattern then matches nothing more."""
+    out: list[str] = []
+    i = 0
+    while True:
+        start = text.find("/*", i)
+        end = text.find("*/", start + 2) if start >= 0 else -1
+        if end < 0:
+            break
+        out += [text[i:start], " "]
+        i = end + 2
+    out.append(text[i:])
+    return "".join(out)
 
 
 _BRACED_MACRO = re.compile(r"\$\{([A-Za-z_][\w.]*)\}(?![\w.])")
@@ -85,6 +105,12 @@ def _depths(text: str) -> list[int]:
 
 def _body_after(text: str, open_index: int) -> str | None:
     """The text between the brace at `open_index` and its match."""
+    close = _block_end(text, open_index)
+    return None if close is None else text[open_index + 1:close]
+
+
+def _block_end(text: str, open_index: int) -> int | None:
+    """The index of the brace that closes the one at `open_index`."""
     depth = 0
     for i in range(open_index, len(text)):
         if text[i] == "{":
@@ -92,7 +118,7 @@ def _body_after(text: str, open_index: int) -> str | None:
         elif text[i] == "}":
             depth -= 1
             if depth == 0:
-                return text[open_index + 1:i]
+                return i
     return None
 
 
@@ -100,8 +126,9 @@ def _body_after(text: str, open_index: int) -> str | None:
 _BLOCK_HEAD = re.compile(r'(?m)(?:^|(?<=[;{}]))[ \t]*(?:"([^"\n]*)"|([^\s{};"]+))\s*\{')
 
 
-def blocks(text: str) -> list[tuple[str, str]]:
-    """Every top-level `key { ... }` in `text`, as (key, body), in order. Quotes are kept off."""
+def _quoted_blocks(text: str) -> list[tuple[str, bool, str]]:
+    """Every top-level `key { ... }` in `text`, as (key without its quotes, whether it was
+    quoted, body), in order."""
     depth = _depths(text)
     out = []
     for m in _BLOCK_HEAD.finditer(text):
@@ -109,32 +136,61 @@ def blocks(text: str) -> list[tuple[str, str]]:
             continue
         body = _body_after(text, m.end() - 1)
         if body is not None:
-            out.append((m.group(1) if m.group(1) is not None else m.group(2), body))
+            quoted = m.group(1) is not None
+            out.append((m.group(1) if quoted else m.group(2), quoted, body))
     return out
 
 
-def block(text: str, name: str) -> str | None:
-    """The body of the top-level block `name`, matching OpenFOAM's lookup.
+def blocks(text: str) -> list[tuple[str, str]]:
+    """Every top-level `key { ... }` in `text`, as (key, body), in order. Quotes are kept off."""
+    return [(key, body) for key, _, body in _quoted_blocks(text)]
 
-    A literal key wins; otherwise the last quoted key that matches `name` as a regex, which is
-    how a boundary condition grouped as `"(inlet|outlet)"` is found.
+
+class KeywordNotEvaluated(ValueError):
+    """A keyword pattern decides which block a name finds and is not one `wordre` evaluates (a
+    backreference, a lookaround, or larger than its bound): the block cannot be told (VER-5.9).
+    Its message quotes nothing the case wrote: the keyword is the case's text, and the note made
+    from it reaches the verdict and the support bundle (`not_evaluated`)."""
+
+
+def not_evaluated(rel: str) -> str:
+    """The note on a value whose block a keyword pattern not evaluated may name, in file `rel`:
+    the file, never the keyword (the review of the 0.6.0 hard-proofing, 22 Oct 2026, found 40
+    characters of it quoted)."""
+    return (f"a quoted keyword in {rel} is a pattern the reader does not evaluate, and it may be "
+            "the one that names this block")
+
+
+def block(text: str, name: str) -> str | None:
+    """The body of the top-level block `name`, matching OpenFOAM's lookup
+    (`dictionary::csearch`, `courant.case.wordre.csearch`).
+
+    A key whose text is `name` wins, quoted or not (OpenFOAM's hash table holds a keyword by its
+    text); otherwise the last declared quoted key that matches `name` as a regular expression,
+    which is how a boundary condition grouped as `"(inlet|outlet)"` is found. A pattern written
+    again is merged into its first writing and keeps that place (`dictionary::add`): in
+    `"in.*" {..} ".*" {..} "in.*" {..}`, `".*"` is the later one. Only a quoted key is a
+    pattern (OpenFOAM's `keyType`: a word is a name): 0.5.0 matched every key as one, so an
+    unquoted `in.et` named `inlet` (the final review of 0.6.0, 21 Oct 2026). The keys are the
+    case's, so they are matched with bounded work (`courant.case.wordre`, one lookup's budget):
+    on `"(.*)*!"` Python's `re` doubled its time with each character of the patch name, and held
+    the interpreter's lock while it did (hard-proofing audit and the final review, 21 Oct 2026).
+    A pattern not evaluated that is tried before the one that matches raises
+    `KeywordNotEvaluated`, because it might be the one OpenFOAM uses.
 
     A block written more than once is merged, as OpenFOAM's default `#inputMode merge` does:
     the bodies are read as one, in order, so each repeated entry takes its last definition
     (`entry`) and each repeated inner block merges in turn.
     """
-    found = blocks(text)
-    literal = [body for key, body in found if key == name]
-    if literal:
-        return "\n".join(literal)
-    match = None
-    for key, body in found:
-        try:
-            if re.fullmatch(key, name):
-                match = body
-        except re.error:
-            continue
-    return match
+    from courant.case import wordre
+
+    found = _quoted_blocks(text)
+    hits, unsure = wordre.csearch([(key, quoted) for key, quoted, _ in found], name,
+                                  dictionaries=True)
+    if unsure:
+        raise KeywordNotEvaluated("a quoted keyword is a pattern the reader does not evaluate, "
+                                  "and it may be the one that names this block")
+    return "\n".join(found[i][2] for i in hits) if hits else None
 
 
 def _top_level(text: str) -> str:
@@ -164,10 +220,54 @@ def entry(text: str, key: str) -> str | None:
     return found[-1] if found else None
 
 
+#: What ends an entry's value, and what an entry may start after (with a line's start).
+_DELIMITER = re.compile(r"[;{}]")
+_ENTRY_START = re.compile(r"[\n;{}]")
+
+
 def _entries(text: str, key: str) -> list[str]:
-    """Every top-level definition of `key`, in order."""
-    return [re.sub(r"\s+", " ", m.group(1)).strip() for m in re.finditer(
-        rf"(?m)(?:^|(?<=[;{{}}]))[ \t]*{re.escape(key)}\s+([^;{{}}]*);", _top_level(text))]
+    """Every top-level definition of `key`, in order: each match of `(?m)(?:^|(?<=[;{}]))[ \\t]*
+    <key>\\s+([^;{}]*);` in `_top_level(text)`, its value with its whitespace runs made one space
+    and stripped, the same list the pattern gives, in time linear in the text's length.
+
+    The pattern scanned from every line's start to the next delimiter, so `key` written on
+    300,000 lines with no `;` after them (inside a string the case writes, which `_top_level`
+    keeps) took time in the square of the text's length and held `courant verify <case>` (the
+    review of hp6/final). Here the next delimiter is found once for every start before it: the
+    starts are taken in order, so the one found for an earlier start is the next for a later one
+    until the scan passes it. A key that is empty or begins with a blank, which no dictionary
+    writes, is matched by the pattern itself, whose `[ \\t]*` may then give back blanks."""
+    t = _top_level(text)
+    if not key or key[0] in " \t":
+        return [re.sub(r"\s+", " ", m.group(1)).strip() for m in re.finditer(
+            rf"(?m)(?:^|(?<=[;{{}}]))[ \t]*{re.escape(key)}\s+([^;{{}}]*);", t)]
+    n, k = len(t), len(key)
+    out: list[str] = []
+    resume = 0                           # a match ends at its `;`; the next is looked for after
+    found = -1                           # the next delimiter at or after the last asked position
+
+    def delimiter(at: int) -> int:
+        nonlocal found
+        if found < at:
+            m = _DELIMITER.search(t, at)
+            found = m.start() if m else n
+        return found
+
+    starts = (m.end() for m in _ENTRY_START.finditer(t))
+    for start in (0, *starts) if n else ():
+        if start < resume:
+            continue
+        q = start
+        while q < n and t[q] in " \t":
+            q += 1
+        r = q + k
+        if not t.startswith(key, q) or r >= n or not t[r].isspace():
+            continue
+        end = delimiter(r)
+        if end < n and t[end] == ";":
+            out.append(re.sub(r"\s+", " ", t[r:end]).strip())
+            resume = end + 1
+    return out
 
 
 #: `#inputMode` other than the default `merge`: a repeated key no longer means "the last one".
@@ -186,6 +286,26 @@ def _repeated(text: str, name: str) -> bool:
     """Whether `name` is written more than once at the top level of `text`, as an entry or as
     a literal block."""
     return len(_entries(text, name)) + sum(1 for k, _ in blocks(text) if k == name) > 1
+
+
+def repeated_under_input_mode(text: str, names: tuple[str, ...]) -> str | None:
+    """The `#inputMode` other than merge under which a name on the way to `names` is written
+    more than once in `text`, or None: the rule by which `_read_one` refuses such a value, for the
+    case reader (TRD VER-3b)."""
+    mode = _INPUT_MODE.search(text)
+    if mode is None:
+        return None
+    scope: str | None = text
+    for name in names:
+        if scope is None:
+            break
+        if _repeated(scope, name):
+            return mode.group(1)
+        try:
+            scope = block(scope, name)
+        except KeywordNotEvaluated:
+            break                       # the block cannot be told, as when it is not found
+    return None
 
 
 def numbers(raw: str) -> list[float]:
@@ -210,18 +330,8 @@ def _resolve_macros(raw: str, text: str, path: Path, case_root: Path, depth: int
         if v is not None:
             return v
         for inc in _INCLUDE.findall(text):
-            try:
-                inc_path = (path.parent / inc).resolve()
-                inc_path.relative_to(case_root.resolve())
-                is_file = inc_path.is_file()
-            except (ValueError, OSError):                # outside the case, or no path at all
-                continue                                 # (a NUL byte: TST-14's fuzzer)
-            if is_file:
-                try:
-                    inc_text = strip_comments(inc_path.read_text(errors="replace"))
-                except OSError:
-                    continue                             # not read: the macro stays unresolved
-                reads.note(path.parent / inc)    # VER-14: by the path used, not its resolution
+            inc_text = _include_text(path, inc, case_root)
+            if inc_text is not None:                     # not read: the macro stays unresolved
                 v = entry(inc_text, name)
                 if v is not None:
                     return v
@@ -240,6 +350,218 @@ def _resolve_macros(raw: str, text: str, path: Path, case_root: Path, depth: int
             return None
         out = re.sub(rf"\$\{{?{re.escape(name)}\}}?", lambda _m, v=v: v, out, count=1)
     return None if "$" in out else out
+
+
+# ---------------------------------------------------------------- the dictionary as the solver reads it
+#: OpenFOAM's tags for an include's directory (`<case>/...`), and `$FOAM_CASE`, which every
+#: install sets to the case.
+_INCLUDE_TAGS = {"<case>": "", "$FOAM_CASE": "", "${FOAM_CASE}": "", "<system>": "system",
+                 "<constant>": "constant"}
+#: The includes of a file the solver reads from the case: `#include`, and `#includeIfPresent` and
+#: `#sinclude`, which it skips when the file is absent. `#includeEtc`, `#includeFunc` and
+#: `#includeModel` name files of the OpenFOAM installation, not of the case: not followed.
+_INCLUDES = re.compile(r'#(include|includeIfPresent|sinclude)[ \t]+"([^"\n]*)"')
+_HEADER = re.compile(r"(?m)^[ \t]*FoamFile\s*\{")
+
+
+def include_target(path: Path, inc: str, case_root: Path) -> tuple[Path | None, str | None]:
+    """(the path an `#include "inc"` in the file at `path` names, None) when it is a file inside
+    the case; (None, why) otherwise. Relative to the including file's directory, as OpenFOAM
+    reads it, or to the case for `<case>`, `<system>`, `<constant>` and `$FOAM_CASE`. Nothing
+    is opened. The path is lexical (VER-14 notes the path used, not its resolution)."""
+    for tag, sub in _INCLUDE_TAGS.items():
+        if inc.startswith(tag + "/"):
+            target = case_root / sub / inc[len(tag) + 1:]
+            break
+    else:
+        target = path.parent / inc
+    try:
+        target.resolve().relative_to(case_root.resolve())
+        is_file = target.resolve().is_file()
+    except (ValueError, OSError):                       # outside the case, or no path at all
+        return None, "the file is outside the case"     # (a NUL byte: TST-14's fuzzer)
+    return (target, None) if is_file else (None, _NOT_IN_CASE)
+
+
+#: `include_target`'s reason for a target inside the case that is not a file there.
+_NOT_IN_CASE = "no such file in the case"
+
+
+def _include_text(path: Path, inc: str, case_root: Path) -> str | None:
+    """The comment-stripped text of the file `#include "inc"` names, or None when it is not a
+    file inside the case or cannot be read. Noted once read (VER-14); confined (MCP-3)."""
+    target, _ = include_target(path, inc, case_root)
+    if target is None:
+        return None
+    try:
+        with reads.reading(target):
+            return strip_comments(target.read_text(errors="replace"))
+    except OSError:
+        return None
+
+
+def expand(text: str, path: Path, case_root: Path) -> str:
+    """`text`, the comment-stripped dictionary at `path`, as the solver reads it (TRD VER-3b):
+
+    - each `#include`, `#includeIfPresent` and `#sinclude` of a file inside the case is replaced
+      by the file's entries (its own includes followed in turn, four deep); an optional one whose
+      file is absent is dropped, as the solver drops it;
+    - then each `$name` is replaced by the last definition of `name` before it in its own
+      dictionary, else in the dictionaries around it, innermost first, as OpenFOAM expands a
+      macro while it reads; a `$name;` standing as an entry is replaced by the entries of the
+      dictionary it names (`pFinal { $p; relTol 0; }`), a quoted key matching as a regex.
+
+    What cannot be followed stays as written, for the reader to report: an include of a file that
+    is missing or outside the case, `#includeEtc`, a macro with no definition before it, a scoped
+    one (`$a.b`, `$:a`, `$..a`), and every evaluated directive (`#calc`, `#eval`, `#codeStream`).
+    Deterministic, read-only, no subprocess (INV-5)."""
+    return _macros(_inline(text, path, case_root))
+
+
+def _inline(text: str, path: Path, case_root: Path, depth: int = 0) -> str:
+    if depth > 4 or "#" not in text:
+        return text
+
+    def one(m: re.Match) -> str:
+        kind, inc = m.group(1), m.group(2)
+        target, why = include_target(path, inc, case_root)
+        if target is None:
+            # An optional include is dropped only when its file is absent from the case, as the
+            # solver drops it. One outside the case stays, to be reported: the solver read it if
+            # it is there, and whether it is is not looked at (MCP-3). `include_target` is the one
+            # resolution, tags included (`$FOAM_CASE/../x` is outside the case).
+            optional_absent = kind != "include" and why == _NOT_IN_CASE
+            return "" if optional_absent else m.group(0)
+        included = _include_text(path, inc, case_root)
+        if included is None:
+            return m.group(0)
+        return "\n" + _inline(_without_header(included), target, case_root, depth + 1) + "\n"
+
+    return _INCLUDES.sub(one, text)
+
+
+def _without_header(text: str) -> str:
+    m = _HEADER.search(text)
+    if m is None:
+        return text
+    close = _block_end(text, m.end() - 1)
+    return text if close is None else text[:m.start()] + text[close + 1:]
+
+
+def _elements(text: str):
+    """(start, end, key, open brace or None) of each top-level element of a dictionary body: an
+    entry `key value;`, a block `key { ... }`, or a directive line (`#...`, key None). A value is
+    read to its `;` outside quotes, brackets and braces (`#codeStream { ... };`, a list of
+    dictionaries)."""
+    i, n = 0, len(text)
+    while i < n:
+        while i < n and text[i].isspace():
+            i += 1
+        if i >= n:
+            return
+        start = i
+        if text[i] == "#":
+            end = text.find("\n", i)
+            end = n if end < 0 else end
+            yield start, end, None, None
+            i = end
+            continue
+        if text[i] == '"':
+            close = text.find('"', i + 1)
+            k = n if close < 0 else close + 1
+        else:
+            k = i
+            while k < n and not text[k].isspace() and text[k] not in "{};":
+                k += 1
+        if k == i:                                      # a stray `;` or `}`
+            yield start, i + 1, None, None
+            i += 1
+            continue
+        key, p = text[i:k], k
+        while p < n and text[p].isspace():
+            p += 1
+        if p < n and text[p] == "{":
+            close = _block_end(text, p)
+            end = n if close is None else close + 1
+            yield start, end, key, p
+            i = end
+            continue
+        q, brackets, braces = p, 0, 0
+        while q < n:
+            c = text[q]
+            if c == '"':
+                close = text.find('"', q + 1)
+                q = n if close < 0 else close + 1
+                continue
+            if c in "([":
+                brackets += 1
+            elif c in ")]":
+                brackets -= 1
+            elif c == "{":
+                braces += 1
+            elif c == "}":
+                if braces == 0:
+                    break
+                braces -= 1
+            elif c == ";" and brackets <= 0 and braces == 0:
+                q += 1
+                break
+            q += 1
+        yield start, q, key, None
+        i = q
+
+
+def _macros(text: str, outer: tuple[str, ...] = (), depth: int = 0) -> str:
+    """`text` (one dictionary's body) with its macros expanded; `outer` holds, outermost first,
+    the expanded text of each enclosing dictionary up to the block that holds this one."""
+    if "$" not in text or depth > 16:
+        return text
+    done, pos = "", 0
+    for start, end, key, open_ in _elements(text):
+        done += text[pos:start]
+        piece = text[start:end]
+        if open_ is not None and "$" in piece:
+            close = end - 1 if text[end - 1:end] == "}" else end
+            piece = (text[start:open_ + 1] + _macros(text[open_ + 1:close], (*outer, done),
+                                                       depth + 1) + text[close:end])
+        elif key is not None and "$" in piece:
+            scopes = (done, *reversed(outer))
+            if key.startswith("$") and text[start + len(key):end].strip() in ("", ";"):
+                merged = _named_block(key[1:], scopes)
+                if merged is not None:
+                    piece = merged
+            else:
+                piece = key + _substitute(text[start + len(key):end], scopes)
+        done += piece
+        pos = end
+    return done + text[pos:]
+
+
+def _named_block(name: str, scopes: tuple[str, ...]) -> str | None:
+    if not re.fullmatch(r"[A-Za-z_]\w*", name):
+        return None                                     # scoped: not followed
+    for scope in scopes:
+        try:
+            found = block(scope, name)
+        except KeywordNotEvaluated:
+            return None                 # stays as written, for the reader to report
+        if found is not None:
+            return found
+    return None
+
+
+def _substitute(raw: str, scopes: tuple[str, ...]) -> str:
+    def one(m: re.Match) -> str:
+        name = m.group(1)
+        if "." in name or raw[m.end():m.end() + 1] in (".", ":"):
+            return m.group(0)                           # scoped: not followed
+        for scope in scopes:
+            found = entry(scope, name)
+            if found is not None:
+                return found
+        return m.group(0)
+
+    return _MACRO.sub(one, raw)
 
 
 _LIST = re.compile(r"^nonuniform\s+List<(\w+)>\s*(\d+)?\s*\(")
@@ -301,7 +623,7 @@ def parse_value(raw: str, *, text: bool = False) -> tuple[Value | None, tuple[fl
         return (token or None), dims, (None if token else "empty entry")
     nums = numbers(raw)
     if not nums:
-        return None, dims, f"no number in '{raw[:40]}'"
+        return None, dims, "no number in the entry"           # never quoted (`_read_one`)
     if raw.lstrip().startswith("("):
         return nums, dims, None
     return nums[-1] if len(nums) > 1 else nums[0], dims, None
@@ -310,13 +632,15 @@ def parse_value(raw: str, *, text: bool = False) -> tuple[Value | None, tuple[fl
 # ---------------------------------------------------------------- the reader
 def _read_text(case: Path, rel: str) -> tuple[str | None, str | None]:
     p = case / rel
+    if not reads.may_read(p):            # MCP-3: asked before it is looked for, so a path outside
+        return None, f"{rel} could not be read: outside the allowed roots"  # is refused alike
     if not p.is_file():
         return None, f"{rel} does not exist"
     try:
-        text = p.read_text(errors="replace")
+        with reads.reading(p):                           # VER-14; MCP-3
+            text = p.read_text(errors="replace")
     except OSError as exc:
-        return None, f"{rel} could not be read: {exc}"
-    reads.note(p)                                        # VER-14
+        return None, f"{rel} could not be read: {reads.reason(exc)}"
     return strip_comments(text), None
 
 
@@ -345,13 +669,15 @@ _ALIASES = {"scale": ("convertToMeters", "1"), "convertToMeters": ("scale", "1")
 def _read_one(case: Path, rel: str, item) -> Found:
     if item.sha256 is not None:
         p = case / rel
+        if not reads.may_read(p):        # MCP-3: asked before it is looked for, as `_read_text`
+            return Found(None, rel, f"{rel} could not be read: outside the allowed roots")
         if not p.is_file():
             return Found(None, rel, f"{rel} does not exist")
         try:
-            data = p.read_bytes()
+            with reads.reading(p):                       # VER-14; MCP-3
+                data = p.read_bytes()
         except OSError as exc:
-            return Found(None, rel, f"{rel} could not be read: {exc}")
-        reads.note(p)                                    # VER-14
+            return Found(None, rel, f"{rel} could not be read: {reads.reason(exc)}")
         return Found(hashlib.sha256(data).hexdigest(), rel)
 
     text, why = _read_text(case, rel)
@@ -400,23 +726,28 @@ def _read_one(case: Path, rel: str, item) -> Found:
     if mode and any(_repeated(s, n) for s, n in steps):
         return Found(None, rel, f"'{key}' is written more than once under #inputMode "
                                 f"{mode.group(1)}, whose rule the reader does not follow")
-    raw = entry(scope, key)
+    raw, written = entry(scope, key), key
     if raw is None and rel.endswith("blockMeshDict") and key in _ALIASES and not item.path:
         other, fallback = _ALIASES[key]                 # one setting under two names
-        raw = entry(scope, other)
+        raw, written = entry(scope, other), other
         if raw is None and _complete(text):
             return Found(float(fallback), rel, basis=f"not written; OpenFOAM's default {fallback}")
     if raw is None:
         return Found(None, rel, f"no entry '{key}'")
+    # A value the reader cannot read is named by its entry and never quoted: what the case wrote
+    # (`$acmeInletSpeed`) is the customer's text, and the note reaches the verdict and the
+    # support bundle, which pseudonymises names it knows and not this (the review of the 0.6.0
+    # follow-ups, 22 Oct 2026; `not_evaluated` for a keyword).
     if _DIRECTIVE.search(raw):
-        return Found(None, rel, f"'{raw[:40]}' is a directive the reader does not evaluate")
+        return Found(None, rel, f"'{written}' is written as a directive the reader does not "
+                                "evaluate")
     resolved = _resolve_macros(raw, text, case / rel, case)
     if resolved is None:
-        return Found(None, rel, f"'{raw[:40]}' refers to a value that could not be found")
+        return Found(None, rel, f"'{written}' refers to a value that could not be found")
     if _DIRECTIVE.search(resolved):
         # A macro that expands to `#calc ...` is no more a number than `#calc` written out:
         # reading its last number misread `nu #calc "$a*2"` as 2 (review, 10 Oct 2026).
-        return Found(None, rel, f"'{raw[:40]}' expands to a directive the reader does not "
+        return Found(None, rel, f"'{written}' expands to a directive the reader does not "
                                 "evaluate")
     if resolved.startswith("nonuniform") and not isinstance(item.value, str):
         faces = nonuniform_values(resolved)
@@ -442,14 +773,18 @@ def read(case_dir: str | Path, item) -> Found:
     `0.orig/` to agree as well rejected a correct answer that left `0.orig/` stale.
     """
     case = Path(case_dir)
+    rel = item.file                                     # the file being read
     try:
-        found = _read_one(case, item.file, item)
+        found = _read_one(case, rel, item)
         if found.value is None and item.file.startswith("0/") and not (case / item.file).is_file():
             orig = "0.orig/" + item.file[2:]
             if (case / orig).is_file():
+                rel = orig
                 alt = _read_one(case, orig, item)
                 if alt.value is not None:
                     return alt
         return found
+    except KeywordNotEvaluated:                         # a pattern that may name the block
+        return Found(None, item.file, not_evaluated(rel))
     except Exception as exc:                            # noqa: BLE001 - a reader limit, not a verdict
-        return Found(None, item.file, f"unreadable: {type(exc).__name__}: {exc}")
+        return Found(None, item.file, f"unreadable: {reads.reason(exc)}")

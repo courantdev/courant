@@ -64,7 +64,14 @@ class AnomalyConfig:
     # --- residual plateau ---
     plateau_window: int = 50       # steps of no improvement to flag a stall
     plateau_rel_improve: float = 0.10  # <10% improvement over the window == flat
-    convergence_target: float = 1e-3   # only a stall if still above this residual
+    #: Only a stall if still above this residual. **Not `judge_residuals`'s per-field bar (TRD
+    #: VER-16), and why:** this detector runs on the live stream, one step at a time, with no
+    #: case configuration (it never sees `residualControl`, the solver or the relaxation), and
+    #: what it emits is a STALL event for the live orchestrator, not a verdict. `courant
+    #: verify` never runs it (the gate parses with `LogParser` alone), so this number decides
+    #: no verdict; the gate's plateau is M1-P-2 (`converge.steady.residual_summary`), asked by
+    #: `convergence.stalled`. It stays the flat `RESIDUAL_TARGET` value.
+    convergence_target: float = 1e-3
     # --- wall-clock stall ---
     wall_stall_seconds: float = 120.0
 

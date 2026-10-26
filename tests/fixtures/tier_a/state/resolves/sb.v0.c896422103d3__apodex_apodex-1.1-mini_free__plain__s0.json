@@ -1,0 +1,295 @@
+{
+ "budget": {
+  "disk_cap_bytes": 120000,
+  "factor": 3.0,
+  "wall_cap_s": 12.0
+ },
+ "commands": [
+  "blockMesh",
+  "simpleFoam"
+ ],
+ "copied": {
+  "bytes": 10466,
+  "files": 9,
+  "inputs_sha256": "536e4e642f9d014c51581760144b89786a177126ca1dc213497bdd58261543a2",
+  "start_time": 0.0
+ },
+ "copy_dir": "/tmp/tier-a/work/resolve/sb.v0.c896422103d3__apodex_apodex-1.1-mini_free__plain__s0/case",
+ "excluded": [
+  "log.blockMesh",
+  "log.simpleFoam",
+  "postProcessing"
+ ],
+ "executed": true,
+ "executed_source": "resolve",
+ "family": "simpleFoam_pitzDaily",
+ "findings": [],
+ "image": "opencfd/openfoam-default@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+ "instance_type": "fake-1cpu",
+ "log_disagreement": null,
+ "mesh_skipped": false,
+ "notes": [],
+ "process": {
+  "disk_bytes": 40000,
+  "error": null,
+  "log_sha256": "3b9f94eeff650d6cf42ccecefd07ec78324c233859611ecbe9fc9d1fff541b28",
+  "return_code": 0,
+  "status": "completed",
+  "wall_s": 4.0
+ },
+ "refused": [],
+ "resolve_class": null,
+ "rule": "VER-5.7",
+ "schema": "courant.sb-resolve/1",
+ "task_id": "sb.v0.c896422103d3",
+ "verdict": "reject",
+ "verdict_doc": {
+  "basis": "validity+conformance",
+  "conformance": {
+   "checked": 5,
+   "items": [
+    {
+     "basis": null,
+     "conforms": null,
+     "file": "0/U",
+     "found": null,
+     "location": "boundaryField/inlet/value",
+     "modelling_choice": false,
+     "name": "U at inlet",
+     "note": "0/U does not exist",
+     "specified": "(11.9 0 0)",
+     "tolerance": "1%, 1°"
+    },
+    {
+     "basis": null,
+     "conforms": null,
+     "file": "0/epsilon",
+     "found": null,
+     "location": "boundaryField/inlet/value",
+     "modelling_choice": false,
+     "name": "epsilon at inlet",
+     "note": "0/epsilon does not exist",
+     "specified": "43.3",
+     "tolerance": "1%"
+    },
+    {
+     "basis": null,
+     "conforms": null,
+     "file": "0/k",
+     "found": null,
+     "location": "boundaryField/inlet/value",
+     "modelling_choice": false,
+     "name": "k at inlet",
+     "note": "0/k does not exist",
+     "specified": "0.765",
+     "tolerance": "1%"
+    },
+    {
+     "basis": null,
+     "conforms": null,
+     "file": "0/p",
+     "found": null,
+     "location": "boundaryField/outlet/value",
+     "modelling_choice": false,
+     "name": "p at outlet",
+     "note": "0/p does not exist",
+     "specified": "0",
+     "tolerance": "1%"
+    },
+    {
+     "basis": null,
+     "conforms": false,
+     "file": "constant/transportProperties",
+     "found": "1e-05",
+     "location": "nu",
+     "modelling_choice": false,
+     "name": "nu",
+     "note": null,
+     "specified": "1.23e-05",
+     "tolerance": "1%"
+    },
+    {
+     "basis": null,
+     "conforms": true,
+     "file": "system/controlDict",
+     "found": "simpleFoam",
+     "location": "application",
+     "modelling_choice": true,
+     "name": "solver",
+     "note": null,
+     "specified": "simpleFoam",
+     "tolerance": "exact"
+    },
+    {
+     "basis": null,
+     "conforms": true,
+     "file": "system/blockMeshDict",
+     "found": "0.001",
+     "location": "scale",
+     "modelling_choice": false,
+     "name": "mesh scale",
+     "note": null,
+     "specified": "0.001",
+     "tolerance": "1%"
+    },
+    {
+     "basis": null,
+     "conforms": true,
+     "file": "constant/turbulenceProperties",
+     "found": "RAS",
+     "location": "simulationType",
+     "modelling_choice": true,
+     "name": "turbulence regime",
+     "note": null,
+     "specified": "RAS",
+     "tolerance": "exact"
+    },
+    {
+     "basis": null,
+     "conforms": true,
+     "file": "constant/turbulenceProperties",
+     "found": "kEpsilon",
+     "location": "RAS/RASModel",
+     "modelling_choice": true,
+     "name": "turbulence model",
+     "note": null,
+     "specified": "kEpsilon",
+     "tolerance": "exact"
+    }
+   ],
+   "locked_sha256": "2581c74ecee271aa9dadd0b1acd0684befb0e39b333a0cda7da63d23a3a91a4b",
+   "nonconformant": 1,
+   "spec_schema": "courant.spec/1",
+   "spec_sha256": "2581c74ecee271aa9dadd0b1acd0684befb0e39b333a0cda7da63d23a3a91a4b",
+   "task": "Simulate steady turbulent flow over the backward-facing step of OpenFOAM's simpleFoam pitzDaily tutorial: inlet velocity 11.9 m/s in +x, inlet turbulence intensity 6% with mixing length 0.00254 m (k = 1.5 (U I)^2 = 0.765 m^2/s^2, epsilon = C_mu^0.75 k^1.5 / l = 43.3 m^2/s^3, C_mu = 0.09), kinematic viscosity 1.23e-05 m^2/s, outlet at zero gauge pressure, k-epsilon RAS model. Use simpleFoam and run to a converged steady state.",
+   "unreadable": 4
+  },
+  "convergence": {
+   "binding_monitor": null,
+   "change_after_stop": null,
+   "change_counts": null,
+   "change_fraction": null,
+   "converged_at_step": null,
+   "enters_verdict": false,
+   "messages": [
+    "At least one field dropped fewer than three orders of magnitude.",
+    "No engineering monitor was found in this case, so convergence of the answer could not be assessed. Residual behaviour is reported below and is not a substitute. The paths searched were: postProcessing."
+   ],
+   "monitors_assessed": 0,
+   "monitors_found": 0,
+   "regime": "steady",
+   "status": "NOT_ASSESSABLE",
+   "steps_total": null,
+   "wasted_core_hours": null,
+   "wasted_fraction": null,
+   "wasted_steps": null,
+   "wasted_wall_clock_s": null
+  },
+  "grade": "B",
+  "next_action": "The case does not set up the problem that was asked: set nu to 1.23e-05 in constant/transportProperties, then re-run.",
+  "not_assessed": [
+   "Mesh quality metrics were not available: no log.checkMesh was found.",
+   "Solution fields were not read: no time directory with fields was found.",
+   "Discretisation error was not quantified: a single mesh was supplied.",
+   "Accuracy against a reference was not assessed: no reference data was supplied.",
+   "Conformance covers only the values the task specification names; anything it leaves open, such as a modelling choice it does not state, was not checked.",
+   "Convergence of the answer was not assessed: no engineering monitor (function-object output under postProcessing/) was found.",
+   "Field values physically plausible: no internal fields",
+   "Flow regime matches turbulence modeling: insufficient data for Reynolds number",
+   "Near-wall y+ compatible with wall treatment: no y+ field",
+   "Net boundary mass flux ~ 0: no field flux data",
+   "Specification item 'U at inlet' was not checked: 0/U does not exist",
+   "Specification item 'epsilon at inlet' was not checked: 0/epsilon does not exist",
+   "Specification item 'k at inlet' was not checked: 0/k does not exist",
+   "Specification item 'p at outlet' was not checked: 0/p does not exist"
+  ],
+  "probable_causes": [],
+  "reasons": [
+   {
+    "code": "conformance.nu",
+    "input": "constant/transportProperties (nu)",
+    "kind": "conformance",
+    "log_offset": null,
+    "method": "deck-versus-spec conformance (courant.spec/1)",
+    "severity": "critical",
+    "summary": "nu does not match the task specification: 1e-05 in the case, 1.23e-05 specified",
+    "threshold": "1.23e-05 (1%)",
+    "value": "1e-05"
+   },
+   {
+    "code": "bounds.turbulence",
+    "input": "log.simpleFoam",
+    "kind": "check",
+    "log_offset": null,
+    "method": "check bounds.turbulence (Turbulence quantities not over-clipped)",
+    "severity": "minor",
+    "summary": "4 bounding excursions on ['epsilon', 'k'], all during startup",
+    "threshold": null,
+    "value": "4.0"
+   }
+  ],
+  "rule": "VER-5.7",
+  "run": {
+   "fork": null,
+   "id": "case",
+   "inputs": [
+    {
+     "bytes": 896,
+     "path": "constant/transportProperties",
+     "sha256": "d91073c160cb85614b061c4b2e03ed70c0d7ae4899957b931bd874e5a3c9fa56"
+    },
+    {
+     "bytes": 1059,
+     "path": "constant/turbulenceProperties",
+     "sha256": "83ee86995c18c422aad1a480b369585e6a55ae8d9e38217503f2060e55b7099e"
+    },
+    {
+     "bytes": 1384425,
+     "path": "log.simpleFoam",
+     "sha256": "3b9f94eeff650d6cf42ccecefd07ec78324c233859611ecbe9fc9d1fff541b28"
+    },
+    {
+     "bytes": 2756,
+     "path": "system/blockMeshDict",
+     "sha256": "eced91e8a007dddbc5d04555774b94e529fa4fcc25a24a02143fd6db23e9beb8"
+    },
+    {
+     "bytes": 1264,
+     "path": "system/controlDict",
+     "sha256": "2a496686764e0ffce8e7075ffd553d99d115b6751f88c13cf46efe21b99d0a85"
+    },
+    {
+     "bytes": 1487,
+     "path": "system/fvSchemes",
+     "sha256": "639a84169a8404e6d4b0846ab56c254b0e393d07e58b38b3755f0b646c91eb0b"
+    },
+    {
+     "bytes": 1364,
+     "path": "system/fvSolution",
+     "sha256": "594fe74b317bcdb645ed114796ff7d6358eebf086fac12c67b4e05c20e44b102"
+    }
+   ],
+   "solver": "simpleFoam",
+   "solver_version": null,
+   "source": "case_dir"
+  },
+  "schema": "courant.verdict/2",
+  "stats": {
+   "crashes": 0,
+   "divergences": 0,
+   "events": 2004,
+   "findings_by_severity": {
+    "critical": 0,
+    "info": 2,
+    "warn": 0
+   },
+   "residual_steps": 2000
+  },
+  "tool": {
+   "name": "courant",
+   "version": "0.5.0"
+  },
+  "verdict": "reject"
+ },
+ "verify_error": null
+}

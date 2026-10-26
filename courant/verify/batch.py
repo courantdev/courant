@@ -6,7 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from courant.verify.ingest import InputError
+from courant.verify.ingest import InputError, sidecar_of
 
 
 def discover(root: str | Path) -> list[tuple[Path, Path | None]]:
@@ -20,8 +20,7 @@ def discover(root: str | Path) -> list[tuple[Path, Path | None]]:
             runs.append((p, None))
         elif p.is_file() and (p.name.endswith(".log") or p.name.endswith(".log.gz")) \
                 and not p.name.startswith("log."):
-            stem = p.name.removesuffix(".gz").removesuffix(".log")
-            sidecar = p.with_name(stem + ".case.json")
+            sidecar = sidecar_of(p)
             runs.append((p, sidecar if sidecar.is_file() else None))
     return runs
 

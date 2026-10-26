@@ -28,6 +28,19 @@ def real_key(name: str) -> str | None:
     return value if value not in _PLACEHOLDERS else None
 
 
+#: The Anthropic workspace a key acts in. A key that is not scoped to a workspace is answered
+#: 400 ``invalid_request_error`` unless each request names one in the ``anthropic-workspace-id``
+#: header, which the Anthropic transport sends when this is set (docs/NETWORK.md). Read like a
+#: key and never printed or logged.
+ANTHROPIC_WORKSPACE_ENV = "ANTHROPIC_WORKSPACE_ID"
+
+
+def anthropic_workspace_id() -> str | None:
+    """The configured Anthropic workspace id, or None (``.env`` read as for a key)."""
+    load_dotenv()
+    return real_key(ANTHROPIC_WORKSPACE_ENV)
+
+
 def _parse_env_file(path: str) -> None:
     """Set KEY=VALUE lines into the environment without overriding existing vars."""
     with open(path) as fh:
@@ -69,6 +82,7 @@ class Settings:
         # answer, so nothing here names one.
         self.anthropic_api_key = real_key("ANTHROPIC_API_KEY")
         self.openrouter_api_key = real_key("OPENROUTER_API_KEY")
+        self.anthropic_workspace_id = real_key(ANTHROPIC_WORKSPACE_ENV)
         self.llm_max_tokens = int(os.environ.get("COURANT_LLM_MAX_TOKENS", "4096"))
         self.openfoam_image = os.environ.get("COURANT_OPENFOAM_IMAGE", OPENFOAM_IMAGE)
         # runner: auto (docker if available else offline) | docker | replay

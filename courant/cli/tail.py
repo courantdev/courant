@@ -34,7 +34,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from courant.case.reads import note
+from courant.case.reads import reading
 
 #: How often to look for new bytes. Solver logs are written in bursts of a few
 #: hundred bytes per iteration; polling is both simpler and more portable than
@@ -284,12 +284,11 @@ def _log_rank(path: Path) -> int:
     printed. Content is the fallback for an application we do not have in the
     list, where evidence of a time loop is the best signal available.
     """
-    try:
-        with open(path, "rb") as fh:
+    try:                                # VER-14: this head decided which log is the solve's
+        with reading(path), open(path, "rb") as fh:
             head = fh.read(64 * 1024).decode("utf-8", "replace")
     except OSError:
         return 1
-    note(path)                          # VER-14: this head decided which log is the solve's
 
     exec_match = _EXEC_LINE.search(head)
     if exec_match:

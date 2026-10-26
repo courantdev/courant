@@ -24,7 +24,7 @@ _RECOGNISED = re.compile(
 #: gap in what was checked, not evidence about the run (INV-3), so they go under
 #: "not assessed" and never decide a verdict. RRD RM-01 v0 found the first one
 #: deciding a healthy tutorial's verdict.
-READER_LIMITATIONS = frozenset({"case.unreadable_dict"})
+READER_LIMITATIONS = frozenset({"case.unreadable_dict", "case.unread_value"})
 
 
 def evidential(findings):
@@ -87,13 +87,24 @@ def no_time_markers(events) -> bool:
             and all(p.iteration is None for p in steps))
 
 
-def decide(is_recognised: bool, events, findings, trust) -> tuple[str, str]:
-    """(verdict, rule). Rules are evaluated in order; the first that matches wins."""
+def decide(is_recognised: bool, events, findings, trust, *,
+           truncated: bool = False) -> tuple[str, str]:
+    """(verdict, rule). Rules are evaluated in order; the first that matches wins.
+
+    `truncated` (VER-5.16): no exit code was given and the log does not end in `End`
+    (`courant.watcher.exitcode.run_exit_code` is None), so the run's end is unknown. What the
+    log shows failed still rejects: a CRASH, which then comes only from a fatal signature in the
+    log, and a non-finite residual (VER-5.2). VER-5.3 and VER-5.4 judge a run that finished (an
+    unconverged residual is what a run cut early looks like), so a log whose end is unknown is
+    `NOT_ASSESSABLE` before they are asked.
+    """
     if not is_recognised or not events:
         return "NOT_ASSESSABLE", "VER-5.1"
     kinds = {e.kind for e in events}
     if EventKind.CRASH in kinds or diverged(events):            # ADP-5: one definition
         return "NOT_TRUSTWORTHY", "VER-5.2"
+    if truncated:
+        return "NOT_ASSESSABLE", "VER-5.16"
     from courant.verification.grade import TrustGrade
 
     if trust is not None and trust.grade in (TrustGrade.C, TrustGrade.D):
@@ -137,6 +148,20 @@ def apply_conformance(verdict: str, rule: str, block, *,
         return ("NOT_ASSESSABLE", "VER-5.12") if extracted else ("NOT_TRUSTWORTHY", "VER-5.7")
     if block.unreadable and verdict == "TRUSTWORTHY":
         return "NOT_ASSESSABLE", "VER-5.9"
+    return verdict, rule
+
+
+def apply_version(verdict: str, rule: str, measured: bool | None) -> tuple[str, str]:
+    """VER-5.10 (ADP-1; VER-15 step 5): only a provisional accept changes. A run whose fork or
+    version is outside the set the error rates were measured on is `insufficient`; a reject on
+    the run's own evidence, and an `insufficient` under its own rule, stand.
+
+    `measured` is the adapter's answer (`courant.forks.SolverVersion.measured`), so this names
+    no fork and no version (ARC-14): True inside the set, False outside it, None when the
+    version could not be read from the solver log or a file the run wrote (an input's header
+    never counts), which leaves the verdict as it is."""
+    if measured is False and verdict == "TRUSTWORTHY":
+        return "NOT_ASSESSABLE", "VER-5.10"
     return verdict, rule
 
 

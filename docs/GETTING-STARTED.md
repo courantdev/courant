@@ -10,7 +10,7 @@ checks never use the network; the few commands whose purpose is a network call (
 update`, and a language model you name) say what they contact first. [NETWORK.md](NETWORK.md)
 lists them.
 
-Version 0.5.0. Measured on OpenFOAM v2406. Every figure quoted below carries its denominator;
+Version 0.6.0. Measured on OpenFOAM v2406. Every figure quoted below carries its denominator;
 `courant verify --about` prints the error rates measured for this version.
 
 <!-- Every bash block below is run by tests/integration/test_docs_commands.py on the demo data
@@ -81,6 +81,7 @@ one rule:
 | `insufficient.unrecognised_log` | VER-5.1 | fork |
 | `insufficient.no_residuals` | VER-5.5 | run |
 | `insufficient.no_time_markers` | VER-5.15 | run |
+| `insufficient.truncated_log` | VER-5.16 | run |
 | `insufficient.spec_hash_mismatch` | VER-5.8 | spec |
 | `insufficient.spec_value_unreadable` | VER-5.9 | spec |
 | `insufficient.unsupported_version` | VER-5.10 | fork |
@@ -91,6 +92,21 @@ one rule:
 
 The cause tag says what to change for the verdict to move: `run` the run's own output, `spec` the
 task specification, `fork` the solver fork or version.
+
+A log that stops before the solver's `End` is not called a crash unless it shows one: a fatal
+error from the solver (`FOAM FATAL ERROR`, a floating-point exception, a segmentation fault) or a
+non-finite residual is a `reject`. Otherwise the run may still be writing, the log may be a
+window of a longer one, the run was stopped from outside (killed, or past its time limit), or
+it crashed where the log cannot show it, and the verdict is `insufficient.truncated_log`.
+OpenFOAM writes its fatal errors and stack traces to stderr, so they are in the log only when
+stderr goes there too, as `runApplication` and `foamJob` send it
+(`simpleFoam > log.simpleFoam 2>&1`). A run that crashed into a log of stdout alone
+(`simpleFoam > log.simpleFoam`) leaves a log that just stops: `insufficient`, not `reject`,
+unless a residual it wrote is non-finite. Verify it again once the solver has printed `End`.
+With a specification, a case that set up a different problem is still a `reject`. Give the
+solver a log of its own (`log.<solver>`): by default a utility's `End` written ahead of it in
+the same file reads as the run's end (`--checks next` counts only an `End` after the last time
+step).
 
 The previous verdict names (`TRUSTWORTHY`, `NOT_TRUSTWORTHY`, `NOT_ASSESSABLE`,
 `courant.verdict/1`) are available for one more minor release with `--schema 1`; the decision
@@ -147,6 +163,20 @@ RM-18): of 20 runs with the right physics and the wrong input, a verdict without
 specification rejected 8; against the specification, 20. What a specification does not name
 is not checked, and the report says so.
 
+By default each value is read from the file the specification names. Six kinds of item are
+also in what ran: the solver in the log's `Exec` line, the end time in `stopAt` and the log's
+last step, the turbulence model in its `turbulence` switch, a value under `0/` in the time
+directory the run started from, a boundary value in its patch's type (the solver applies only
+the entries its type reads), and the mesh cells and scale in `constant/polyMesh`. With
+`--checks next` (on `courant verify` and `courant spec check`) they are checked against that too:
+a deck run by another solver, a run that ended early, a model switched off, a run restarted from
+an edited later time, a lid switched to `zeroGradient` with its old `value` left behind, or a
+mesh scaled after `blockMesh` no longer conforms, and a mesh refined after it, a mesh that cannot
+be read whole (binary, compressed), or a log with no `Exec` line, leaves the item not checked
+(TRD SPEC-13; the measurements above are of the default). `courant spec init --checks next`
+drafts for it, leaving out the blockMeshDict items the reference's own mesh does not give. By
+default, a verdict whose run ended away from its endTime says so under "not checked".
+
 ## 3. Before the run: preflight
 
 ```bash
@@ -154,15 +184,19 @@ courant preflight ./my_case
 ```
 
 This checks what no timestep can change before the solver spends anything:
-- the viscosity's units;
+- the viscosity's units (the top-level `nu` of `constant/transportProperties`; with
+  `--checks next`, each interFoam phase's `nu` and a `mu` too, through the case's density);
 - linear-solver tolerances;
 - relaxation on a steady loop;
-- boundaries that fix both pressure and velocity;
+- boundaries that fix both pressure and velocity (`p`; with `--checks next`, the `p_rgh` of
+  interFoam and the buoyant solvers too);
 - mesh quality, when `checkMesh` output exists.
 
 `SETUP_FAULT` exits 2, with the file and value for each fault. On the corpus it caught 8 of 23
 broken setups and flagged 0 of 8 good ones. Everything that needs the run is listed as not
-checked.
+checked, and so is each dictionary the case does not hold or that could not be read. A directory
+with no case dictionary in it, such as the parent of the case or an empty directory, is
+`NOT_ASSESSABLE` and exits 3; a path that does not exist is an input error and exits 4.
 
 ## 3b. Where did the answer stop changing?
 
@@ -262,6 +296,13 @@ The server offers six read-only tools, confined to the directories you name:
 - `explain_code`;
 - `list_failure_modes`;
 - `verifier_certification`.
+
+A case that holds a link leaving those directories is refused like a path outside them, whether
+or not anything exists where the link leads and whether or not a tool would read it, and so is a
+link to a directory that holds the case (such as `..`). The error names the link, never where it
+leads; name the directory the link points into with another `--root` to allow it. With no
+`--root` the directory is the current one, except `/`, your home directory and any directory that
+holds it (such as `/Users` or `/home`), where the server will not start until you name one.
 
 `verify_run` and `score_agent_output` return `courant.verdict/2`, or the previous major with
 `schema=1`. `score_agent_output` is advice to the agent, not a certification: given the task

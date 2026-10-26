@@ -44,3 +44,9 @@ class JudgeAnswer(BaseModel):
     rationale: str = ""
     #: A judge that failed to produce a usable answer. Scored as wrong, never guessed.
     error: str | None = Field(default=None)
+
+
+def abstained(answer: JudgeAnswer) -> bool:
+    """An answered abstention: NOT_ASSESSABLE from a judge whose request did not fail. Kept here,
+    beside the answer it reads, and not in the scorer (`score.py`), whose bytes are locked."""
+    return answer.verdict == "NOT_ASSESSABLE" and not getattr(answer, "error", None)

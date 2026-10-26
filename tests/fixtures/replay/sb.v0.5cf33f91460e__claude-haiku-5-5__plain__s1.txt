@@ -1,0 +1,195 @@
+$ source /usr/lib/openfoam/openfoam2406/etc/bashrc && mkdir -p /work && rm -rf /work/case && cp -r $FOAM_TUTORIALS/incompressible/pimpleFoam/laminar/planarContraction /work/case && cd /work/case && ls -R && cat constant/transportProperties && cat 0/U | head -60
+[exit 1]
+rm: cannot remove '/work/case': Read-only file system
+
+$ source /usr/lib/openfoam/openfoam2406/etc/bashrc; ls -ld /work /work/case 2>&1; mount | grep -i work 2>&1; id; touch /work/testwrite 2>&1; echo "exit=$?"
+[exit 0]
+drwxr-xr-x 3 root root 4096 Oct 13 05:10 /work
+drwxrwxrwt 2 root root   40 Oct 13 05:10 /work/case
+overlay on / type overlay (ro,relatime,lowerdir=/var/lib/docker/overlay2/l/EZWMUI6BBUU5C3LWI2DXPUFPOB:/var/lib/docker/overlay2/l/GLUPSARVCHTBGREI3QUFCCZYEN:/var/lib/docker/overlay2/l/6LGQYENDBSIB2TNP5MDM24HCAK:/var/lib/docker/overlay2/l/LIQDVO3XOYX4IP7ZUCDYNITJ6J:/var/lib/docker/overlay2/l/FB33SIAMGC3MHQWQGWRYA6QAPM:/var/lib/docker/overlay2/l/7DWVPNSXLQRSJF6QTB26HCUDOK:/var/lib/docker/overlay2/l/EYVLUM4S565YBK3AP67S2BAXMQ:/var/lib/docker/overlay2/l/OK7IBA7JBWJXP7KGMAEGMV5NRY,upperdir=/var/lib/docker/overlay2/0ffafaa1da870f543f8564ca6964da3f604deed526491b34e1e5478b3fb55052/diff,workdir=/var/lib/docker/overlay2/0ffafaa1da870f543f8564ca6964da3f604deed526491b34e1e5478b3fb55052/work,nouserxattr)
+tmpfs on /work/case type tmpfs (rw,nosuid,nodev,relatime,size=262144k,inode64)
+/dev/root on /work/prompt.txt type ext4 (ro,relatime,discard,journal_async_commit,nobarrier,errors=remount-ro,commit=30,data=writeback)
+uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu)
+touch: cannot touch '/work/testwrite': Read-only file system
+exit=1
+
+$ source /usr/lib/openfoam/openfoam2406/etc/bashrc && ls -la /work/case && cp -r $FOAM_TUTORIALS/incompressible/pimpleFoam/laminar/planarContraction/. /work/case/ && cd /work/case && ls -R && cat constant/transportProperties && head -60 0/U
+[exit 0]
+total 4
+drwxrwxrwt 2 root root   40 Oct 13 05:10 .
+drwxr-xr-x 3 root root 4096 Oct 13 05:10 ..
+.:
+0
+constant
+system
+
+./0:
+U
+p
+sigma
+
+./constant:
+transportProperties
+turbulenceProperties
+
+./system:
+blockMeshDict
+controlDict
+fvSchemes
+fvSolution
+graphs
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  v2406                                 |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      transportProperties;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+transportModel  Newtonian;
+
+nu              1e-5;
+
+
+// ************************************************************************* //
+/*--------------------------------*- C++ -*----------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  v2406                                 |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       volVectorField;
+    object      U;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+Uinlet          (0.03876 0 0);
+
+dimensions      [0 1 -1 0 0 0 0];
+
+internalField   uniform (0 0 0);
+
+boundaryField
+{
+    inlet
+    {
+        type            fixedValue;
+        value           uniform $Uinlet;
+    }
+
+    outlet
+    {
+        type            zeroGradient;
+        value           uniform (0 0 0);
+    }
+
+    wall
+    {
+        type            fixedValue;
+        value           uniform (0 0 0);
+    }
+
+    #includeEtc "caseDicts/setConstraintTypes"
+}
+
+
+// ************************************************************************* //
+
+$ cd /work/case && sed -i 's/^Uinlet          (0.03876 0 0);/Uinlet          (0.0464 0 0);/' 0/U && sed -i 's/^nu              1e-5;/nu              7.3e-06;/' constant/transportProperties && grep -n 'Uinlet' 0/U | head -2 && grep -n '^nu' constant/transportProperties && cat constant/turbulenceProperties | tail -8 && grep -E 'application|endTime|deltaT|writeInterval|adjust|maxCo|writeControl' system/controlDict
+[exit 0]
+17:Uinlet          (0.0464 0 0);
+28:        value           uniform $Uinlet;
+19:nu              7.3e-06;
+    printCoeffs on;
+
+    nuM         0.002;
+    lambda      0.03;
+}
+
+
+// ************************************************************************* //
+application     pimpleFoam;
+stopAt          endTime;
+endTime         0.25;
+deltaT          2e-4;
+writeControl    runTime;
+writeInterval   0.01;
+
+$ cd /work/case && sed -i 's/^endTime         0.25;/endTime         0.2;/' system/controlDict && grep -E 'endTime|deltaT|adjust|maxCo' system/controlDict && grep -E 'Uinlet|^nu' 0/U constant/transportProperties
+[exit 0]
+stopAt          endTime;
+endTime         0.2;
+deltaT          2e-4;
+0/U:Uinlet          (0.0464 0 0);
+0/U:        value           uniform $Uinlet;
+constant/transportProperties:nu              7.3e-06;
+
+$ source /usr/lib/openfoam/openfoam2406/etc/bashrc && cd /work/case && blockMesh > log.blockMesh 2>&1; echo blockMesh_exit=$? && pimpleFoam > log.pimpleFoam 2>&1; echo solver_exit=$? && tail -n 25 log.pimpleFoam && grep -c '^Time =' log.pimpleFoam && grep -i -m3 'fatal\|nan' log.pimpleFoam; ls
+[exit 0]
+blockMesh_exit=0
+solver_exit=0
+PIMPLE: iteration 13
+GAMG:  Solving for p, Initial residual = 1.2004421e-05, Final residual = 9.7990005e-07, No Iterations 3
+time step continuity errors : sum local = 2.5849692e-11, global = 7.7535479e-13, cumulative = -6.0769662e-10
+smoothSolver:  Solving for sigmaxx, Initial residual = 2.601491e-08, Final residual = 2.601491e-08, No Iterations 0
+smoothSolver:  Solving for sigmaxy, Initial residual = 1.7387105e-07, Final residual = 1.7387105e-07, No Iterations 0
+smoothSolver:  Solving for sigmayy, Initial residual = 3.1217207e-07, Final residual = 3.1217207e-07, No Iterations 0
+smoothSolver:  Solving for sigmazz, Initial residual = 0, Final residual = 0, No Iterations 0
+PIMPLE: iteration 14
+GAMG:  Solving for p, Initial residual = 1.0587646e-05, Final residual = 8.3301436e-07, No Iterations 3
+time step continuity errors : sum local = 2.1974833e-11, global = -1.4339041e-12, cumulative = -6.0913052e-10
+smoothSolver:  Solving for sigmaxx, Initial residual = 2.6311537e-08, Final residual = 2.6311537e-08, No Iterations 0
+smoothSolver:  Solving for sigmaxy, Initial residual = 1.7984323e-07, Final residual = 1.7984323e-07, No Iterations 0
+smoothSolver:  Solving for sigmayy, Initial residual = 3.1694039e-07, Final residual = 3.1694039e-07, No Iterations 0
+smoothSolver:  Solving for sigmazz, Initial residual = 0, Final residual = 0, No Iterations 0
+PIMPLE: iteration 15
+GAMG:  Solving for p, Initial residual = 8.9817842e-06, Final residual = 8.0375345e-07, No Iterations 3
+time step continuity errors : sum local = 2.1202927e-11, global = 1.4335325e-12, cumulative = -6.0769699e-10
+smoothSolver:  Solving for sigmaxx, Initial residual = 2.6604136e-08, Final residual = 2.6604136e-08, No Iterations 0
+smoothSolver:  Solving for sigmaxy, Initial residual = 1.8548431e-07, Final residual = 1.8548431e-07, No Iterations 0
+smoothSolver:  Solving for sigmayy, Initial residual = 3.2106438e-07, Final residual = 3.2106438e-07, No Iterations 0
+smoothSolver:  Solving for sigmazz, Initial residual = 0, Final residual = 0, No Iterations 0
+ExecutionTime = 34.54 s  ClockTime = 34 s
+
+End
+
+1000
+0
+0.01
+0.02
+0.03
+0.04
+0.05
+0.06
+0.07
+0.08
+0.09
+0.1
+0.11
+0.12
+0.13
+0.14
+0.15
+0.16
+0.17
+0.18
+0.19
+0.2
+constant
+log.blockMesh
+log.pimpleFoam
+postProcessing
+system

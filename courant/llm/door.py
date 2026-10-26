@@ -26,8 +26,17 @@ model answered is the model's failure only when a model was asked and failed; wh
 a rejected key or a model that is not served stopped it, the stop is raised instead, so a
 batch never scores it (ARC-19). A rate limit that outlasts its retries is such a stop
 (``RateLimited``), and so is an account out of credit (402), as a rejected key is (ARC-20).
+So is any other 4xx that is not a rate limit (a 400 ``invalid_request_error``, a 403): the
+provider rejected the request, no model was asked, and the door raises ``Rejected``, never a
+failed exchange a batch would score as the model's abstention.
 Every rule applies per provider (ARC-17), and no provider is a fallback that lets a paid id
 through: automatic selection walks the allowlists only.
+
+Every paid request records what it cost (ARC-21): the provider's reported cost, or, for a
+provider whose answers carry none (Anthropic), its usage priced by ``prices``; a paid Anthropic
+model with no price is refused before anything is sent. A door built with a ``spend_cap``
+reserves each paid request's upper-bound cost in the ledger, under the same lock as the request
+itself, and refuses one that would pass the cap (``SpendCapReached``, a stop).
 
 A batch (``Door.batch``) is keyed by what it is (ARC-20): its name, its identity (the
 measurement, the model or judge, the prompt's version) and each item's content, so a changed
@@ -50,8 +59,9 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from courant.llm import budget, policy
+from courant.llm import budget, policy, prices
 from courant.llm.errors import (
+    REJECTION_REASONS,
     BudgetRefused,
     Halted,
     InvalidResponse,
@@ -61,16 +71,20 @@ from courant.llm.errors import (
     QuotaExhausted,
     RateLimited,
     Refused,
+    Rejected,
+    SpendCapReached,
     TransportError,
+    provider_name,
 )
 from courant.llm.transport import RawResponse, Transport
 
 __all__ = [
     "REGISTRY", "BatchResults", "BudgetRefused", "CallRecord", "Candidate", "Completion",
     "Door", "Halted", "InvalidResponse", "LLMError", "LedgerError", "PaidResponse",
-    "QuotaExhausted", "RateLimited", "RawResponse", "Refused", "SystemClock", "Transport",
-    "TransportError", "check_schema", "default_door", "draws_on_free_allowance", "parse_json",
-    "request_of", "validate",
+    "QuotaExhausted", "RateLimited", "RawResponse", "Refused", "Rejected", "SpendCapReached",
+    "SystemClock",
+    "Transport", "TransportError", "check_schema", "default_door", "draws_on_free_allowance", "parse_json",
+    "provider_name", "request_of", "validate",
 ]
 
 log = logging.getLogger("courant.llm")
@@ -107,9 +121,16 @@ _RETRYABLE = frozenset({408, 425, 429})
 #: not the model's failure (ARC-19): the day's quota stopped it, the provider rejected the key
 #: or the account has no credit (402, ARC-20; either way the door skips the provider from now
 #: on), or the id is not served (the door drops it). A rate limit that outlasted its retries
-#: is ``"quota"`` too (``_send``). Any other status is the exchange failing: ``"failed"``, the
-#: model's failure on the call.
+#: is ``"quota"`` too (``_send``). Any other 4xx that is not retried is ``"rejected"`` (the
+#: provider rejected the request: ``Rejected``), and a transport that could not send at all
+#: (no SDK, no key) is ``"unsent"``; neither is the model's. Only a 5xx or a dropped connection
+#: that outlasted its retries is the exchange failing: ``"failed"``, the model's failure on the
+#: call.
 _WHY = {budget.DAILY_CAP: "quota", "http-401": "key", "http-402": "key", "http-404": "gone"}
+
+#: An error type a provider names in its error body (Anthropic: ``invalid_request_error``), kept
+#: only when it has this shape, so no request text can ride along in it (SEC-1).
+_ERROR_TYPE = re.compile(r"[a-z][a-z0-9_]{0,63}")
 
 #: What a run has learned, kept for the rest of the process: the paid response that halted it
 #: (C2d), and the ids that answered 404 (C6c). Keyed by state directory, so a fresh door in the
@@ -430,12 +451,15 @@ class Door:
     ``~/.courant/llm``; ``transports`` maps provider names to transports (a provider with no
     transport is simply not called); ``clock`` provides ``now()`` and ``sleep()``; ``pin`` is a
     ``(provider, model id)`` every unpinned call uses instead of automatic selection.
+    ``spend_cap`` (``budget.SpendCap``) holds every paid request this door sends to at most that
+    many US dollars under its key, counted in the provider's ledger (ARC-21).
     """
 
     def __init__(self, *, allowlist: Mapping | None = None, state_dir: Path | str | None = None,
                  transports: Mapping[str, Transport] | None = None, clock=None,
                  pin: tuple[str, str] | None = None, retry: budget.RetryPolicy | None = None,
-                 per_minute: int = budget.PER_MINUTE) -> None:
+                 per_minute: int = budget.PER_MINUTE,
+                 spend_cap: budget.SpendCap | None = None) -> None:
         self.allowlist = policy.load_allowlist(
             policy.committed_allowlist() if allowlist is None else allowlist)
         self.state_dir = (Path(state_dir).expanduser() if state_dir is not None
@@ -447,12 +471,15 @@ class Door:
             raise ValueError("pin is (provider, model id)")
         if isinstance(per_minute, bool) or not isinstance(per_minute, int) or per_minute < 1:
             raise ValueError("per_minute is a positive integer")
+        if spend_cap is not None and not isinstance(spend_cap, budget.SpendCap):
+            raise TypeError("spend_cap is a budget.SpendCap")
         self.pin = pin
+        self.spend_cap = spend_cap
         self.retry = retry or budget.RetryPolicy()
         self.per_minute = per_minute
         self._run = str(self.state_dir.resolve())       # the key of this run's latches
         self._dropped = _DROPPED.setdefault(self._run, set())   # answered 404 (C6c)
-        self._rejected: dict[str, str] = {}             # provider -> why its key is unusable
+        self._rejected: dict[str, Rejected] = {}        # provider -> why its key is unusable
         #: provider -> (UTC day, free requests allowed that day), as this door's last batch
         #: read it from the provider's key endpoint (ARC-18 C4).
         self._allowance: dict[str, tuple[date, int]] = {}
@@ -486,6 +513,7 @@ class Door:
         sent: list[CallRecord] = []
         tried: list[tuple[str, str]] = []           # (why, what happened), in walk order
         exhausted: list[QuotaExhausted] = []
+        rejected: list[Rejected] = []
         skipped: set[str] = set()
         for candidate in candidates:
             if candidate.provider in skipped:
@@ -501,6 +529,8 @@ class Door:
                     tried.append(("quota", blocked.message))
                 else:                                       # its key was rejected
                     tried.append(("key", blocked.message))
+                    if isinstance(blocked, Rejected):
+                        rejected.append(blocked)
                 skipped.add(candidate.provider)
                 continue
             try:
@@ -515,20 +545,22 @@ class Door:
                     tried.append(("quota", move.error.message))
                 else:
                     tried.append((move.why, f"{candidate.id}: {move.error.message}"))
+                if isinstance(move.error, Rejected):
+                    rejected.append(move.error)
                 if move.whole_provider:
                     skipped.add(candidate.provider)
                 log.warning("%s (%s): %s", candidate.id, candidate.provider, move.error.message)
             except LLMError as exc:
                 exc.records = tuple(sent)
                 raise
-        raise _no_answer(tried, exhausted, sent)
+        raise _no_answer(tried, exhausted, sent, rejected)
 
     def batch(self, name: str, items: Mapping, fn: Callable, *, requests_per_item: int = 1,
               provider: str | None = None, data: str | None = None, model: str | None = None,
               identity: Mapping | None = None,
               content: Callable[[Any], Any] | None = None, task: str | None = None,
               capability: str | None = None,
-              measurement: str | None = None) -> BatchResults:
+              measurement: str | None = None, limit: int | None = None) -> BatchResults:
         """Run ``fn(item)`` for every item not already done, if today's quota can finish them.
 
         A batch is what it says it is (ARC-20). Each item's key (``budget.item_key``) is
@@ -563,6 +595,11 @@ class Door:
         that call, before the allowance read or any item, so a call the door would refuse
         contacts nothing (docs/NETWORK.md). Every product batch names it
         (tests/unit/test_network.py).
+
+        ``limit`` runs at most that many of the pending items, in ``items`` order, and the
+        allowance is checked for those only: a batch larger than any one day's allowance is
+        worked through a slice at a time under the same name, by a scheduled runner.
+        What is returned is the same: every done item, this run's and earlier ones.
         """
         if data is not None and data not in policy.DATA:
             raise ValueError(f"data must be one of {policy.DATA}, or None, not {data!r}")
@@ -598,6 +635,10 @@ class Door:
                              f"batch name is one class of data (ARC-19 C8)")
         pending = [(str(item_id), item) for item_id, item in items.items()
                    if str(item_id) not in held]
+        if limit is not None:
+            if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+                raise ValueError("limit is a positive integer, or None")
+            pending = pending[:limit]
         if pending and task is not None:
             # ARC-12 before ARC-18: eligibility is decided locally, before the allowance read
             # (GET /api/v1/key) or any item reaches the network.
@@ -690,6 +731,10 @@ class Door:
                                  measurement=measurement, today=today)
             if why:
                 raise Refused(f"{model} may not take this {task} call: {why}")
+            if candidate.paid:
+                unpriced = self._unpriced(candidate)
+                if unpriced:
+                    raise Refused(f"{model} may not take this {task} call: {unpriced}")
             if candidate.provider not in self.transports:
                 raise Refused(f"{model}: no {candidate.provider} key is configured")
             if (candidate.provider, candidate.id) in self._dropped:
@@ -747,6 +792,17 @@ class Door:
             provider = next(iter(self.transports))
         return Candidate(provider, model, None)
 
+    def _unpriced(self, candidate: Candidate) -> str | None:
+        """Why a paid candidate's cost could not be recorded or bounded, or None (ARC-21)."""
+        price = prices.price_of(candidate.provider, candidate.id)
+        if price is None and prices.needs_table(candidate.provider):
+            return (f"{candidate.provider} reports no cost and {candidate.id} has no price in "
+                    f"courant/llm/prices.py, so what it costs could not be recorded (ARC-21)")
+        if price is None and self.spend_cap is not None:
+            return (f"{candidate.id} has no price in courant/llm/prices.py, so the spend cap "
+                    f"cannot bound its requests before they are sent (ARC-21)")
+        return None
+
     def _batch_draws(self, provider: str, model: str | None) -> bool:
         """Whether a batch's requests draw on ``provider``'s free allowance: the same rule a
         request's reservation applies, to the model the batch pins, or the door's pin
@@ -764,7 +820,9 @@ class Door:
         this cannot read is left to it, where it refuses with ``LedgerError`` (ARC-18).
         """
         if provider in self._rejected:
-            return Refused(self._rejected[provider])
+            was = self._rejected[provider]
+            return Rejected(was.message, provider=was.provider, status=was.status,
+                            error_type=was.error_type, reason=was.reason)
         try:
             until = budget.Ledger(self.state_dir, provider).exhausted_until(self.clock.now())
         except OSError:
@@ -784,11 +842,17 @@ class Door:
         draws = draws_on_free_allowance(candidate)
         fields = {"model": candidate.id, "task": task, "data": data, "measurement": measurement,
                   "paid": not draws}
+        bound = None
+        if self.spend_cap is not None and candidate.paid:
+            price = prices.price_of(candidate.provider, candidate.id)
+            if price is None:                   # _candidates refuses it first; never unbounded
+                raise Refused(self._unpriced(candidate) or f"{candidate.id} has no price")
+            bound = prices.request_bound(price, payload)
         attempt = 0
         while True:
             attempt += 1
             try:
-                reservation = self._reserve(ledger, fields, draws=draws)
+                reservation = self._reserve(ledger, fields, draws=draws, cost_bound=bound)
             except QuotaExhausted as exc:   # provider-scoped, as a daily-cap 429 is (C4)
                 raise _MoveOn(exc, whole_provider=True, why="quota") from None
             started = reservation.at
@@ -829,7 +893,7 @@ class Door:
                 raise _MoveOn(error, whole_provider=False)
             if outcome.scope in ("candidate", "provider"):
                 raise _MoveOn(error, whole_provider=outcome.scope == "provider",
-                              why=_WHY.get(outcome.status, "failed"))
+                              why=_why(outcome))
             raise error
 
     def _rate_limited(self, candidate: Candidate, attempt: int,
@@ -844,18 +908,22 @@ class Door:
             f"it is not the model's answer, and a batch resumes after "
             f"{until:%Y-%m-%d %H:%M:%S} UTC (ARC-20)", provider=candidate.provider, until=until)
 
-    def _reserve(self, ledger: budget.Ledger, fields: Mapping, *,
-                 draws: bool) -> budget.Reservation:
+    def _reserve(self, ledger: budget.Ledger, fields: Mapping, *, draws: bool,
+                 cost_bound: float | None = None) -> budget.Reservation:
         """The request's reservation (ARC-18 C1-C4). A full window is waited out on the
         injected clock with the ledger lock released, and the reservation asked for again.
         A request that draws on the free allowance (``draws_on_free_allowance``) is held to
-        the day's allowance; a paid one S allowed is not (ARC-20)."""
+        the day's allowance; a paid one S allowed is not (ARC-20). A paid request under the
+        door's spend cap reserves its ``cost_bound`` in the same locked step (ARC-21)."""
         def day_limit(day: date) -> int:
             return self._free_allowance(ledger.provider, day)
 
         while True:
+            capped = cost_bound is not None
             got = ledger.reserve(fields, clock=self.clock, per_minute=self.per_minute,
-                                 day_limit=day_limit if draws else None)
+                                 day_limit=day_limit if draws else None,
+                                 spend_cap=self.spend_cap if capped else None,
+                                 cost_bound=cost_bound)
             if isinstance(got, budget.Reservation):
                 return got
             self.clock.sleep(got)
@@ -878,7 +946,7 @@ class Door:
         elif outcome.status == "http-404":
             self._dropped.add((candidate.provider, candidate.id))
         elif outcome.status in ("http-401", "http-402"):
-            self._rejected[candidate.provider] = outcome.error.message
+            self._rejected[candidate.provider] = outcome.error
 
     def _read(self, candidate: Candidate, raw: RawResponse | None, failure: LLMError | None,
               schema: Mapping, started: datetime) -> _Outcome:
@@ -899,6 +967,7 @@ class Door:
 
         retry_after = budget.retry_after_seconds(raw.header("Retry-After"), started)
         said = f"{candidate.provider} answered {status}"
+        kind, reason = _error_fields(body)
         if status == 429 and _names_daily_cap(body):
             until = budget.next_utc_midnight(started)
             return _Outcome(budget.DAILY_CAP, "provider", error=QuotaExhausted(
@@ -909,15 +978,13 @@ class Door:
             return _Outcome("http-404", "candidate", error=TransportError(
                 f"{said}: {candidate.id} is not served, and is dropped for this run (ARC-10)",
                 status=status, retryable=False))
-        if status == 401:
-            return _Outcome("http-401", "provider", error=TransportError(
-                f"{said}: the {candidate.provider} key was rejected", status=status,
-                retryable=False))
-        if status == 402:                               # the account, not the model (ARC-20)
-            return _Outcome("http-402", "provider", error=TransportError(
-                f"{said}: the {candidate.provider} account has no credit for this request",
-                status=status, retryable=False))
+        if status in (401, 402):        # the key or the account, not the model (ARC-20)
+            return _Outcome(f"http-{status}", "provider", error=Rejected(
+                provider=candidate.provider, status=status, error_type=kind, reason=reason))
         retryable = status in _RETRYABLE or status >= 500
+        if 400 <= status < 500 and not retryable:       # rejected: no model was asked (ARC-19)
+            return _Outcome(f"http-{status}", "candidate", error=Rejected(
+                provider=candidate.provider, status=status, error_type=kind, reason=reason))
         return _Outcome(f"http-{status}", "retry" if retryable else "candidate",
                         error=TransportError(said, status=status, retryable=retryable),
                         retry_after=retry_after)
@@ -928,6 +995,11 @@ class Door:
         spent = {"input_tokens": _count(usage.get("prompt_tokens")),
                  "output_tokens": _count(usage.get("completion_tokens")),
                  "cost": _cost(usage.get("cost"))}
+        if candidate.paid:                  # what a paid request cost, from the table (ARC-21)
+            price = prices.price_of(candidate.provider, candidate.id)
+            if price is not None and (spent["cost"] is None
+                                      or prices.needs_table(candidate.provider)):
+                spent["cost"] = prices.cost(price, usage)
         if not candidate.paid and spent["cost"] is not None and spent["cost"] > 0:
             return _Outcome("paid", "call", error=PaidResponse(
                 f"{candidate.id} is on the free allowlist and reported a cost of "
@@ -997,8 +1069,31 @@ class Door:
             raise Halted(f"this run is halted, and the door sends nothing more: {reason}")
 
 
+def _why(outcome: _Outcome) -> str:
+    """What a candidate's unanswered outcome means for the call (``_WHY``)."""
+    if outcome.status in _WHY:
+        return _WHY[outcome.status]
+    if isinstance(outcome.error, Rejected):
+        return "rejected"
+    if outcome.status == "transport-error":             # not retryable: nothing could be sent
+        return "unsent"
+    return "failed"
+
+
+def _error_fields(body) -> tuple[str | None, str | None]:
+    """The provider's error type and the transport's recognised reason, from an error body,
+    each only when it is one of the fixed shapes a message may carry (SEC-1)."""
+    error = body.get("error") if isinstance(body, Mapping) else None
+    if not isinstance(error, Mapping):
+        return None, None
+    kind, reason = error.get("type"), error.get("courant_reason")
+    kind = kind if isinstance(kind, str) and _ERROR_TYPE.fullmatch(kind) else None
+    reason = reason if isinstance(reason, str) and reason in REJECTION_REASONS else None
+    return kind, reason
+
+
 def _no_answer(tried: list[tuple[str, str]], exhausted: list[QuotaExhausted],
-               sent: list[CallRecord]) -> LLMError:
+               sent: list[CallRecord], rejected: list[Rejected] = ()) -> LLMError:
     """What a call raises when no candidate answered it, from why each did not (ARC-19).
 
     Only a model that is served, asked and failing (``"failed"``: a 400, a 5xx after its
@@ -1013,7 +1108,10 @@ def _no_answer(tried: list[tuple[str, str]], exhausted: list[QuotaExhausted],
         candidate that could have answered was not asked, and the door skips that provider
         for the rest of the run: ``Refused``;
       * every candidate answered 404: no model is served, and the door refuses every later
-        call the same way, so this one is refused too: ``Refused``.
+        call the same way, so this one is refused too: ``Refused``;
+      * a provider rejected the request with any other 4xx that is not a rate limit (a 400,
+        a 403), so no model was asked: ``Rejected``, naming the status and the provider's
+        error type; and a transport that could not send at all (no SDK, no key): ``Refused``.
 
     ``records`` holds every request the call sent, whichever it raises.
     """
@@ -1026,7 +1124,16 @@ def _no_answer(tried: list[tuple[str, str]], exhausted: list[QuotaExhausted],
                                 provider=first.provider, until=first.until)
         first.records = tuple(sent)
         return first
-    if "key" in whys or "failed" not in whys:
+    if whys & {"key", "rejected", "unsent"} or "failed" not in whys:
+        if rejected:
+            first = rejected[0]
+            if len(tried) == 1:
+                return Rejected(first.message, provider=first.provider, status=first.status,
+                                error_type=first.error_type, reason=first.reason,
+                                records=sent)
+            return Rejected(f"{first.line}. No allowlisted model could answer: {said}",
+                            provider=first.provider, status=first.status,
+                            error_type=first.error_type, reason=first.reason, records=sent)
         return Refused(f"no allowlisted model could answer: {said}", records=sent)
     return TransportError(f"no allowlisted model answered: {said}", retryable=False,
                           records=sent)
@@ -1043,10 +1150,13 @@ def _from_ledger(ledger: budget.Ledger, read: Callable[[], Any]) -> Any:
                           sent=False) from None
 
 
-def default_door(*, clock=None, state_dir: Path | str | None = None) -> Door:
+def default_door(*, clock=None, state_dir: Path | str | None = None,
+                 spend_cap: budget.SpendCap | None = None,
+                 per_minute: int = budget.PER_MINUTE) -> Door:
     """The door this installation uses: the committed allowlist, read now; a transport for
     every provider whose key is configured (``courant.config.real_key``, the one definition of
-    configured); ``COURANT_OPENROUTER_MODEL`` as a pin, checked like any other (C3d)."""
+    configured); ``COURANT_OPENROUTER_MODEL`` as a pin, checked like any other (C3d). A batch
+    runner passes its ``spend_cap`` and its rate (``per_minute``) (ARC-21)."""
     from courant.config import load_dotenv, real_key
     from courant.llm import allowlist
 
@@ -1058,7 +1168,8 @@ def default_door(*, clock=None, state_dir: Path | str | None = None) -> Door:
             transports[name] = _transport(name, key)
     pinned = (os.environ.get(PIN_ENV) or "").strip()
     return Door(allowlist=allowlist.ALLOWLIST, state_dir=state_dir, transports=transports,
-                clock=clock, pin=("openrouter", pinned) if pinned else None)
+                clock=clock, pin=("openrouter", pinned) if pinned else None,
+                spend_cap=spend_cap, per_minute=per_minute)
 
 
 def _transport(name: str, key: str) -> Transport:
@@ -1066,6 +1177,7 @@ def _transport(name: str, key: str) -> Transport:
         from courant.llm.openrouter import OpenRouterTransport
 
         return OpenRouterTransport(api_key=key)
+    from courant.config import anthropic_workspace_id
     from courant.llm.anthropic import AnthropicTransport
 
-    return AnthropicTransport(api_key=key)
+    return AnthropicTransport(api_key=key, workspace_id=anthropic_workspace_id())

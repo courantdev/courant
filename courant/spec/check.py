@@ -12,6 +12,7 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+from courant.case import wordre
 from courant.spec import deck
 from courant.spec.model import SPEC_SCHEMA, Spec, SpecItem
 
@@ -45,6 +46,8 @@ def bounded_quantity(item: SpecItem, found) -> float | None:
     if found is None or isinstance(found, str):
         return None
     if item.blocks == "cells":
+        if isinstance(found, (int, float)):             # the solved mesh's count (SPEC-13)
+            return float(found)
         counts = [float(x) for x in found]
         if len(counts) % 3:
             return None
@@ -133,12 +136,25 @@ def _tolerance(item: SpecItem, rel: float, angle_deg: float) -> str:
 
 
 # ---------------------------------------------------------------- the check
+@wordre.bounded                                     # the case's keyword patterns (SPEC-2)
 def check_conformance(spec: Spec | dict, case_dir: str | Path | None, *, spec_sha256: str,
-                      locked_sha256: str | None = None):
-    """The conformance block for one case. Never raises on a case it cannot read."""
+                      locked_sha256: str | None = None, checks: str = "default",
+                      run=None):
+    """The conformance block for one case. Never raises on a case it cannot read.
+
+    `checks` is `--checks` (GATE-13). Under `next` each value is also checked against what ran
+    (`conformance.as_run`, TRD SPEC-13, `courant.spec.as_run`): `run` is the solver's log
+    (`as_run.Run`), when there is one, and the case's own mesh files are read for the mesh
+    items. Under the default the deck alone decides, as in v0.5.0."""
     from courant.spec.impossible import impossibilities
+    from courant.verify.checks import enabled
     from courant.verify.schema import ConformanceBlock, ConformanceItem
 
+    as_run = None
+    if enabled("conformance.as_run", checks) and case_dir is not None:
+        from courant.spec.as_run import AsRun
+
+        as_run = AsRun(case_dir, run)
     if isinstance(spec, dict):
         spec = Spec.model_validate(spec)
     invalid = impossibilities(spec)
@@ -164,6 +180,8 @@ def check_conformance(spec: Spec | dict, case_dir: str | Path | None, *, spec_sh
             found = deck.Found(None, item.file, "only a log was given; the case directory is needed")
         else:
             found = deck.read(case_dir, item)
+            if as_run is not None:
+                found = as_run.read(item, found, rel=rel)
         ok = conforms(item, found.value, rel=rel, angle_deg=angle)
         if ok is None and found.missing:                 # absent from a file read in full (VER-15)
             ok = False
@@ -210,8 +228,10 @@ def check_conformance(spec: Spec | dict, case_dir: str | Path | None, *, spec_sh
 # ---------------------------------------------------------------- drafting a spec
 #: Boundary conditions whose parameters are part of the problem, and the entry that holds
 #: each. A wall function's `value`, or a `calculated` patch's, is an initial guess, not a
-#: boundary condition anyone asked for, and is left out.
-_BC_PARAMETERS = {
+#: boundary condition anyone asked for, and is left out. The one table of which entry a type
+#: applies: the drafter drafts these, and `courant.spec.as_run` (SPEC-13, under --checks next)
+#: compares a patch item only on an entry its type applies.
+BC_PARAMETERS = {
     "fixedValue": ("value",),
     "movingWallVelocity": ("value",),
     "inletOutlet": ("inletValue",),
@@ -247,8 +267,13 @@ _PROPERTIES = (
     ("constant/momentumTransport", ("LES",), "model", "turbulence model", True),
 )
 
+#: Drafted under `--checks next` only (SPEC-13; the default drafts as v0.5.0 did, GATE-13), and
+#: only for a case whose `application` is OpenFOAM.org's foamRun: every such case runs the same
+#: program, and what solves is its module (`solver`, or `-solver` on the Exec line).
+_MODULE = ("system/controlDict", (), "solver", "solver module", True)
+
 _PHASES_FILE = "constant/transportProperties"
-_TEXT_KEYS = {"application", "simulationType", "RASModel", "LESModel", "model"}
+_TEXT_KEYS = {"application", "simulationType", "RASModel", "LESModel", "model", "solver"}
 
 
 def _probe(case: Path, item: SpecItem):
@@ -256,18 +281,32 @@ def _probe(case: Path, item: SpecItem):
     return found.value
 
 
+@wordre.bounded                                     # the case's keyword patterns (SPEC-2)
 def draft_spec(case_dir: str | Path, *, task: str | None = None,
-               include_mesh: bool = True) -> Spec:
+               include_mesh: bool = True, checks: str = "default") -> Spec:
     """A specification of the problem this case sets up: its boundary-condition parameters,
     material properties, body forces, run length, geometry scale and modelling choices.
 
     Meant to be generated from the *reference* case a task is written against, reviewed, and
     then locked before any agent runs (`courant spec hash`). Only values the reader can
-    actually read are included, so a draft checked against its own case always conforms.
+    actually read are included, so a draft checked against its own case, in the mode it was
+    drafted for (`checks`, GATE-13), conforms, with one exception under `next`: a value under
+    `0/` read at a start time `courant spec check` cannot know. A run reference with
+    `startFrom latestTime` and several time directories (pisoFoam/RAS/cavity ships it) has no log
+    there to say where it started, so its `0/` items are not checked (VER-5.9) until a log is
+    given.
     """
+    from courant.spec.as_run import AsRun, names_the_mesh
+    from courant.verify.checks import enabled
+
     case = Path(case_dir)
     items: list[SpecItem] = []
     names: set[str] = set()
+    #: SPEC-13, under `conformance.as_run` (--checks next): blockMeshDict's cells and scale are
+    #: drafted only when the case's own mesh is the one blockMeshDict describes; on a mesh
+    #: refined, scaled or snapped after blockMesh they name a mesh nobody solved on, and the draft
+    #: would not conform to its own case under next. The default drafts as v0.5.0 did.
+    solved = AsRun(case) if enabled("conformance.as_run", checks) else None
 
     def add(**kw) -> None:
         if kw["name"] in names:
@@ -278,6 +317,10 @@ def draft_spec(case_dir: str | Path, *, task: str | None = None,
             return
         if _probe(case, item) is None:
             return
+        if solved is not None and names_the_mesh(item):
+            written = deck.read(case, item)
+            if solved.read(item, written, rel=0.0).value != written.value:
+                return
         names.add(item.name)
         items.append(item)
 
@@ -290,12 +333,15 @@ def draft_spec(case_dir: str | Path, *, task: str | None = None,
     for name in fields:
         src = "0" if (case / "0" / name).is_file() else "0.orig"
         text, _ = deck._read_text(case, f"{src}/{name}")
-        bf = deck.block(text or "", "boundaryField")
+        try:
+            bf = deck.block(text or "", "boundaryField")
+        except deck.KeywordNotEvaluated:
+            bf = None                       # no draft item from a block that cannot be told
         if bf is None:
             continue
         for patch, body in deck.blocks(bf):
             bc_type = deck.entry(body, "type")
-            for key in _BC_PARAMETERS.get(bc_type or "", ()):
+            for key in BC_PARAMETERS.get(bc_type or "", ()):
                 if deck.entry(body, key) is None:
                     continue
                 label = patch if not any(c in patch for c in "()|*.[") else f'"{patch}"'
@@ -308,7 +354,11 @@ def draft_spec(case_dir: str | Path, *, task: str | None = None,
                 add(**item_kw, value=found.value)
 
     # Properties, forces, run control, modelling choices.
-    for file, path, key, name, choice in _PROPERTIES:
+    properties = _PROPERTIES
+    if solved is not None and _probe(case, SpecItem(name="a", file=_MODULE[0], key="application",
+                                                    value="x")) == "foamRun":
+        properties = (*_PROPERTIES, _MODULE)
+    for file, path, key, name, choice in properties:
         if not (case / file).is_file():
             continue
         is_text = key in _TEXT_KEYS

@@ -33,6 +33,13 @@ def _fix(desc, tier, hint="") -> CanonicalFix:
     return CanonicalFix(description=desc, tier=tier, diff_hint=hint)
 
 
+#: `PHYS.LAMINAR_TURBULENT`'s next action (the entry below says why it is worded so). v0.5.0's
+#: was "Switch to a RAS model (e.g. kOmegaSST) for the turbulent regime".
+LAMINAR_TURBULENT_ACTION = ("Check whether the flow is turbulent at its Reynolds or Rayleigh "
+                            "number; if it is, model the turbulence (a RAS or LES model) or "
+                            "resolve it on a finer mesh")
+
+
 _ENTRIES = [
     # --- Numerics ---
     _e("NUM.CFL_VIOLATION",
@@ -175,11 +182,18 @@ _ENTRIES = [
     # --- Physics ---
     _e("PHYS.TURB_REGIME",
        fixes=[_fix("Choose a turbulence model suited to the Reynolds regime", T.SCHEMES)]),
+    # The next action says what the evidence supports. `physics.laminar_unstable` is a laminar
+    # run that crashed, oscillates or never reached its bar with its Courant number in range:
+    # evidence a turbulent flow may be what the laminar model cannot settle, not that it is (a
+    # periodic laminar flow, vortex shedding at Re 100, ends above a residual bar too). It named
+    # one RAS model "for the turbulent regime" on a run whose regime nothing measured (the second
+    # evaluation on rebuilt runs, 22 Oct 2026). Under `--checks next`
+    # `physics.laminar_regime` does measure it (a Rayleigh number the case's own walls give, on a
+    # mesh too coarse to resolve it), and the same action holds for it.
     _e("PHYS.LAMINAR_TURBULENT",
-       finding_ids=["physics.laminar_unstable"],
+       finding_ids=["physics.laminar_unstable", "physics.laminar_regime"],
        config_predicates=["laminar"],
-       fixes=[_fix("Switch to a RAS model (e.g. kOmegaSST) for the turbulent regime",
-                   T.SCHEMES, "momentumTransport: simulationType RAS")]),
+       fixes=[_fix(LAMINAR_TURBULENT_ACTION, T.SCHEMES, "momentumTransport: simulationType RAS")]),
     _e("PHYS.TRANSPORT_UNITS",
        finding_ids=["physics.nu"],
        config_predicates=["nu_out_of_range"],
@@ -202,7 +216,7 @@ _ENTRIES = [
 
     # --- Convergence ---
     _e("CONV.RESIDUAL_PLATEAU",
-       finding_ids=["residual.plateau", "residual.not_converged"],
+       finding_ids=["residual.plateau", "residual.not_converged", "residual.stalled"],
        fixes=[_fix("Improve conditioning (relaxation/mesh) or raise iterations", T.NUMERICS)]),
     _e("CONV.OSCILLATION",
        finding_ids=["residual.growth"],

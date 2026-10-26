@@ -16,6 +16,7 @@ per provider: ``openrouter`` and ``anthropic``. Only modules in this package may
 name a model endpoint (TST-6); everything else imports from here.
 """
 
+from courant.llm.budget import SpendCap
 from courant.llm.door import (
     HOSTS,
     LISTING_HOST,
@@ -43,6 +44,8 @@ from courant.llm.errors import (
     QuotaExhausted,
     RateLimited,
     Refused,
+    Rejected,
+    SpendCapReached,
     TransportError,
     stops_batch,
 )
@@ -53,7 +56,7 @@ from courant.llm.transport import RawResponse, Transport
 __all__ = [
     "HOSTS", "LISTING_HOST", "REGISTRY", "BatchResults", "BudgetRefused", "CallRecord", "Candidate", "Completion",
     "Door", "Halted", "InvalidResponse", "LLMError", "LedgerError", "PaidResponse",
-    "QuotaExhausted", "RateLimited", "RawResponse", "Refused", "Transport", "TransportError",
+    "QuotaExhausted", "RateLimited", "RawResponse", "Refused", "Rejected", "SpendCap", "SpendCapReached", "Transport", "TransportError",
     "allowlisted", "check_schema", "contact_notice", "default_door", "draws_on_free_allowance", "parse_json",
     "public_listing", "request_of", "stops_batch", "validate",
 ]

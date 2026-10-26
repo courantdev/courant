@@ -1,0 +1,67 @@
+{
+ "budget": {
+  "disk_cap_bytes": 1123050,
+  "factor": 3.0,
+  "wall_cap_s": 96.078
+ },
+ "commands": [
+  "pimpleFoam"
+ ],
+ "copied": {
+  "bytes": 369483,
+  "files": 15,
+  "inputs_sha256": "024b1d0b325cbba91c3d7d6b2c69de1f3170d0d4209d409e119cfcc0ffb6ab0e",
+  "start_time": 0.0
+ },
+ "copy_dir": "/home/runner/work/_temp/claude-work/resolve/sb.v0.5cf33f91460e__claude-haiku-5-5__plain__s1/case",
+ "excluded": [
+  "0.01",
+  "0.02",
+  "0.03",
+  "0.04",
+  "0.05",
+  "0.06",
+  "0.07",
+  "0.08",
+  "0.09",
+  "0.1",
+  "0.11",
+  "0.12",
+  "0.13",
+  "0.14",
+  "0.15",
+  "0.16",
+  "0.17",
+  "0.18",
+  "0.19",
+  "0.2",
+  "log.blockMesh",
+  "log.pimpleFoam",
+  "postProcessing"
+ ],
+ "executed": null,
+ "executed_source": "resolve",
+ "family": "pimpleFoam_planarContraction",
+ "findings": [],
+ "image": "opencfd/openfoam-default@sha256:dd5aa20630a55722663bf83ba0cb74870cba130081303e32e3865007fa2aa35a",
+ "instance_type": "github-ubuntu-latest",
+ "log_disagreement": null,
+ "mesh_skipped": true,
+ "notes": [],
+ "process": {
+  "disk_bytes": 1208974,
+  "error": null,
+  "log_sha256": "3f1c86a9211a3adfed6aa18a8f4c53cbbb0e25da7e324e9e2ba5595d5a8233bd",
+  "return_code": 137,
+  "status": "disk_exceeded",
+  "wall_s": 5.115
+ },
+ "refused": [],
+ "resolve_class": "resolve_budget_exceeded",
+ "rule": null,
+ "schema": "courant.sb-resolve/1",
+ "task_id": "sb.v0.5cf33f91460e",
+ "verdict": null,
+ "verdict_doc": null,
+ "verify_error": null
+}

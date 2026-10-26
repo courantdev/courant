@@ -17,6 +17,9 @@ that task. A stop is not the model's answer (``courant.llm.stops_batch``: a
 quota stop, a paid response, a refusal, a rejected key or a model that is not
 served, an unwritable ledger): it is raised, so the run stops and nothing is
 scored (ARC-19).
+
+``judge/2`` (RRD RM-36, ``courant/ctest/judges/llm_spec.py``) is this prompt with the task's
+locked specification after it; it sends through ``LLMJudge._ask``, and ``judge/1`` is unchanged.
 """
 
 from __future__ import annotations
@@ -28,6 +31,8 @@ from courant.ctest.schema import JudgeAnswer, Task
 
 PROMPT_VERSION = "judge/1"
 MAX_LOG_CHARS = 60_000
+#: The most output tokens a judge's request asks for (thinking included): RM-02.H2 v2's.
+MAX_OUTPUT_TOKENS = 8000
 
 PROMPT = """You are judging whether a completed OpenFOAM simulation can be trusted.
 
@@ -138,12 +143,17 @@ class LLMJudge:
     def _complete(self, task: Task) -> str:
         if self._client is not None:
             return self._client(render_prompt(task))
+        return self._ask(judge_request(task))
+
+    def _ask(self, request: dict) -> str:
+        """One request through the door, recorded in ``calls`` whether it answered or not;
+        the answer the door validated against ``ANSWER_SCHEMA``, as JSON text."""
         from courant.llm import LLMError
 
         try:
             completion = self.door.complete(
-                task="judge", data="public", **judge_request(task),
-                max_tokens=8000, model=self.model, provider=self.provider,
+                task="judge", data="public", **request,
+                max_tokens=MAX_OUTPUT_TOKENS, model=self.model, provider=self.provider,
                 measurement=self.measurement)
         except LLMError as exc:
             self.calls += [record.to_dict() for record in exc.records]

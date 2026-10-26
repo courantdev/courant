@@ -1,7 +1,9 @@
 """The MCP tools as plain functions (TRD MCP-2), testable without a transport.
 
 Read-only by construction (MCP-4): no tool writes a file, runs a process or
-opens a socket. Paths are confined to the roots the user allows (MCP-3).
+opens a socket. Paths are confined to the roots the user allows (MCP-3): the paths a tool is
+given, every file its readers open under them, and every link in the case
+(`courant.case.reads.confined`).
 """
 
 from __future__ import annotations
@@ -10,25 +12,10 @@ import json
 import re
 from pathlib import Path
 
+# `tools.Confinement` and `tools.OutsideRoot` are where the server and its callers find them.
+from courant.case.reads import Confinement, OutsideRoot, confined  # noqa: F401
+
 ROOT = Path(__file__).resolve().parents[2]
-
-
-class OutsideRoot(PermissionError):
-    pass
-
-
-class Confinement:
-    """Only paths inside one of these roots may be read."""
-
-    def __init__(self, roots: list[str | Path]):
-        self.roots = [Path(r).resolve() for r in (roots or [Path.cwd()])]
-
-    def check(self, path: str | Path) -> Path:
-        p = Path(path).expanduser().resolve()
-        if not any(p == r or p.is_relative_to(r) for r in self.roots):
-            raise OutsideRoot(f"{p} is outside the allowed roots: "
-                              + ", ".join(str(r) for r in self.roots))
-        return p
 
 
 def _schema_error(schema: int) -> dict | None:
@@ -48,7 +35,9 @@ def verify_run(path: str, case_json: str | None = None, spec: str | None = None,
     `schema=1`): accept, reject or insufficient, the basis it was judged on, the cited reasons,
     what was not checked, and a suggested next action that is never applied. With `spec` (a
     courant.spec/1 file), every value the task specification names is also checked against the
-    case, and a case that set up a different problem is rejected however well it ran.
+    case, and a case that set up a different problem is rejected however well it ran. A log
+    still being written (no `End` yet, no fatal error) is insufficient
+    (`insufficient.truncated_log`, VER-5.16), never a crash.
     """
     from courant.verify import InputError, verify_path
     from courant.verify.verdict2 import in_schema
@@ -59,7 +48,8 @@ def verify_run(path: str, case_json: str | None = None, spec: str | None = None,
     sidecar = confine.check(case_json) if case_json else None
     spec_path = confine.check(spec) if spec else None
     try:
-        verdict = verify_path(target, sidecar, spec=spec_path, spec_locked_sha256=spec_sha256)
+        with confined(confine, target):
+            verdict = verify_path(target, sidecar, spec=spec_path, spec_locked_sha256=spec_sha256)
     except InputError as exc:
         return {"error": str(exc)}
     return json.loads(in_schema(verdict, schema).to_json())
@@ -96,8 +86,9 @@ def score_agent_output(case: str, spec: str, spec_sha256: str | None = None,
     target = confine.check(case)
     spec_path = confine.check(spec)
     try:
-        inputs = with_spec(from_path(target), spec_path, spec_sha256)
-        verdict = verify_inputs(inputs)
+        with confined(confine, target):
+            inputs = with_spec(from_path(target), spec_path, spec_sha256)
+            verdict = verify_inputs(inputs)
     except InputError as exc:
         return {"error": str(exc)}
     scored = outcome_of(verdict, executed=executed_in_log(inputs.log_text),
@@ -118,7 +109,8 @@ def check_convergence(path: str, transient_average: bool = False, *, confine: Co
     from courant.converge import Options, convergence_path, summary
 
     target = confine.check(path)
-    conv = convergence_path(target, None, Options(transient_average=transient_average))
+    with confined(confine, target):
+        conv = convergence_path(target, None, Options(transient_average=transient_average))
     out = summary(conv)
     out["messages"] = [f.message for f in conv.findings if f.severity in ("WARN", "FAIL") and f.message]
     return out

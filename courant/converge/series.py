@@ -24,7 +24,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from courant.case.reads import note
+from courant.case.reads import may_read, reading
 from courant.converge.assess import (
     Clock,
     Convergence,
@@ -180,18 +180,20 @@ class Discovery:
 
 
 def _candidate_files(start_dir: Path):
+    if not may_read(start_dir):         # MCP-3: a directory listed, or a table sized, is confined
+        return
     for f in sorted(start_dir.iterdir()):
         if not f.is_file():
             continue
         if f.suffix == ".dat":
-            yield f
+            if may_read(f):
+                yield f
         elif f.suffix == "":
-            try:
-                with f.open("r", errors="replace") as fh:
+            try:                        # VER-14: its first line decided whether it is a monitor
+                with reading(f), f.open("r", errors="replace") as fh:
                     head = fh.readline()
             except OSError:
                 continue
-            note(f)                     # VER-14: its first line decided whether it is a monitor
             if head.lstrip().startswith("# Probe"):
                 yield f
 
@@ -199,11 +201,11 @@ def _candidate_files(start_dir: Path):
 def discover(case_dir: Path) -> Discovery:
     post = case_dir / POST
     searched = [POST]
-    if not post.is_dir():
+    if not may_read(post) or not post.is_dir():     # MCP-3: listed, so confined like a read
         return Discovery([], [], searched, [])
     groups: dict[tuple[str, str], list[Path]] = {}
     ignored: list[str] = []
-    for obj in sorted(p for p in post.iterdir() if p.is_dir()):
+    for obj in sorted(p for p in post.iterdir() if p.is_dir() and may_read(p)):
         if _IGNORED.search(obj.name):
             ignored.append(f"{POST}/{obj.name}")
             continue
@@ -232,12 +234,12 @@ def discover(case_dir: Path) -> Discovery:
         budget = budget - size
         tables = []
         for p in paths:
-            try:
-                text = p.read_text(errors="replace")
+            try:                        # VER-14: read, so listed, whether or not it parses
+                with reading(p):
+                    text = p.read_text(errors="replace")
             except OSError:             # unreadable: not read, so not listed (VER-14)
                 ignored.append(str(p.relative_to(case_dir)))
                 continue
-            note(p)                     # VER-14: read, so listed, whether or not it parses
             t = parse_table(text)
             if t is not None:
                 tables.append((p, t))
@@ -286,7 +288,10 @@ def sum_ints(values) -> int:
 
 
 # ------------------------------------------------------------------ the log
-def from_events(events) -> tuple[dict[str, list[float]], Clock, int]:
+def from_events(events, *, first_solve: bool = False) -> tuple[dict[str, list[float]], Clock, int]:
+    """(each field's initial residual per step, the clock, the number of steps). A field solved
+    more than once in a step gives its last solve's value, or with `first_solve` its first, as
+    residualControl reads it (TRD VER-16a, `residual.first_solve` behind `--checks next`)."""
     from courant.events.core import EventKind
 
     residuals: dict[str, list[float]] = {}
@@ -295,7 +300,10 @@ def from_events(events) -> tuple[dict[str, list[float]], Clock, int]:
         if e.kind is not EventKind.RESIDUAL:
             continue
         p = e.payload
-        for name, value in p.initial_residuals.items():
+        values = p.initial_residuals
+        if first_solve and p.first_initial_residuals:
+            values = {**values, **p.first_initial_residuals}
+        for name, value in values.items():
             residuals.setdefault(name, []).append(value)
         times.append(p.time if p.time is not None else float(len(times) + 1))
         clock_s.append(p.clock_time)
@@ -315,18 +323,27 @@ def solver_from_log(log_text: str) -> str | None:
     return m.group(1) if m else None
 
 
-def regime_of(config, solver: str | None, clock: Clock) -> tuple[str | None, str, dict | None]:
-    """config first, then the solver table, then the time column (M1-R-1 to R-4)."""
+def regime_of(config, solver: str | None, clock: Clock,
+              checks: str = "default") -> tuple[str | None, str, dict | None]:
+    """config first, then the solver table, then the time column (M1-R-1 to R-4).
+
+    Under `--checks next` a local-time-stepping case is steady (TRD VER-19): its pseudo-time
+    marches to a steady state, so a stopping point is a fact about it. Its solver is a PIMPLE
+    solver the table calls transient, and that is no conflict: the solver runs PIMPLE either
+    way, and whether PIMPLE marches in time is the scheme's to say. The solver table is v2406's
+    own under `next` (VER-21)."""
     from courant.case import solvers
 
     by_config = None
+    lts = False
     if config is not None and getattr(config, "ddt_scheme", None):
-        by_config = "steady" if config.is_steady() else "transient"
+        by_config = "steady" if config.marches_to_steady_state(checks) else "transient"
+        lts = by_config == "steady" and not config.is_steady(checks)
     by_solver = None
-    if solver and solvers.is_known(solver):
-        by_solver = "steady" if solvers.is_steady(solver) else "transient"
+    if solver and solvers.is_known(solver, checks):
+        by_solver = "steady" if solvers.is_steady(solver, checks) else "transient"
     conflict = None
-    if by_config and by_solver and by_config != by_solver:
+    if by_config and by_solver and by_config != by_solver and not lts:
         conflict = {"config": by_config, "solver": by_solver}
     if by_config:
         return by_config, "config", conflict
@@ -340,14 +357,17 @@ def regime_of(config, solver: str | None, clock: Clock) -> tuple[str | None, str
     return None, "unknown", None
 
 
-def ended_by(events) -> tuple[str | None, int | None]:
+def ended_by(events, exit_code: int | None = 0) -> tuple[str | None, int | None]:
+    """How the run ended, and the steps it wrote: "signal" or "crash" from a CRASH event; else
+    "unknown" when `exit_code` is None (`run_exit_code`: none was given and the log does not end
+    in End, VER-5.16), so the run may not be over; else None, a run that reached its end."""
     from courant.events.core import EventKind
 
     steps = len([e for e in events if e.kind is EventKind.RESIDUAL])
     for e in events:
         if e.kind is EventKind.CRASH:
             return ("signal" if e.payload.signal else "crash"), steps
-    return None, steps
+    return ("unknown" if exit_code is None else None), steps
 
 
 # ------------------------------------------------------------------ which monitors are the answer
@@ -383,8 +403,16 @@ def select(monitors, patterns) -> tuple[list, list, str]:
 # ------------------------------------------------------------------ the entry point
 def assess_case(case_dir: str | Path | None, *, log_text: str, events, config=None,
                 solver: str | None = None, options: Options = Options(),
-                read: tuple = ()) -> Convergence:
-    """Read the case's monitors and the log's residuals and clock, then `assess()`.
+                read: tuple = (), exit_code: int | None = 0,
+                checks: str = "default") -> Convergence:
+    """Read the case's monitors and the log's residuals and clock, then `assess()`. `checks` is
+    `--checks` (GATE-13): it decides the regime (`regime_of`), and under `next` a steady run's
+    residuals are each field's first solve (VER-16a).
+
+    `exit_code` is the one the log was parsed with (`courant.watcher.exitcode.run_exit_code`).
+    None means the run's end is unknown (VER-5.16): the assessment says so and reports no waste
+    figure. The default, 0, is the parser's own: a run known to have ended, or one `courant
+    watch` is following live, whose answer so far is what it asks for (LIVE-3).
 
     `Convergence.inputs` is the verdict's manifest function applied to this run (VER-14):
     `read`, the manifest of what the caller already read for it (the ingest's log, deck and
@@ -394,11 +422,14 @@ def assess_case(case_dir: str | Path | None, *, log_text: str, events, config=No
     from courant.case.reads import recording
     from courant.verify.schema import manifest, merge
 
-    residuals, clock, steps = from_events(events)
+    from courant.verification.convergence import reads_first_solve
+
+    residuals, clock, steps = from_events(
+        events, first_solve=reads_first_solve(config, checks))
     solver = solver or solver_from_log(log_text)
-    regime, basis, conflict = regime_of(config, solver, clock)
+    regime, basis, conflict = regime_of(config, solver, clock, checks)
     ranks, ranks_basis = ranks_from_log(log_text)
-    how, last = ended_by(events)
+    how, last = ended_by(events, exit_code)
     if case_dir:
         with recording(case_dir) as reads:
             found = discover(Path(case_dir))

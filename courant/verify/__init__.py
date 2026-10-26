@@ -22,8 +22,9 @@ from courant.verify.verdict2 import VerdictV2, load_verdict
 
 def verify_path(path: str | Path, case_json: str | Path | None = None, *,
                 spec: str | Path | None = None,
-                spec_locked_sha256: str | None = None) -> VerdictV2:
-    inputs = from_path(path, case_json)
+                spec_locked_sha256: str | None = None, checks: str = "default") -> VerdictV2:
+    """The verdict on a case directory or a log; `checks="next"` is `--checks next` (GATE-13)."""
+    inputs = from_path(path, case_json, checks=checks)
     if spec is not None:
         inputs = with_spec(inputs, spec, spec_locked_sha256)
     return verify_inputs(inputs)

@@ -1,0 +1,39 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  An OpenFOAM.org (v11+) steady `foamRun` case: its run criterion is PIMPLE's
+  scalar residualControl. The SIMPLE block is stale (foamRun never reads it).
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    format      ascii;
+    class       dictionary;
+    object      fvSolution;
+}
+
+SIMPLE
+{
+    residualControl
+    {
+        p               0.5;
+    }
+}
+
+PIMPLE
+{
+    nNonOrthogonalCorrectors 0;
+    consistent      yes;
+
+    residualControl
+    {
+        p               1e-3;
+        U               1e-4;
+    }
+}
+
+relaxationFactors
+{
+    equations
+    {
+        U               0.9;
+        ".*"            0.9;
+    }
+}

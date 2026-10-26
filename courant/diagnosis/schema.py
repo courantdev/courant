@@ -72,12 +72,13 @@ class DiagnosisResponse(BaseModel):
         """
         return v
 
+    def ranked(self) -> list[Hypothesis]:
+        """The hypotheses, most-confident first (a stable sort: ties keep their order)."""
+        return sorted(self.hypotheses, key=lambda h: h.confidence, reverse=True)
+
     def ranked_codes(self) -> list[str]:
         """Root-cause codes, most-confident first."""
-        return [
-            h.root_cause_code
-            for h in sorted(self.hypotheses, key=lambda h: h.confidence, reverse=True)
-        ]
+        return [h.root_cause_code for h in self.ranked()]
 
     def top_k(self, k: int) -> list[str]:
         return self.ranked_codes()[:k]

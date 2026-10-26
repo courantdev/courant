@@ -46,7 +46,7 @@ def verify(
     junit: str = typer.Option(None, "--junit", help="With --batch: write JUnit XML here, one test per run."),
     about: bool = typer.Option(False, "--about", help="Print this version's published error rates (false accepts, false alarms, abstentions, each with its denominator and confidence interval); with --json or --report md, as data or Markdown."),
     pack: str = typer.Option(None, "--pack", help="Write an evidence pack (verdict.json, report.md, inputs.manifest) here."),
-    check_pack: str = typer.Option(None, "--check-pack", help="Re-verify a pack from its inputs; exit 5 if anything differs."),
+    check_pack: str = typer.Option(None, "--check-pack", help="Re-verify a pack from its inputs under --root; exit 5 if anything differs. With --spec-sha256, the pack's specification must be the one locked at that hash."),
     record: str = typer.Option(None, "--record", help="Write a verified record (courant.record/1: the specification, the verdict, provenance and the full manifest) here."),
     check_record: str = typer.Option(None, "--check-record", help="Re-derive a record from its inputs; exit 5 if anything differs."),
     producer: str = typer.Option(None, "--producer", help="With --record: who or what produced the run (an agent and its version)."),
@@ -96,7 +96,7 @@ def verify(
     if check_pack:
         from courant.verify.pack import check_pack as _check
 
-        ok, message = _check(check_pack, root or ".")
+        ok, message = _check(check_pack, root or ".", spec_sha256=spec_sha256)
         print(("OK       " if ok else "MISMATCH ") + message)
         raise typer.Exit(0 if ok else 5)
     if check_record:
@@ -178,11 +178,9 @@ def verify(
         print("courant verify: --spec-sha256 needs --spec", file=sys.stderr)
         raise typer.Exit(4)
     try:
-        inputs = from_path(path, case_json)
+        inputs = from_path(path, case_json, checks=checks)        # what is read depends on it
         if spec:
             inputs = with_spec(inputs, spec, spec_sha256)
-        if checks == "next":
-            inputs = inputs.model_copy(update={"checks": "next"})
         verdict = in_schema(verify_inputs(inputs), schema)
     except InputError as exc:
         print(f"courant verify: {exc}", file=sys.stderr)

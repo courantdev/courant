@@ -107,7 +107,8 @@ RULES = [("NOT_ASSESSABLE", "VER-5.1"), ("NOT_TRUSTWORTHY", "VER-5.2"),
          ("NOT_ASSESSABLE", "VER-5.5"), ("TRUSTWORTHY", "VER-5.6"),
          ("NOT_TRUSTWORTHY", "VER-5.7"), ("NOT_ASSESSABLE", "VER-5.8"),
          ("NOT_ASSESSABLE", "VER-5.9"), ("NOT_ASSESSABLE", "VER-5.11"),
-         ("NOT_ASSESSABLE", "VER-5.12"), ("NOT_ASSESSABLE", "VER-5.15")]
+         ("NOT_ASSESSABLE", "VER-5.12"), ("NOT_ASSESSABLE", "VER-5.15"),
+         ("NOT_ASSESSABLE", "VER-5.16")]
 
 
 @pytest.mark.parametrize("verdict, rule", RULES)
@@ -196,9 +197,11 @@ def test_an_extracted_unconfirmed_specification_is_its_own_basis():
 
 
 def test_the_run_states_its_fork_and_version_fields():
-    """§32: `run.fork` and `run.solver_version` are always present (null until ADP-1)."""
+    """§32: `run.fork` and `run.solver_version` are always present: what ADP-1 read from the
+    log's banner (`tests/unit/test_forks.py`), null where it read nothing."""
     doc = json.loads(verify_path(*corpus("icoFoam_cavity__healthy")).to_json())
     assert {"fork", "solver_version"} <= set(doc["run"]) and doc["schema"] == SCHEMA_V2
+    assert (doc["run"]["fork"], doc["run"]["solver_version"]) == ("esi", "v2406")
     assert set(doc) == {"schema", "tool", "run", "verdict", "basis", "rule", "grade", "reasons",
                         "probable_causes", "not_assessed", "next_action", "stats"}
 
@@ -210,7 +213,12 @@ def test_load_verdict_reads_both_majors():
     assert load_verdict(v2.to_json()) == v2
     back = load_verdict(v1_json)
     assert isinstance(back, VerdictV2) and back.to_v1().to_json() == v1_json
-    assert back.to_json() == v2.to_json()
+    # Version 1 has no field for ADP-1's fork and version, so they come back null; every other
+    # byte comes back as it was.
+    assert (v2.run.fork, v2.run.solver_version) == ("esi", "v2406")
+    assert (back.run.fork, back.run.solver_version) == (None, None)
+    unread = v2.run.model_copy(update={"fork": None, "solver_version": None})
+    assert back.to_json() == v2.model_copy(update={"run": unread}).to_json()
     with pytest.raises(ValueError):
         load_verdict('{"schema": "courant.preflight/1"}')
     with pytest.raises(ValueError):

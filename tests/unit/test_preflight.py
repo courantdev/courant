@@ -88,7 +88,8 @@ def test_watch_fails_at_step_zero_on_a_setup_fault(tmp_path):
     assert any("setup fault found before the first timestep" in ln for ln in lines)
 
 
-def test_preflight_lists_what_it_read(tmp_path):
+@pytest.mark.parametrize("mode", ["default", "next"])
+def test_preflight_lists_what_it_read(tmp_path, mode):
     """C5 and C7 (VER-14). Preflight builds its manifest with the verifier's recorder: the 0/
     files the case-config reader parsed and the checkMesh log are listed, and a file nothing read
     is not. The test case and the observer are `test_verify_pack`'s."""
@@ -96,12 +97,14 @@ def test_preflight_lists_what_it_read(tmp_path):
 
     case = _case(tmp_path)
     with _observe(case) as opened:
-        p = preflight_path(case)
+        p = preflight_path(case, checks=mode)
 
     listed = [f.path for f in p.run.inputs]
     read = {"0/U", "log.checkMesh"}
     assert read <= set(listed), f"read but not listed: {sorted(read - set(listed))}; listed: {listed}"
-    unread = {"system/decomposeParDict", "constant/g", "Allrun"}
+    # constant/g: the regime's (VER-17), read only under --checks next (GATE-13).
+    assert ("constant/g" in listed) == (mode == "next"), listed
+    unread = {"system/decomposeParDict", "Allrun"}
     assert not unread & set(listed), f"listed, and nothing read them: {sorted(unread & set(listed))}"
     assert listed == sorted(opened), (f"read but not listed: {sorted(set(opened) - set(listed))}; "
                                       f"listed but not read: {sorted(set(listed) - set(opened))}")

@@ -1,0 +1,31 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  A PIMPLE loop's residualControl, in the shape PIMPLE reads it: one dictionary
+  per field with an absolute `tolerance` and a `relTol`.
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      fvSolution;
+}
+
+PIMPLE
+{
+    nOuterCorrectors 50;
+    nCorrectors     2;
+
+    residualControl
+    {
+        p
+        {
+            tolerance   1e-4;
+            relTol      0;
+        }
+        "(U|k|epsilon)"
+        {
+            tolerance   1e-5;
+            relTol      0;
+        }
+    }
+}

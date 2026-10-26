@@ -11,7 +11,7 @@ from courant.ctest.splits import HELD_OUT_FAMILIES_V0, split_of
 
 
 def run(judge_spec: str, split: str = "all", client=None, measurement: str | None = None,
-        door=None) -> dict:
+        door=None, registration: str | None = None) -> dict:
     """Score a judge. An ``llm:`` judge's result also carries ``calls``, a record of every
     request its model door sent (ARC-10); every other judge's result is as it always was.
 
@@ -24,6 +24,11 @@ def run(judge_spec: str, split: str = "all", client=None, measurement: str | Non
     (ARC-20): a changed prompt or task body is judged again. Such a result also carries
     ``finished``, the ledger stamp of its last task's answer, which a finished batch run again
     keeps, so it is never a new dated result (ARC-20).
+
+    ``registration`` names the version of the pre-registration the run measures (RRD
+    RM-02.H2 v2: ``"RM-02.H2 v2"``). Given, it is part of the batch's name and identity, so a
+    new version never resumes, or returns, an earlier version's checkpoint, whatever the
+    judge; the result then carries it. Omitted, the batch is keyed as it always was.
     """
     tasks = load_tasks()
     labels = load_labels()
@@ -32,7 +37,7 @@ def run(judge_spec: str, split: str = "all", client=None, measurement: str | Non
     judge = make(judge_spec, client=client, measurement=measurement, door=door)
     finished = None
     if isinstance(judge, LLMJudge) and client is None:
-        answers, calls, finished = _batched(judge, tasks, measurement, split)
+        answers, calls, finished = _batched(judge, tasks, measurement, split, registration)
     else:
         answers = [judge.judge(t) for t in tasks]
         calls = getattr(judge, "calls", None)
@@ -49,11 +54,13 @@ def run(judge_spec: str, split: str = "all", client=None, measurement: str | Non
         result["calls"] = list(calls)
     if isinstance(judge, LLMJudge) and client is None:
         result["finished"] = finished
+    if registration is not None:
+        result["registration"] = registration
     return result
 
 
-def _batched(judge: LLMJudge, tasks, measurement: str | None,
-             split: str) -> tuple[list[JudgeAnswer], list[dict], str | None]:
+def _batched(judge: LLMJudge, tasks, measurement: str | None, split: str,
+             registration: str | None = None) -> tuple[list[JudgeAnswer], list[dict], str | None]:
     """Every task's answer, every finished task's request records in task order, and when the
     last task was finished, from one public batch on the judge's own door (ARC-19 C10,
     ARC-20)."""
@@ -63,11 +70,13 @@ def _batched(judge: LLMJudge, tasks, measurement: str | None,
         answer = judge.judge(task)
         return {"answer": answer.model_dump(mode="json"), "calls": judge.calls[before:]}
 
-    held = judge.door.batch(f"ctest-{measurement or 'unmeasured'}-{judge.name}-{split}",
-                            {t.task_id: t for t in tasks}, judge_one, data="public",
-                            provider=judge.provider, model=judge.model,
-                            identity={"measurement": measurement, "judge": judge.name,
-                                      "prompt": PROMPT_VERSION},
+    identity = {"measurement": measurement, "judge": judge.name, "prompt": PROMPT_VERSION}
+    name = f"ctest-{measurement or 'unmeasured'}-{judge.name}-{split}"
+    if registration is not None:
+        identity["registration"] = registration
+        name = f"ctest-{measurement or 'unmeasured'}-{registration}-{judge.name}-{split}"
+    held = judge.door.batch(name, {t.task_id: t for t in tasks}, judge_one, data="public",
+                            provider=judge.provider, model=judge.model, identity=identity,
                             content=judge_request, task="judge", measurement=judge.measurement)
     answers = [JudgeAnswer.model_validate(held[t.task_id]["answer"]) for t in tasks]
     calls = [call for t in tasks for call in held[t.task_id]["calls"]]

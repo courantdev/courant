@@ -41,7 +41,7 @@ ORDER = (
     "CONV.ZERO_MEAN_SCALE", "CONV.SIGN_CHANGE", "CONV.TRUNCATION_IN_TAIL",
     "CONV.MONOTONE_DRIFT", "CONV.INSUFFICIENT_DATA", "CONV.CONSTANT_SERIES",
     "CONV.NON_FINITE", "CONV.DIVERGED", "CONV.RESTART_OVERLAP", "CONV.MONITOR_UNREADABLE",
-    "CONV.RUN_KILLED", "CONV.NO_MONITORS", "CONV.MONITOR_CAP", "CONV.BUDGET_DECIMATED",
+    "CONV.RUN_KILLED", "CONV.RUN_END_UNKNOWN", "CONV.NO_MONITORS", "CONV.MONITOR_CAP", "CONV.BUDGET_DECIMATED",
     "CONV.NON_MONOTONE_CRITERION", "CONV.INTERNAL_ERROR",
 )
 _RANK = {code: i for i, code in enumerate(ORDER)}
@@ -80,7 +80,7 @@ class RunMeta:
     regime_conflict: Mapping | None = None
     ranks: int | None = None
     ranks_basis: str = "unknown"               # log_nprocs | serial | user | unknown
-    ended_by: str | None = None                # "signal" | "crash" | None
+    ended_by: str | None = None                # "signal" | "crash" | "unknown" | None
     last_complete_step: int | None = None
     paths_searched: tuple[str, ...] = ()
     monitors_ignored: tuple[str, ...] = ()
@@ -685,8 +685,13 @@ def assess(monitors: Sequence[MonitorSeries], residuals: Mapping[str, Sequence[f
         bmon = next(m for m in counting if m.series.id == binding)
         waste = _waste(bmon, converged_at, clock, meta, options, findings)
     if meta.ended_by:
-        sentence = sentences.RUN_KILLED if meta.ended_by == "signal" else sentences.RUN_CRASHED
-        findings.append(Finding("CONV.RUN_KILLED", WARN, None, "events", {},
+        # "unknown": no exit code was given and the log stops before End with no crash in it
+        # (VER-5.16). The run may still be going, so nothing after its stopping point is waste.
+        crashed = ("CONV.RUN_KILLED", sentences.RUN_CRASHED)
+        code, sentence = {"signal": ("CONV.RUN_KILLED", sentences.RUN_KILLED), "crash": crashed,
+                          "unknown": ("CONV.RUN_END_UNKNOWN", sentences.RUN_END_UNKNOWN),
+                          }.get(meta.ended_by, crashed)
+        findings.append(Finding(code, WARN, None, "events", {},
                                 {"ended_by": meta.ended_by,
                                  "last_complete_step": meta.last_complete_step},
                                 sentence.format(last_complete_step=meta.last_complete_step)))

@@ -24,8 +24,8 @@
 - Discretisation error was not quantified: a single mesh was supplied.
 - Accuracy against a reference was not assessed: no reference data was supplied.
 - Field values physically plausible: no internal fields
-- Flow regime matches turbulence modeling: insufficient data for Reynolds number
-- Near-wall y+ compatible with wall treatment: no y+ field
+- Flow regime matches turbulence modeling: not implemented (Courant derives no length scale for a Reynolds number from the case)
+- Near-wall y+ compatible with wall treatment: not implemented (Courant reads no y+, neither a yPlus field nor the yPlus function object's output)
 - Net boundary mass flux ~ 0: no field flux data
 
 ## Next action

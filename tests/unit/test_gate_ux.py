@@ -20,8 +20,8 @@ ROOT = Path(__file__).resolve().parents[2]
 CORPUS = ROOT / "certification" / "corpus"
 FIXTURES = ROOT / "tests" / "fixtures" / "real_openfoam"
 
-NAMES = ("no_output", "unrecognised_log", "no_residuals", "no_time_markers", "spec_hash_mismatch",
-         "spec_value_unreadable", "unsupported_version", "spec_invalid",
+NAMES = ("no_output", "unrecognised_log", "no_residuals", "no_time_markers", "truncated_log",
+         "spec_hash_mismatch", "spec_value_unreadable", "unsupported_version", "spec_invalid",
          "spec_extracted_mismatch", "spec_role_unresolved", "time_scheme_unreadable")
 
 
@@ -53,8 +53,9 @@ def test_each_code_has_one_sentence_and_the_rules_run_5_10_to_5_14_in_order():
                                      "time_scheme_unreadable")]
     assert later == ["VER-5.10", "VER-5.11", "VER-5.12", "VER-5.13", "VER-5.14"]
     assert [table[n].rule for n in ("no_output", "no_residuals", "no_time_markers",
-                                    "spec_hash_mismatch", "spec_value_unreadable")] == [
-        "VER-5.1", "VER-5.5", "VER-5.15", "VER-5.8", "VER-5.9"]
+                                    "truncated_log", "spec_hash_mismatch",
+                                    "spec_value_unreadable")] == [
+        "VER-5.1", "VER-5.5", "VER-5.15", "VER-5.16", "VER-5.8", "VER-5.9"]
 
 
 def test_a_rule_has_one_code_and_every_code_is_reached_through_its_rule():
@@ -80,6 +81,33 @@ def test_cause_tags_follow_gate_4():
     fixed = {v for k, v in vars(sentences).items()
              if k.isupper() and isinstance(v, str) and k not in ("CAUSES",)}
     assert fixed <= set(sentences.NOT_CHECKED_CAUSE)
+    for sentence, cause in sentences.NOT_CHECKED_CAUSE.items():
+        assert sentences.cause_of(sentence) == cause
+    assert sentences.cause_of("simpleFoam: a check's own detail") is None
+
+
+def test_adp_1s_not_checked_lines_are_built_here_and_carry_the_fork_cause():
+    """GATE-4 (RRD RM-22 counts not-checked lines by cause): every line ADP-1 can add to a
+    verdict, a version outside the measured set, one not read, one read from a file the run
+    wrote, one only `system/controlDict`'s header names, is filled from a template in this module
+    and counts as `fork`. The templates name no fork and no version (ARC-14's lint reads them)."""
+    from courant import forks
+
+    banner, header = forks.LOG_BANNER, "the header of 100/U"
+    given = forks.SolverVersion("foundation", "12", "the header of system/controlDict")
+    seen = [
+        forks.SolverVersion("esi", "v2512", banner), forks.SolverVersion("foundation", "12", banner),
+        forks.SolverVersion("esi", "v2512", header, headers_searched=True),
+        forks.SolverVersion("esi", "v2406", header, headers_searched=True),
+        forks.SolverVersion("esi", None, banner), forks.SolverVersion(None, "v2406", banner),
+        forks.SolverVersion(None, "v2412", banner), forks.SolverVersion("foam-extend", "4.1", banner),
+        forks.SolverVersion(), forks.SolverVersion(headers_searched=True),
+        forks.SolverVersion(headers_searched=True, given=given),
+    ]
+    lines = [forks.not_checked(s) for s in seen]
+    assert all(lines) and len(set(lines)) == len(lines)
+    assert [sentences.cause_of(line) for line in lines] == ["fork"] * len(lines)
+    assert forks.not_checked(forks.SolverVersion("esi", "v2406", banner)) is None
 
 
 def test_a_rule_outside_the_table_raises_rather_than_minting_a_code():
@@ -324,7 +352,7 @@ def test_every_rule_the_policy_can_make_insufficient_has_a_code():
 
     src = Path(policy.__file__).read_text()
     rules = set(re.findall(r'"NOT_ASSESSABLE",\s*"(VER-5\.\d+)"', src))
-    assert {"VER-5.1", "VER-5.5", "VER-5.15", "VER-5.8", "VER-5.9"} <= rules
+    assert {"VER-5.1", "VER-5.5", "VER-5.15", "VER-5.16", "VER-5.8", "VER-5.9"} <= rules
     assert rules <= set(sentences.BY_RULE), rules - set(sentences.BY_RULE)
 
 

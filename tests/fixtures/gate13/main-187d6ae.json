@@ -1,0 +1,366 @@
+{
+ "checks": "default",
+ "documents": {
+  "preflight.1/case/cavity_extreme_aspect_ratio": {
+   "sha256": "547164b88503dca522b15a7578083a3ddb47fffa529c7856d28db8eaf0c684fe",
+   "verdict": "SETUP_FAULT"
+  },
+  "preflight.1/case/hotRoom_laminar_044": {
+   "sha256": "e53acb1ab23e699e216af4904823521b8c2d6df81dfbaf0d2460d9c523782aa8",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/case/pitzDaily_fixed_budget": {
+   "sha256": "711f5fc2626b350e693c9d74b792aa3e0cdd7ce0b173797e3747befbb374a8ec",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/case/simpleFoam_T3A__fixed_budget": {
+   "sha256": "2d508dd4be742a37bea97fc6ed6bd7a72cbc8ca91afbffbee26a964c88d294d6",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/case/simpleFoam_airFoil2D__shipped": {
+   "sha256": "60cc1a77efd9a37fabec30bc3f17aede46ba5396a1ada2a8d3eb5dcc836f13c1",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/case/simpleFoam_pitzDailyExptInlet__fixed_budget": {
+   "sha256": "c2f8c71da5959b3c306bb5d651988229da86bfa528a04868294390d5a3338246",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/case/simpleFoam_pitzDaily__fixed_budget": {
+   "sha256": "0f7721e2ac33057f982ea31f30aab7e99fae0e55a45cf9493d6b350a09979515",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/case/simpleFoam_pitzDaily__over_relaxation": {
+   "sha256": "798183b408fef137a67f2c0b0702276a1b97349ae73d2167cf7710aa8390a39b",
+   "verdict": "SETUP_FAULT"
+  },
+  "preflight.1/case/simpleFoam_pitzDaily__shipped": {
+   "sha256": "2101d5bfaa0312648f4e8b22b29b5924089afd141b3c0589a6898dde59698161",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/corpus/buoyantPimpleFoam_hotRoom__cfl_blowup": {
+   "sha256": "fa7ffe8bdb44e0b9ee4ac813cead0ff771bdb5307e143b60382ce27eea37da63",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/corpus/buoyantPimpleFoam_hotRoom__healthy": {
+   "sha256": "67deda7d01a54aa06ccefd1434a97cb4cc5b089a0dc3a6838c913bd4dc5d01f2",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/corpus/buoyantPimpleFoam_hotRoom__laminar_on_turbulent": {
+   "sha256": "427964e3318414ae24ca9be1d6e211ca86ed759bd0e387675ed100c464aad57b",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/corpus/icoFoam_cavity__bad_initial_field": {
+   "sha256": "328cd4c7670900ad93073c1ddf485bd874a12322acaea26c50c2ca0523d1dced",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/corpus/icoFoam_cavity__cfl_blowup": {
+   "sha256": "4db90ea3c509f65e5899bd4b14dbafd1967e1e4812da29cfa3212b27463a10ec",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/corpus/icoFoam_cavity__extreme_aspect_ratio": {
+   "sha256": "cbcbc074b2e9681d24c4991e8f14cf0eaeec2a54436222ffe086a02f6adf342f",
+   "verdict": "SETUP_FAULT"
+  },
+  "preflight.1/corpus/icoFoam_cavity__healthy": {
+   "sha256": "316dce46e99214bd451cf2b8afb75f86f412ae72cddf3fa6f1a4449fb63aef4b",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/corpus/icoFoam_cavity__high_skewness": {
+   "sha256": "6951d9725b653898461feb83434d6fc0c4f70f5211e13531440f6b0c4dbdb89a",
+   "verdict": "SETUP_FAULT"
+  },
+  "preflight.1/corpus/icoFoam_cavity__missing_dict": {
+   "sha256": "39538175d034d7a1cb49da810b5a6df8030d9c7393817fc8a81becd70fd8a178",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/corpus/icoFoam_cavity__transport_units": {
+   "sha256": "c4b9f03aa5a126f70e04be42dec69f6b888e4bb0e52dd78d4c8d73f043a814a8",
+   "verdict": "SETUP_FAULT"
+  },
+  "preflight.1/corpus/interFoam_damBreak__cfl_blowup": {
+   "sha256": "ee4c4c2fecd66d86682b2fde2264c2ddc1e40d703be08d928db4544c86540331",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/corpus/interFoam_damBreak__fixed_dt_on_adaptive_solver": {
+   "sha256": "39411aade1e5efcf6862054d59facb9dbbed49693e7d004b70a6655e96f9b6bf",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/corpus/interFoam_damBreak__healthy": {
+   "sha256": "4dd8d2d7368c3bbf7d49460256886e8e15c20102f0d09cdd326beb5e796135c7",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/corpus/pimpleFoam_planarContraction__cfl_blowup": {
+   "sha256": "92087391e72017c52ccf0c9a71cde361d399467efe637b7175bea50ced501dd3",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/corpus/pimpleFoam_planarContraction__fixed_dt_on_adaptive_solver": {
+   "sha256": "71d264bde56b8c241277858676ac03c8e6edb854672057f29b94844767e7560f",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/corpus/pimpleFoam_planarContraction__healthy": {
+   "sha256": "f5eaf7e65de81f3a33274808c0caac9ead091f295740483f6a4fcab089f1a920",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/corpus/pisoFoam_RAS_cavity__cfl_blowup": {
+   "sha256": "34421536535e04d40466c5b0c1538671d88df87fa7ef738bb7c6098f5cd07c1d",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/corpus/pisoFoam_RAS_cavity__healthy": {
+   "sha256": "6e7b5da7bb338374d6b9866fbd25a9b39a64850d41347c14684b2d86a0110cec",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/corpus/pisoFoam_RAS_cavity__laminar_on_turbulent": {
+   "sha256": "309075162b7588e8235bdbcdb6cbce1907ecc395c4731c02d25cd31c31365fd4",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/corpus/pisoFoam_RAS_cavity__loose_solver_tolerance": {
+   "sha256": "b672d8618e49d2b04d6b0f69b9519ad31dac6b294bc4d42fb17248485e562f5d",
+   "verdict": "SETUP_FAULT"
+  },
+  "preflight.1/corpus/pisoFoam_RAS_cavity__wrong_turbulence_model": {
+   "sha256": "857f2328198d6f65d82d15aef498d9c3cf8a1912b3afc88f6e1e25ed45bebf26",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/corpus/rhoPimpleFoam_RAS_cavity__cfl_blowup": {
+   "sha256": "595a96d43d699c352f624bfe842bcb6f68820a4d8f32dbf4746b2b50a37472ea",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/corpus/rhoPimpleFoam_RAS_cavity__healthy": {
+   "sha256": "b195f3a32a4e95779345ec663488138f739645784334981d3accad92b2aaa14a",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/corpus/rhoPimpleFoam_RAS_cavity__missing_dict": {
+   "sha256": "fd4436eea53b3998705ec743f0ea8e7179e09a200856a88ce7495f899167e092",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/corpus/simpleFoam_pitzDaily__healthy": {
+   "sha256": "d352c8e371268b5256da7674027fd54cf45c7b6dc84412bc8c09ada006de8e4a",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/corpus/simpleFoam_pitzDaily__mass_imbalance": {
+   "sha256": "c179c5c7c296b49d4385e1f26518d766b04bf3fd61a20adf4537195fc6df578f",
+   "verdict": "SETUP_FAULT"
+  },
+  "preflight.1/corpus/simpleFoam_pitzDaily__oscillation": {
+   "sha256": "6f0043bcf710dc3bedd0c88463af93b43a9322d0ee2b42552d36af4e6bd27365",
+   "verdict": "SETUP_FAULT"
+  },
+  "preflight.1/corpus/simpleFoam_pitzDaily__over_relaxation": {
+   "sha256": "f36c82afa4a64581a7fc5a48479ee4b5f0d5486765fb38d974ae2bab6646f82e",
+   "verdict": "SETUP_FAULT"
+  },
+  "preflight.1/corpus/simpleFoam_pitzDaily__overconstrained_pu": {
+   "sha256": "c9bf2809d0adc16947ed969a7120efbb2307a427250ab300295de0bc91ce97c0",
+   "verdict": "SETUP_FAULT"
+  },
+  "preflight.1/corpus/simpleFoam_pitzDaily__residual_plateau": {
+   "sha256": "d7958624bdf6b51662310c69856998496c92e96b73cddae3d84f63e304d38490",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "preflight.1/corpus/simpleFoam_pitzDaily__unbounded_scheme": {
+   "sha256": "4c2d12b117d8246b511ec2233e1a7292e151dbfffc6151ece3f35a786f2468c4",
+   "verdict": "NO_SETUP_FAULT_FOUND"
+  },
+  "verdict.2/case/cavity_extreme_aspect_ratio": {
+   "rule": "VER-5.4",
+   "sha256": "b4ee999fe7e32f8554ad5bd29e3b827376d925e9ed6fea63e26b7f10e2a03597",
+   "verdict": "reject"
+  },
+  "verdict.2/case/hotRoom_laminar_044": {
+   "rule": "VER-5.6",
+   "sha256": "bdfc48edca1b1b9b1e1c668a48a8e64c145e7def8f318e590e63f7e9299bdc2b",
+   "verdict": "accept"
+  },
+  "verdict.2/case/pitzDaily_fixed_budget": {
+   "rule": "VER-5.6",
+   "sha256": "88b28af5ec3be091f8b0c8ea517d1d6d3b160a2b89a810f1cc8a584f1e965aa5",
+   "verdict": "accept"
+  },
+  "verdict.2/case/simpleFoam_T3A__fixed_budget": {
+   "rule": "VER-5.6",
+   "sha256": "5a54137da310e86b973105f002de9ac93b7747a9ed127e0b70f1883f8b67e18d",
+   "verdict": "accept"
+  },
+  "verdict.2/case/simpleFoam_airFoil2D__shipped": {
+   "rule": "VER-5.4",
+   "sha256": "2f7751898b29ce001ac6f29a47514dfabeffd9485c2c3a6650692fbd39d0dbdd",
+   "verdict": "reject"
+  },
+  "verdict.2/case/simpleFoam_pitzDailyExptInlet__fixed_budget": {
+   "rule": "VER-5.6",
+   "sha256": "24bce16d66f4b588743289870c6cbe9fa98319f3d47c5f890913b90bb4fdea9b",
+   "verdict": "accept"
+  },
+  "verdict.2/case/simpleFoam_pitzDaily__fixed_budget": {
+   "rule": "VER-5.6",
+   "sha256": "c60925024d103a1306037ae7cd2d2142a9a57bdefb0617684c29794b0ba87bbe",
+   "verdict": "accept"
+  },
+  "verdict.2/case/simpleFoam_pitzDaily__over_relaxation": {
+   "rule": "VER-5.2",
+   "sha256": "ff7313f6bec05f1ab655efe3a72cc9244ff2a582f0055de8dd15868b0ec5cc3c",
+   "verdict": "reject"
+  },
+  "verdict.2/case/simpleFoam_pitzDaily__shipped": {
+   "rule": "VER-5.6",
+   "sha256": "20902e398a21817eab5bed396b288131b5010c8029ab483c3b2508d42be7bbb4",
+   "verdict": "accept"
+  },
+  "verdict.2/corpus/buoyantPimpleFoam_hotRoom__cfl_blowup": {
+   "rule": "VER-5.2",
+   "sha256": "c7a6c388c5723f9d145756cfdd3619d5db7796a334976f740442bc4a5cd05e35",
+   "verdict": "reject"
+  },
+  "verdict.2/corpus/buoyantPimpleFoam_hotRoom__healthy": {
+   "rule": "VER-5.6",
+   "sha256": "294853ce009b22f723fde7f1a8240bf923cb73321533ca304f5ddb45ae7ef413",
+   "verdict": "accept"
+  },
+  "verdict.2/corpus/buoyantPimpleFoam_hotRoom__laminar_on_turbulent": {
+   "rule": "VER-5.4",
+   "sha256": "6443480e0329cbe98e481c3b50371d8a90db1029fa6d6c42a0a1760be1cb3065",
+   "verdict": "reject"
+  },
+  "verdict.2/corpus/icoFoam_cavity__bad_initial_field": {
+   "rule": "VER-5.2",
+   "sha256": "052575105fea40207e165ff57c385337f971000a0c5dd065d0c295534b3c37ca",
+   "verdict": "reject"
+  },
+  "verdict.2/corpus/icoFoam_cavity__cfl_blowup": {
+   "rule": "VER-5.3",
+   "sha256": "c0e413ab806f5dead15e5ae42d0b1089dc53afa96188e60e8bb5f7dff4b9d4ca",
+   "verdict": "reject"
+  },
+  "verdict.2/corpus/icoFoam_cavity__extreme_aspect_ratio": {
+   "rule": "VER-5.2",
+   "sha256": "9abb77b9515e6535bb0609d59eb0104045644207730e94443fd096c06c6f34e0",
+   "verdict": "reject"
+  },
+  "verdict.2/corpus/icoFoam_cavity__healthy": {
+   "rule": "VER-5.6",
+   "sha256": "4d51697b5e2ada16647f11e9aadefd0378eb960e2fec193ff3c734b501041187",
+   "verdict": "accept"
+  },
+  "verdict.2/corpus/icoFoam_cavity__high_skewness": {
+   "rule": "VER-5.2",
+   "sha256": "50cb1d9a4a40663bfef9803b8bb59ba786ebc99444bde55678e7e8afee271e4b",
+   "verdict": "reject"
+  },
+  "verdict.2/corpus/icoFoam_cavity__missing_dict": {
+   "rule": "VER-5.2",
+   "sha256": "943ab14247657bbffd97e46364afa99e4226554002a4b1045a62ebd01c9d559d",
+   "verdict": "reject"
+  },
+  "verdict.2/corpus/icoFoam_cavity__transport_units": {
+   "rule": "VER-5.4",
+   "sha256": "cfc56b15210a010a1349f6e93a9f51ba117a5bb198139d8de32f80c1997d74fe",
+   "verdict": "reject"
+  },
+  "verdict.2/corpus/interFoam_damBreak__cfl_blowup": {
+   "rule": "VER-5.6",
+   "sha256": "95be55eed217ac1b5b193fa3a17f61031a0d2bcad04055a3519cb207712cf89c",
+   "verdict": "accept"
+  },
+  "verdict.2/corpus/interFoam_damBreak__fixed_dt_on_adaptive_solver": {
+   "rule": "VER-5.3",
+   "sha256": "5968fd038e5792b7cef46ccf5c0ba6a50aa0e5b4721ad7cd1b3c40812056155c",
+   "verdict": "reject"
+  },
+  "verdict.2/corpus/interFoam_damBreak__healthy": {
+   "rule": "VER-5.6",
+   "sha256": "fd95aeb6cc19fd220ca1247a8c6936e0da3a27f47db563b69335881c77b32088",
+   "verdict": "accept"
+  },
+  "verdict.2/corpus/pimpleFoam_planarContraction__cfl_blowup": {
+   "rule": "VER-5.3",
+   "sha256": "6a2f475fb5175e1960eef5b5b4bece7c562a707a3f6efca1923985251eecb0be",
+   "verdict": "reject"
+  },
+  "verdict.2/corpus/pimpleFoam_planarContraction__fixed_dt_on_adaptive_solver": {
+   "rule": "VER-5.3",
+   "sha256": "46722d456193b59337bd4406828e8ce01e41c5829ee10dbf48a24f6bf84f52cc",
+   "verdict": "reject"
+  },
+  "verdict.2/corpus/pimpleFoam_planarContraction__healthy": {
+   "rule": "VER-5.6",
+   "sha256": "08bf2cd374d481931dd1a40d3a34375c60bd343242f0eb97901072bdfb09ce09",
+   "verdict": "accept"
+  },
+  "verdict.2/corpus/pisoFoam_RAS_cavity__cfl_blowup": {
+   "rule": "VER-5.3",
+   "sha256": "463ef7a8f439a2b3d16591f7012d75f49098b0fa2b562e3a2d1e0981f89ee89b",
+   "verdict": "reject"
+  },
+  "verdict.2/corpus/pisoFoam_RAS_cavity__healthy": {
+   "rule": "VER-5.6",
+   "sha256": "dcd9aeda2501a6323b70a18754cca759d9c4ebffff1dad39fc61a6ad8550da3b",
+   "verdict": "accept"
+  },
+  "verdict.2/corpus/pisoFoam_RAS_cavity__laminar_on_turbulent": {
+   "rule": "VER-5.2",
+   "sha256": "78e6e705bc2fc2d860236573a85d8306ff79ee30db5c2ba68e5beff7f96c8d5e",
+   "verdict": "reject"
+  },
+  "verdict.2/corpus/pisoFoam_RAS_cavity__loose_solver_tolerance": {
+   "rule": "VER-5.4",
+   "sha256": "d8965a81be94a9f49ed13b6f12b7a34a1214615a867108c8e3e7fdb4fb732bbf",
+   "verdict": "reject"
+  },
+  "verdict.2/corpus/pisoFoam_RAS_cavity__wrong_turbulence_model": {
+   "rule": "VER-5.2",
+   "sha256": "09ad71e5d8dac9dcd772b130732925f46bbbfb8262899592dec9a8c2ab4a4da8",
+   "verdict": "reject"
+  },
+  "verdict.2/corpus/rhoPimpleFoam_RAS_cavity__cfl_blowup": {
+   "rule": "VER-5.2",
+   "sha256": "bdec351f3da7b99e2b7290672d1b1558576ba770c5ba06de592f730526caf620",
+   "verdict": "reject"
+  },
+  "verdict.2/corpus/rhoPimpleFoam_RAS_cavity__healthy": {
+   "rule": "VER-5.6",
+   "sha256": "b9bde53de4bd5aae5a7b914c44192bbb8c4d05924fc1da324a61e951ff3ee5b9",
+   "verdict": "accept"
+  },
+  "verdict.2/corpus/rhoPimpleFoam_RAS_cavity__missing_dict": {
+   "rule": "VER-5.2",
+   "sha256": "fabe8d45c97458845e3dcb62ba840c7a92dc54d135cb3b78a280a9eafd45c8ff",
+   "verdict": "reject"
+  },
+  "verdict.2/corpus/simpleFoam_pitzDaily__healthy": {
+   "rule": "VER-5.6",
+   "sha256": "e1dcac06a694fd6e25a4ef64d349f0d62ad66d834681d3f7bb4f766ef8892535",
+   "verdict": "accept"
+  },
+  "verdict.2/corpus/simpleFoam_pitzDaily__mass_imbalance": {
+   "rule": "VER-5.4",
+   "sha256": "c90ae6054c81379e0b45a05d93caa971cf650d9c48a8b10005670a50e5e071db",
+   "verdict": "reject"
+  },
+  "verdict.2/corpus/simpleFoam_pitzDaily__oscillation": {
+   "rule": "VER-5.2",
+   "sha256": "fa5699c607f8145d9fec6aaf4ddeaa8edd0a08d846fc5623a7337033788cfee8",
+   "verdict": "reject"
+  },
+  "verdict.2/corpus/simpleFoam_pitzDaily__over_relaxation": {
+   "rule": "VER-5.2",
+   "sha256": "f471121724bfcad978ab82fb1c7748107db0cc2e7391a6e5f7f99e8267489119",
+   "verdict": "reject"
+  },
+  "verdict.2/corpus/simpleFoam_pitzDaily__overconstrained_pu": {
+   "rule": "VER-5.4",
+   "sha256": "6fa7906969a6f06c297f52c7eb40835fbbe7e58036ab3d4529f370d8d6b3a03a",
+   "verdict": "reject"
+  },
+  "verdict.2/corpus/simpleFoam_pitzDaily__residual_plateau": {
+   "rule": "VER-5.4",
+   "sha256": "894de822f87976a3d0cfae5123f9c9f6cec5c851e56bb09a47f763f529a5b3b4",
+   "verdict": "reject"
+  },
+  "verdict.2/corpus/simpleFoam_pitzDaily__unbounded_scheme": {
+   "rule": "VER-5.3",
+   "sha256": "23bfa8fb7dd76d3f220b38d6d8ea9e0e14c2f8726c501c8c50e45a483722b451",
+   "verdict": "reject"
+  }
+ },
+ "label": "main at 187d6ae, VER-7a, VER-16 and VER-17 on by default"
+}

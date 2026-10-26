@@ -73,7 +73,9 @@ def _run_name(p: Path) -> str:
 
 
 def _sidecar(log: Path) -> Path | None:
-    side = log.with_name(_run_name(log) + ".case.json")
+    from courant.verify.ingest import sidecar_of
+
+    side = sidecar_of(log)
     return side if side.is_file() else None
 
 

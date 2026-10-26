@@ -22,13 +22,19 @@ def preflight(
     case: str = typer.Argument(..., help="A case directory, before (or after) it runs."),
     case_json: str = typer.Option(None, "--case-json", help="A captured configuration sidecar (*.case.json) instead of a case directory."),
     as_json: bool = typer.Option(False, "--json", help="Print the canonical preflight JSON."),
+    checks: str = typer.Option("default", "--checks", help="'next' also runs the checks that ship behind this flag for one minor release before they are on by default (GATE-13); the result records it."),
 ) -> None:
     """Check a case's setup before the solver spends anything: tolerances, relaxation, boundaries, units, mesh."""
+    from courant.verify.checks import MODES
     from courant.verify.ingest import InputError
     from courant.verify.preflight import preflight_path, render_text
 
+    if checks not in MODES:
+        print(f"courant preflight: --checks must be one of {', '.join(MODES)}, not {checks}",
+              file=sys.stderr)
+        raise typer.Exit(4)
     try:
-        p = preflight_path(case, case_json)
+        p = preflight_path(case, case_json, checks=checks)
     except (InputError, OSError, ValueError) as exc:
         print(f"courant preflight: {exc}", file=sys.stderr)
         raise typer.Exit(4) from exc

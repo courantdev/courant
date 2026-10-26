@@ -128,8 +128,8 @@ NOT CHECKED
   - Discretisation error was not quantified: a single mesh was supplied.
   - Accuracy against a reference was not assessed: no reference data was supplied.
   - Field values physically plausible: no internal fields
-  - Flow regime matches turbulence modeling: insufficient data for Reynolds number
-  - Near-wall y+ compatible with wall treatment: no y+ field
+  - Flow regime matches turbulence modeling: not implemented (Courant derives no length scale for a Reynolds number from the case)
+  - Near-wall y+ compatible with wall treatment: not implemented (Courant reads no y+, neither a yPlus field nor the yPlus function object's output)
   - Net boundary mass flux ~ 0: no field flux data
   - No specification given: conformance to the task was not assessed.
 
@@ -173,8 +173,12 @@ it:
   is told.
 - `tests/unit/test_preflight.py`, `tests/unit/test_live.py` and `tests/unit/test_audit.py`:
   preflight, `watch` and the audit read a case and leave every byte of it as it was.
-- `tests/unit/test_verify_pack.py`: an evidence pack is the same bytes when written twice, and an
-  edit to a file the gate read changes that file's entry in the manifest.
+- `tests/unit/test_verify_pack.py`: an evidence pack is the same bytes when written twice, an
+  edit to a file the gate read changes that file's entry in the manifest, and `--check-pack`
+  re-verifies only the run under `--root`, as the root holds it: a pack whose manifest names a
+  file outside it, lists other files than its verdict read, leaves out the sidecar the root holds
+  for its log, judges a case directory by its log alone, or carries another specification than
+  the one `--spec-sha256` names, is refused.
 - `tests/integration/test_docs_commands.py`: every `bash` block in this README and in Getting
   started runs, offline, on the demo data, with the exit code it documents.
 
@@ -208,7 +212,7 @@ run, and fails the check unless every run is accepted. Its logic is `courant gat
 the same way on any CI system.
 
 ```yaml
-- uses: courantdev/courant/.github/actions/courant-gate@v0.5.0
+- uses: courantdev/courant/.github/actions/courant-gate@v0.6.0
   with:
     paths: runs/*.log.gz
     spec: task/spec.json

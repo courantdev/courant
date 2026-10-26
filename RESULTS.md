@@ -37,7 +37,7 @@ The hidden split (210 tasks: `buoyantPimpleFoam_hotRoom` 30, `icoFoam_cavity` 30
 
 At the reveal the task list is published as JSONL and must hash to this value. Tasks whose reference answer the gate does not accept (feasibility) are excluded before scoring, and the excluded task ids are published with the reveal.
 
-## The Courant Test (31 runs, courant 0.5.0)
+## The Courant Test (31 runs, courant 0.6.0)
 
 Judged correctly 31 of 31; wrong results accepted 0 of 23; good results rejected 0 of 8.
 

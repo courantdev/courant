@@ -1,0 +1,64 @@
+{
+ "batch": "RM-19-free-dev",
+ "budget": "1 tasks × 3 models × 1 conditions × 1 seeds × 30 requests per run = 90 requests at most",
+ "candidates": [
+  {
+   "context_length": 262144,
+   "id": "apodex/apodex-1.1-mini:free"
+  },
+  {
+   "context_length": 262144,
+   "id": "google/gemma-4-26b-a4b-it:free"
+  },
+  {
+   "context_length": 262144,
+   "id": "google/gemma-4-31b-it:free"
+  },
+  {
+   "context_length": 262144,
+   "id": "nvidia/nemotron-3-super-120b-a12b:free"
+  },
+  {
+   "context_length": 262144,
+   "id": "qwen/qwen3.8-27b:free"
+  }
+ ],
+ "cap": 30,
+ "command": "",
+ "conditions": [
+  "plain"
+ ],
+ "dropped": [],
+ "harness": {
+  "name": "courant-free-bash",
+  "prompt": "free-bash/1",
+  "version": "2"
+ },
+ "image": "opencfd/openfoam-default@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+ "listing": {
+  "models_listed": 22,
+  "path": "listing.json",
+  "sha256": "fe6185c7360816928f05275e0bbd72c35ba79eec330895cfeaff19c35ecfd317",
+  "source": "https://openrouter.ai/api/v1/models"
+ },
+ "measurement": "RM-19",
+ "models": [
+  "apodex/apodex-1.1-mini:free",
+  "google/gemma-4-26b-a4b-it:free",
+  "google/gemma-4-31b-it:free"
+ ],
+ "recorded_at": "2026-10-13T02:19:49+00:00",
+ "registered_commit": "0c0e793",
+ "requests_at_most": 90,
+ "rule": "the three ids on the allowlist on the day the run starts with the largest context window, ties broken by id (RRD RM-19 v1, tier A)",
+ "schema": "courant.sb-tier-a/1",
+ "seeds": [
+  0
+ ],
+ "split": "dev",
+ "started_on": "2026-10-12",
+ "tasks": 1,
+ "tasks_sha256": "4e5e9e1ff0bc30f1da0103092332375bfc7769cd09748fa0436bb5258cb0799c",
+ "tier": "A",
+ "wall_cap_s": 1800.0
+}

@@ -57,6 +57,13 @@ RUN_CRASHED = (
     "The convergence assessment above covers the samples that were written. No waste figure is "
     "reported, because a run that crashed did not finish the work it was set.")
 
+#: VER-5.16: no exit code was given and the log stops before End with no crash in it.
+RUN_END_UNKNOWN = (
+    "This log stops at step {last_complete_step} before the solver's End and shows no fatal "
+    "error, so whether the run finished, failed or is still running is not known. The "
+    "convergence assessment above covers the samples that were written. No waste figure is "
+    "reported, because a run whose end is not known may not be over.")
+
 NOT_ASSESSABLE_NO_MONITORS = (
     "No engineering monitor was found in this case, so convergence of the answer could not be "
     "assessed. Residual behaviour is reported below and is not a substitute. The paths searched "
