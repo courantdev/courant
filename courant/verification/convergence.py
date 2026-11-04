@@ -206,30 +206,50 @@ def _control(config) -> dict[str, float]:
     return dict(controls.get(loop) or {}) if loop else {}
 
 
-def _tolerance(config, field: str) -> tuple[float, bool] | None:
-    """(the strictest `residualControl` tolerance OpenFOAM may apply to `field`, whether one
-    certainly applies), or None if none can.
+def _control_lookup(config, field: str
+                    ) -> tuple[list[tuple[str, float]], int | None, tuple[int, ...]]:
+    """The one `residualControl` lookup of `field`: (the entries with a finite tolerance, in
+    declaration order; the index of the first that names the field, or None; the indices of the
+    keywords before it the matcher did not evaluate). `_candidates` and `keywords_not_evaluated`
+    read it."""
+    name = _openfoam_name(field)
+    entries = [(key, float(tol)) for key, tol in _control(config).items()
+               if tol is not None and math.isfinite(tol)]
+    hit, unsure = _first([key for key, _ in entries], name)
+    return entries, hit, unsure
+
+
+def _candidates(config, field: str) -> tuple[tuple[float, ...], bool] | None:
+    """(every `residualControl` tolerance OpenFOAM may apply to `field`, the matching entry's
+    last when one matches; whether one certainly applies), or None if none can.
 
     From the dictionary the solver's algorithm reads (`solvers.residual_control_loop`).
     `solutionControl::applyToField` returns the first entry, in declaration order, whose name
     matches the field. A tolerance that is not a finite number is no tolerance (a sidecar can
     carry NaN); zero or a negative number is a tolerance no residual can meet, as in OpenFOAM,
     whose test is `residual < tolerance`. A keyword before the match that the matcher did not
-    evaluate may be the entry OpenFOAM applies, so the strictest of them and the match (skipped,
+    evaluate may be the entry OpenFOAM applies, so each of them and the match (skipped,
     `"(?=U)U" 1e-6; ".*" 1e-2;` held U to 1e-2). With no entry certain to match, one applies
     only if such a keyword names the field: not certain (the review of the 0.6.0
     hard-proofing, 22 Oct 2026, found the flat bar then said to be the case's tolerance).
     """
-    name = _openfoam_name(field)
-    entries = [(key, float(tol)) for key, tol in _control(config).items()
-               if tol is not None and math.isfinite(tol)]
-    hit, unsure = _first([key for key, _ in entries], name)
+    entries, hit, unsure = _control_lookup(config, field)
     if hit is None and not unsure:
         return None
     may_be = [entries[i][1] for i in unsure]
     if hit is not None:
         may_be.append(entries[hit][1])
-    return min(may_be), hit is not None
+    return tuple(may_be), hit is not None
+
+
+def _tolerance(config, field: str) -> tuple[float, bool] | None:
+    """(the strictest `residualControl` tolerance OpenFOAM may apply to `field`, whether an entry
+    certainly matches the field), or None if none can (`_candidates`). The second says only
+    that the flat bar is no outcome: the strictest may still be a keyword's the matcher did not
+    evaluate, before that entry, so it does not say the tolerance is the case's
+    (`judge_residuals` asks `_candidates` itself for that; T-FOLLOWUP-MINORS (2))."""
+    found = _candidates(config, field)
+    return None if found is None else (min(found[0]), found[1])
 
 
 def declared_tolerance(config, field: str) -> float | None:
@@ -243,27 +263,74 @@ def declared_tolerance(config, field: str) -> float | None:
     return tol if certain else min(tol, RESIDUAL_TARGET)
 
 
+def sets_bar(tolerance: float, checks: str = "default") -> bool:
+    """Whether a `residualControl` tolerance sets its field's residual bar (TRD VER-16c). One
+    definition, which `_clamp` asks for `residual_bar` and `judge_residuals` both.
+
+    Under `residual.control.floor` (behind `--checks next`; S's decision on H-VER16-ENDTIME, 26
+    Oct 2026) only a tolerance at or above `RESIDUAL_TARGET` does: a declared tolerance may
+    loosen the bar, to `RESIDUAL_LOOSE` at most, and never tightens it. A tolerance below the
+    target is the solver's stopping rule, and a run that never meets it runs on to its endTime:
+    v2406's `simpleControl::loop` ends the run early only when `criteriaSatisfied()` holds, and
+    otherwise returns `runTime.loop()` (`src/finiteVolume/cfdTools/general/solutionControl/
+    simpleControl/simpleControl.C`, lines 136 to 161, read in the pinned image). So a tolerance
+    set far below what the run reaches (1e-8, 1e-9) makes it run for its whole budget, which
+    says nothing of whether the run converged; such a field is held to the flat bar's value and
+    met as the flat bar is met (`_clamp`), and the tolerance it did not reach is a note
+    (`UnmetTolerance`). Without the flag every tolerance sets the bar, tighter ones too (VER-16
+    as 0.6.0 ships it)."""
+    from courant.verify.checks import enabled
+
+    return tolerance >= RESIDUAL_TARGET or not enabled("residual.control.floor", checks)
+
+
+def _clamp(tolerance: float, checks: str = "default") -> tuple[float, bool]:
+    """(the bar, whether it is met strictly) a `residualControl` tolerance holds its field to.
+    One definition, applied by `judge_residuals` to every tolerance a field may have
+    (`_readings`) and by `residual_bar`.
+
+    A tolerance that sets the bar (`sets_bar`) is the bar, met strictly as OpenFOAM meets it
+    (`residual < tolerance`, `_within`), and never looser than `RESIDUAL_LOOSE`, the edge of the
+    band the gate has always graded MINOR: past it a residual is MAJOR whatever the case says,
+    or `residualControl { p 1; }` would make any run converge on its second iteration. Under
+    `residual.control.floor` (VER-16c, behind `--checks next`) one below `RESIDUAL_TARGET` holds
+    the field to the target, met as the flat bar is met (`<=`): the tolerance clamped to
+    [`RESIDUAL_TARGET`, `RESIDUAL_LOOSE`]. Either is read at the solve the tolerance is read,
+    the field's first of the step; one below the target at the flat bar's solve as well
+    (`_readings`). On a local-time-stepping run a tolerance at or above the target is read at the
+    first solve, and the step's last solve, where the flat bar reads it, is MAJOR past
+    `RESIDUAL_LOOSE` too (`judge_residuals`; the final review of 519ab28, T-FOLLOWUP-MINORS
+    (8))."""
+    if sets_bar(tolerance, checks):
+        return min(tolerance, RESIDUAL_LOOSE), True
+    return RESIDUAL_TARGET, False
+
+
 def residual_bar(config, field: str, checks: str = "default") -> float:
-    """The final initial residual `field` must reach on this run. One definition.
+    """The bar `field`'s `residualControl` tolerance holds it to on this run: `_clamp` of
+    `declared_tolerance`, the clamp `judge_residuals` applies. For a field whose tolerance
+    certainly applies it is the bar the judgement decides (`ResidualJudgement.bars`,
+    `tests/unit/test_residual_floor.py`); otherwise (a keyword the matcher does not evaluate may
+    give it a tolerance, or the flat bar reads another solve as well) the strictest bar a reading
+    of it holds it to, from the one definition `judge_residuals` reads (`_bars`;
+    T-FOLLOWUP-MINORS (3)), which judges each reading and keeps the one that decides. The gate
+    asks `judge_residuals`.
 
     On a steady run whose solver reads a `residualControl` tolerance for the field, that
-    tolerance: it is the convergence criterion the case's author gave the solver. Never looser
-    than `RESIDUAL_LOOSE`, the edge of the band the gate has always graded MINOR: past it a
-    residual is MAJOR whatever the case says, or `residualControl { p 1; }` would make any run
-    converge on its second iteration. Otherwise the flat `RESIDUAL_TARGET`, as before: with no
+    tolerance, clamped (`_clamp`). Otherwise the flat `RESIDUAL_TARGET`, as before: with no
     config, on a transient run, for a solver with no run-level `residualControl`, and for a
     field the case does not declare. "Steady" is `CaseConfig.marches_to_steady_state` under
     `checks`: under `next` a local-time-stepping run too (TRD VER-19), so an OpenFOAM.org
-    `foamRun` LTS case is held to its PIMPLE run criterion. For a field only a keyword the
-    matcher does not evaluate may give a tolerance, the stricter of that tolerance and the flat
-    bar; `judge_residuals` judges such a field on each reading as it would be if certain.
+    `foamRun` LTS case is held to its PIMPLE run criterion. The tolerance is read whichever
+    mode, as `residual.control` reads it; the bar per field itself is behind `--checks next`
+    (`judge_residuals`), so under the default no verdict asks for it.
     """
     if config is None or not config.marches_to_steady_state(checks):
         return RESIDUAL_TARGET
-    tol = declared_tolerance(config, field)
-    if tol is None:
+    found = _candidates(config, field)
+    if found is None:
         return RESIDUAL_TARGET
-    return min(tol, RESIDUAL_LOOSE)
+    return min(bar for bar, _, _ in _bars(found, checks))
 
 
 def _within(value: float, bar: float, declared: bool) -> bool:
@@ -287,6 +354,59 @@ def _equation_factors(config) -> list[tuple[str, float | None]]:
     return [(k, v) for k, v in factors.items() if scopes.get(k, "") == scope]
 
 
+def _relaxation_lookup(config, field: str):
+    """The one lookup of `field`'s equation relaxation, `dictionary::csearch`
+    (`wordre.csearch`): (the dictionary's (key, factor) in order, `_equation_factors`; each key
+    as (its text, whether it is a pattern); the indices of the entry found; the indices of the
+    patterns tried before it that the matcher did not evaluate). `equation_relaxation` and
+    `keywords_not_evaluated` read it."""
+    from courant.case import wordre
+
+    field, eqn = _in_region(config, field)
+    keys = [(key[1:-1] if _is_pattern(key) else key, _is_pattern(key)) for key, _ in eqn]
+    found, unsure = wordre.csearch(keys, _openfoam_name(field), dictionaries=False)
+    return eqn, keys, found, unsure
+
+
+def _in_region(config, field: str) -> tuple[str, list]:
+    """(the field looked up, the equation factors it is looked up in). A multi-region residual
+    (`h@air`, VER-20's key under `--checks next`) is relaxed by its region's own fvSolution, which
+    the case reader keys by the region's place (`h@region1`, VER-3d): the region's entries alone,
+    their suffix taken off, are the dictionary looked in (the review of T-MULTI-REGION, m3). A
+    residual of no region the case names finds none."""
+    eqn = _equation_factors(config)
+    regions = getattr(config, "regions", None) or []
+    base, at, region = field.rpartition("@")
+    if regions and at:
+        from courant.case.config import region_pseudonym
+
+        tag = "@" + region_pseudonym(regions, region)
+        return base, [(k[:-len(tag)], v) for k, v in eqn if k.endswith(tag)]
+    return field, eqn
+
+
+def keywords_not_evaluated(config, field: str, *, relaxation: bool = False) -> tuple[str, ...]:
+    """The keywords the matcher did not evaluate that may decide `field`'s `residualControl`
+    tolerance (`_control_lookup`), or with `relaxation` its equation relaxation factor
+    (`_relaxation_lookup`): the lookups `judge_residuals` and the stall detector make, so each
+    is held to the strictest value any of them may give. Each as 'residualControl "<keyword>"'
+    or 'relaxationFactors "<keyword>"', the case's own text: for local use, never a sentence
+    (`sentences.keywords_not_evaluated` counts them). Empty when nothing is in doubt."""
+    if config is None:
+        return ()
+    if relaxation:
+        if field in _PRESSURE:
+            return ()
+        eqn, _, _, unsure = _relaxation_lookup(config, field)
+        keys = [eqn[i][0] for i in unsure]
+        prefix = "relaxationFactors"
+    else:
+        entries, _, unsure = _control_lookup(config, field)
+        keys = [entries[i][0] for i in unsure]
+        prefix = "residualControl"
+    return tuple(f"{prefix} {key}" for key in dict.fromkeys(keys))
+
+
 def equation_relaxation(config, field: str) -> float:
     """The implicit (equation) relaxation factor OpenFOAM applies to `field`'s matrix; 1.0 when
     there is none.
@@ -303,14 +423,13 @@ def equation_relaxation(config, field: str) -> float:
     after `equations { U 0.05; }` gave U 1.0, and never read the `default`: both hid the
     under-relaxation below 0.1 the stall detector fires on (the review of the 0.6.0 follow-ups).
     """
-    from courant.case import wordre
-
-    if config is None or field in _PRESSURE:
+    if config is None or _in_region(config, field)[0] in _PRESSURE:
         return 1.0
-    eqn = _equation_factors(config)
-    keys = [(key[1:-1] if _is_pattern(key) else key, _is_pattern(key)) for key, _ in eqn]
-    standing = {text: eqn[i][1] for i, (text, _) in enumerate(keys)}   # a value written last
-    found, unsure = wordre.csearch(keys, _openfoam_name(field), dictionaries=False)
+    eqn, keys, found, unsure = _relaxation_lookup(config, field)
+    # A value written last: `"U"` and `U` are one entry in v2406's dictionary, and the map holds
+    # them as two keys in the order of each one's last writing (foamlib keeps a key written again
+    # at its last place), so the later key is the one standing (T-FOLLOWUP-MINORS (6)).
+    standing = {text: eqn[i][1] for i, (text, _) in enumerate(keys)}
     # The entry found, or with none the default (absent: no relaxation); and each pattern not
     # evaluated that may be the one found instead.
     may_be = [standing[keys[found[-1]][0]] if found else standing.get("default")]
@@ -363,7 +482,7 @@ class Stall:
     field: str                  # the plateaued field the deflation puts furthest above its bar
     residual: float             # its final initial residual, as compared with its bar
     relaxation: float           # its equation relaxation factor
-    bar: float                  # its residual bar (`residual_bar`)
+    bar: float                  # its bar, as the judgement decided it (`judge_residuals`)
     drift_rel: float            # its trailing-window drift over its final value (M1-P-2)
 
 
@@ -375,7 +494,7 @@ def stall_sentence(s: Stall) -> str:
             f"unrelaxed, more than an order above its bar of {s.bar:g}")
 
 
-def reads_first_solve(config, checks: str = "default") -> bool:
+def reads_first_solve(config, checks: str = "default", *, events=None) -> bool:
     """Whether every field's residual at a step is its FIRST solve's (TRD VER-16a): on a steady
     run, as residualControl reads it, under `residual.first_solve` (behind `--checks next`).
     One definition, for the bar (`judge_residuals`), the stall detector and the convergence
@@ -386,11 +505,20 @@ def reads_first_solve(config, checks: str = "default") -> bool:
     far the step moved the field, not how far the solve is from converging: the healthy
     interFoam damBreak's first `p_rgh` solve sits above 1e-3 while its last settles, and
     reading it rejected that run (`physics.laminar_unstable`, found on the committed corpus).
-    With no configuration the regime is unknown, and the last solve is read, as in v0.5.0."""
+    With no configuration the regime is unknown, and the last solve is read, as in v0.5.0.
+
+    Nor with no step: `events` whose residuals carry no step number, because the log has no
+    `Time =` line (`courant.events.time_markers.no_time_markers`, VER-5.15), have no first solve of a
+    step, so the last solve is read, as 0.6.0's default read it. Read as one step, the first
+    iteration's residuals stood as the run's final ones and rejected a healthy pitzDaily log
+    stripped of its `Time =` lines (VER-5.3, grade C) where VER-5.15 says insufficient (the
+    release preparation of 0.7.0, which turned VER-16a on by default)."""
+    from courant.events.time_markers import no_time_markers
     from courant.verify.checks import enabled
 
     return (enabled("residual.first_solve", checks) and config is not None
-            and config.is_steady(checks))
+            and config.is_steady(checks)
+            and not (events is not None and no_time_markers(events)))
 
 
 def stalled(events: list[Event], config, final: dict[str, float],
@@ -409,7 +537,7 @@ def stalled(events: list[Event], config, final: dict[str, float],
     from courant.converge.steady import residual_summary, window_width
 
     series, _, _ = from_events(                     # the convergence block's own series
-        events, first_solve=reads_first_solve(config, checks))
+        events, first_solve=reads_first_solve(config, checks, events=events))
     best: tuple[float, Stall] | None = None
     for name in sorted(final):
         values = series.get(name)
@@ -429,6 +557,30 @@ def stalled(events: list[Event], config, final: dict[str, float],
 
 
 @dataclass(frozen=True)
+class UnmetTolerance:
+    """A `residualControl` tolerance below `RESIDUAL_TARGET` that a field did not reach (TRD
+    VER-16c, `residual.control.floor`): reported as a note, never judged (`sets_bar`).
+
+    Not reached as OpenFOAM tests it: v2406's `simpleControl::criteriaSatisfied` compares the
+    field's first solve of the iteration, the largest component of a vector
+    (`solutionControl::maxTypeResidual`, `residuals.first() = cmptMax(sp.first()
+    .initialResidual())`, solutionControl.C line 232), with `residuals.first() < absTol`, strictly
+    (simpleControl.C lines 70 to 71). The gate reads that first solve at the log's last step
+    (`ResidualPayload.first_initial_residuals`), one component at a time."""
+
+    field: str          # as the log names its solve: "Ux"
+    residual: float     # its first solve's initial residual at the last step
+    tolerance: float    # the tolerance, the strictest OpenFOAM may apply (`_tolerance`)
+    #: Whether that tolerance is the value of the entry that certainly matches the field
+    #: (`_candidates`). A keyword before that entry the matcher did not evaluate may pre-empt it
+    #: with another value, and does not set this one (the final review of T-VER16C: under
+    #: `"(?=U)U" 1e-2; U 1e-9;` U's 1e-9 was said to be the keyword's). Otherwise, with no entry
+    #: certain to match or the strictest value a keyword's, the note says such a keyword may set
+    #: it.
+    certain: bool
+
+
+@dataclass(frozen=True)
 class ResidualJudgement:
     """Every field's final residual against its bar, and the stall, decided once."""
 
@@ -439,17 +591,30 @@ class ResidualJudgement:
     residual: float             # its final residual
     bar: float                  # its bar
     #: The largest final residual over every reading of each field: a field only a keyword not
-    #: evaluated may give a tolerance is read at its first solve and where the flat bar reads it,
-    #: and past `RESIDUAL_LOOSE` on either it is MAJOR (`ConvergenceCheck`), whichever reading
-    #: decides its bar (the review of the 0.6.0 follow-ups found 2e-2 then 5e-3 graded MINOR).
+    #: evaluated may give a tolerance, or under VER-16c one whose tolerance is below the target,
+    #: is read at its first solve and where the flat bar reads it, and past `RESIDUAL_LOOSE` on
+    #: either it is MAJOR (`ConvergenceCheck`), whichever reading decides its bar (the review of
+    #: the 0.6.0 follow-ups found 2e-2 then 5e-3 graded MINOR).
     worst: float
-    declared: bool              # whether any field's bar came from residualControl, certainly
+    #: Whether any field's bar came from residualControl, certainly. Under
+    #: `residual.control.floor` (VER-16c) a field whose tolerance is below the target is held to
+    #: the target, met as the flat bar is met, and does not count.
+    declared: bool
     field_declared: bool        # whether the deciding field's did
     stall: Stall | None
     #: Whether any field's bar is a tolerance only a residualControl keyword the matcher does not
     #: evaluate may give (`_tolerance`, not certain): never said to be declared.
     unsure: bool = False
     field_unsure: bool = False  # whether the deciding field's is
+    #: VER-16c: the residualControl tolerances below the target that a field did not reach, in
+    #: the fields' order; judged by nothing, reported (`sentences.tolerances_unmet`).
+    unmet: tuple[UnmetTolerance, ...] = ()
+    #: TRD VER-3b: per field as OpenFOAM names it, in order, the residualControl and relaxation
+    #: keywords the matcher did not evaluate that may decide its bar or its stall
+    #: (`keywords_not_evaluated`): it was held to the strictest value they may give. Read only
+    #: where the judgement reads the keywords, under `--checks next`; reported, never judged
+    #: (`sentences.keywords_not_evaluated`).
+    unevaluated: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     @property
     def converged(self) -> bool:
@@ -582,6 +747,25 @@ def judge_residuals(events: list[Event], config,
     judged as declared: "its residualControl" said of the flat bar, and on a local-time-stepping
     run its first solve read where the flat bar reads its last).
 
+    **VER-16c** (`residual.control.floor`, behind `--checks next`; S's decision on
+    H-VER16-ENDTIME, 26 Oct 2026): a field's bar is its tolerance clamped to
+    [`RESIDUAL_TARGET`, `RESIDUAL_LOOSE`] (`_clamp`). A tolerance may loosen the bar and never
+    tightens it (`sets_bar`): a field whose tolerance is below the target is held to the target,
+    met as the flat bar is met (`<=`), is not counted as declared (its reasons say the flat
+    bar's words), and its bar is the target in the stall detector too. It is read at both
+    solves, whether or not the tolerance is certain: where the tolerance is read, its first,
+    and where the flat bar reads (`_readings`), and it is over when either reading is, MAJOR
+    past `RESIDUAL_LOOSE` on either (`worst`). On a steady run under `next`, where VER-16a
+    holds, the two are the same solve, so it is judged exactly as on the flat bar. On a
+    local-time-stepping run the flat bar reads the last solve, so a stricter tolerance is never
+    judged more leniently than a looser one (read at the last alone, p at 2e-2 on its first
+    solve and 5e-4 on its last was rejected under `p 1e-3` and accepted under `p 9.9e-4`: the
+    review of T-VER16C) nor than no tolerance at all (read at the first alone, p at 5e-4 then
+    2e-2 was accepted under `p 1e-8` and rejected with no residualControl: its final review).
+    That tolerance, when the field's first solve did not reach it as OpenFOAM tests it
+    (`residual < tolerance`), is in `unmet`: a note, never a reason. A field a keyword not
+    evaluated may give several tolerances is judged on each (`_readings`).
+
     The stall is asked only of a run whose every field is within its bar. A run above its bar
     is already not converged, and is reported so; the stall is the evidence the bar cannot
     see, a "converged" that relaxation made spurious. Asked of every run, it added a finding
@@ -607,47 +791,125 @@ def judge_residuals(events: list[Event], config,
     step = _last_step(events)
     if step is None:
         return None
-    per_field = enabled("residual.control", checks)
+    control = enabled("residual.control", checks)       # the bar per field (VER-16)
     last = _finite_items(step.initial_residuals or {})
     first = _finite_items(getattr(step, "first_initial_residuals", None) or {})
     if exclude and set(last) - set(exclude):
         last = {name: v for name, v in last.items() if name not in exclude}
         first = {name: v for name, v in first.items() if name not in exclude}
-    steady = per_field and config is not None and config.marches_to_steady_state(checks)
-    tolerances = {name: _tolerance(config, name) for name in last} if steady else {}
-    named = {name for name, tol in tolerances.items() if tol is not None and tol[1]}
-    every_first = reads_first_solve(config, checks)
+    steady = control and config is not None and config.marches_to_steady_state(checks)
+    candidates = {name: _candidates(config, name) for name in last} if steady else {}
+    floor = enabled("residual.control.floor", checks)       # VER-16c: a tighter one is a note
+    every_first = reads_first_solve(config, checks, events=events)
     nearer = cmp_to_key(lambda a, b: _further_over(a[:2], b[:2]))
     final: dict[str, float] = {}
     bars: dict[str, float] = {}
     strict: dict[str, bool] = {}            # a tolerance is met strictly, the flat bar with <=
+    named: set[str] = set()
     unsure: set[str] = set()
+    unmet: list[UnmetTolerance] = []
     worst = -math.inf                       # the largest residual on any field's any reading
     for name, v in last.items():
-        flat = (first.get(name, v) if every_first else v, RESIDUAL_TARGET, False)
-        tol = tolerances.get(name)
-        if tol is None:
-            readings = [flat]
-        elif tol[1]:
-            readings = [(first.get(name, v), residual_bar(config, name, checks), True)]
-        else:                               # a keyword not evaluated may give it, or none does
-            readings = [(first.get(name, v), min(tol[0], RESIDUAL_LOOSE), True), flat]
+        at_first = first.get(name, v)       # the solve residualControl reads
+        flat = (at_first if every_first else v, RESIDUAL_TARGET, False)
+        found = candidates.get(name)
+        readings = [flat] if found is None else _readings(found, at_first, flat, checks)
         final[name], bars[name], strict[name] = decided = max(
             [r for r in readings if not _within(*r)] or readings, key=nearer)
         worst = max(worst, *(r[0] for r in readings))
-        if tol is not None and not tol[1] and decided[2]:
-            unsure.add(name)
+        if found is None:
+            continue
+        if floor and not every_first:
+            # VER-16c on a run whose flat bar reads another solve than the first (local time
+            # stepping): past `RESIDUAL_LOOSE` there the field is MAJOR whatever the case says,
+            # as it is with no residualControl. A held tolerance is read at the first solve alone
+            # (residualControl's), so p at 5e-4 then 2e-2 under `p 1e-2` was accepted where no
+            # tolerance rejects it, MAJOR (the final review of 519ab28; T-FOLLOWUP-MINORS (8)).
+            # Below 1e-2 the last solve is the tolerance's to loosen, as S decided.
+            worst = max(worst, flat[0])
+        if decided[2]:                      # its bar is a tolerance: certainly, or it may be
+            # The case's own only when it is the value of the entry that certainly matches (the
+            # last candidate): a keyword before that entry may give a stricter one, which the
+            # bar then is (T-FOLLOWUP-MINORS (2): "its residualControl" was said of it).
+            own = found[1] and _clamp(found[0][-1], checks) == decided[1:]
+            (named if own else unsure).add(name)
+        tightest = min(found[0])
+        if floor and not sets_bar(tightest, checks) and not at_first < tightest:
+            # certain: the tightest is the value of the entry that certainly matches, the last
+            # candidate (`_candidates`); a keyword before it may pre-empt it, and not set it
+            unmet.append(UnmetTolerance(field=name, residual=at_first, tolerance=tightest,
+                                        certain=found[1] and found[0][-1] == tightest))
     over = tuple(sorted(name for name, v in final.items()
                         if not _within(v, bars[name], strict[name])))
     field = max(sorted(final), key=cmp_to_key(
         lambda a, b: _further_over((final[a], bars[a]), (final[b], bars[b]))))
+    ask_stall = not over and enabled("residual.stalled", checks)
     return ResidualJudgement(final=final, bars=bars, over=over, field=field,
                              residual=final[field], bar=bars[field],
                              worst=worst, declared=bool(named),
                              field_declared=field in named,
-                             stall=None if over or not enabled("residual.stalled", checks)
-                             else stalled(events, config, final, bars, checks),
-                             unsure=bool(unsure), field_unsure=field in unsure)
+                             stall=stalled(events, config, final, bars, checks) if ask_stall
+                             else None,
+                             unsure=bool(unsure), field_unsure=field in unsure,
+                             unmet=tuple(unmet),
+                             unevaluated=_unevaluated(config, final, steady, ask_stall and (
+                                 config is not None and config.is_steady(checks))))
+
+
+def _unevaluated(config, fields, control: bool, relaxation: bool
+                 ) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """`ResidualJudgement.unevaluated`: for each of `fields`, the keywords not evaluated of the
+    lookups the judgement made, `residualControl` where it read the tolerances (`control`) and
+    the relaxation where it asked the stall (`relaxation`, the detector's own steady test)."""
+    found: dict[str, dict[str, None]] = {}            # an ordered set per field
+    for name in sorted(fields):
+        listed = found.setdefault(_openfoam_name(name), {})
+        if control:
+            listed.update(dict.fromkeys(keywords_not_evaluated(config, name)))
+        if relaxation:
+            listed.update(dict.fromkeys(keywords_not_evaluated(config, name, relaxation=True)))
+    return tuple((name, tuple(keywords)) for name, keywords in found.items() if keywords)
+
+
+def _bars(found: tuple[tuple[float, ...], bool], checks: str) -> list[tuple[float, bool, bool]]:
+    """The bars a field with `residualControl` candidates (`_candidates`) is judged against, the
+    one definition `judge_residuals` (`_readings`) and `residual_bar` read (T-FOLLOWUP-MINORS
+    (3)): [(the bar, met strictly, read where the flat bar reads)].
+
+    Every tolerance OpenFOAM may apply is read where OpenFOAM reads it, at the field's first solve
+    of the step, against the bar `_clamp` gives it. A tolerance that sets the bar is met
+    strictly, and of several the strictest decides, since each is read at the same solve and met
+    the same way. One below the target (VER-16c, under `residual.control.floor`) is held to the
+    target, met as the flat bar is met (`<=`), never declared, and read at both solves, certain
+    or not: there, and where the flat bar reads. The flat reading is also the outcome where no
+    candidate applies (none certain)."""
+    tolerances, certain = found
+    held = [tol for tol in tolerances if sets_bar(tol, checks)]
+    bars = [(*_clamp(min(held), checks), False)] if held else []
+    below = len(held) < len(tolerances)     # VER-16c: one below the target, held to it
+    if below:
+        bars.append((*_clamp(min(tolerances), checks), False))
+    if below or not certain:
+        bars.append((RESIDUAL_TARGET, False, True))
+    return bars
+
+
+def _readings(found: tuple[tuple[float, ...], bool], at_first: float,
+              flat: tuple[float, float, bool], checks: str) -> list[tuple[float, float, bool]]:
+    """The (value, bar, met strictly) readings a field with `residualControl` candidates is
+    judged on: over when any is over (`judge_residuals`). The bars are `_bars`'s; each is read at
+    the field's first solve (`at_first`), or where the flat bar reads (`flat`). On a steady run
+    under `next`, where VER-16a holds (`residual.first_solve`), the two are the same solve. On a
+    local-time-stepping run the flat bar reads the last solve (VER-16a is steady only), and a
+    field read at its first solve alone was judged more leniently than with no tolerance at
+    all: p at 5e-4 on its first solve and 2e-2 on its last was accepted under `p 1e-8` and
+    rejected with no residualControl (the final review of T-VER16C), and read at its last alone,
+    more leniently than under a looser tolerance (p at 2e-2 then 5e-4 accepted under
+    `p 9.9e-4`, rejected under `p 1e-3`; the review before it). A tolerance below the target is
+    kept beside a looser candidate's reading, so under `"(?=p)p" 1e-3; p 1e-8;` p is met
+    strictly in case the keyword applies."""
+    return [(flat[0] if at_flat else at_first, bar, strict)
+            for bar, strict, at_flat in _bars(found, checks)]
 
 
 def peak_courant(events: list[Event]) -> float | None:

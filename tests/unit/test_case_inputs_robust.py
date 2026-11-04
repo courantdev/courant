@@ -288,12 +288,19 @@ def test_a_fifo_dictionary_is_unreadable_and_verify_and_preflight_return(tmp_pat
 
 
 @_fifos
-def test_a_fifo_field_file_is_a_missing_field_and_verify_returns(tmp_path):
+@pytest.mark.parametrize("era", ["0.6.0", "0.7.0"])
+def test_a_fifo_field_file_is_a_missing_field_and_verify_returns(tmp_path, era, request):
     """A field file that cannot be read is a missing field (T-MANIFEST-2): the verdict is the one
     the case gives without it, but for the sentence VER-7b adds by default for a field file
-    that exists and could not be read (`sentences.fields_unread`)."""
-    from courant.verify import sentences
+    that exists and could not be read (`sentences.fields_unread`). From 0.7.0 `fields.unread` is on
+    by default (GATE-13's promotion): the field the run wrote at the time judged and that was not
+    read is also a minor check, `fields.unread`, and caps the grade at B; the verdict stands."""
+    from courant.verify import checks, sentences
 
+    if era == "0.6.0":
+        request.getfixturevalue("checks_as_060")
+    else:
+        assert checks.enabled("fields.log_time") and checks.enabled("fields.unread")
     case = _case(tmp_path)
     (case / "0.5").mkdir()
     (case / "0.5" / "p").write_text("FoamFile{version 2.0;format ascii;class volScalarField;"
@@ -306,7 +313,48 @@ def test_a_fifo_field_file_is_a_missing_field_and_verify_returns(tmp_path):
     said = sentences.fields_unread("0.5", ("U",))
     assert [s for s in got["not_assessed"] if s not in want["not_assessed"]] == [said]
     got["not_assessed"] = [s for s in got["not_assessed"] if s != said]
+    if era == "0.7.0":
+        (unread,) = [r for r in got["reasons"] if r["code"] == "fields.unread"]
+        assert unread["severity"] == "minor" and "(U)" in unread["summary"]
+        assert (got["verdict"], got["grade"], want["grade"]) == ("accept", "B", "A")
+        got["reasons"] = [r for r in got["reasons"] if r["code"] != "fields.unread"]
+        got["grade"] = want["grade"]
+        got.pop("stats", None)
+        want.pop("stats", None)
     assert got == want
+
+
+@_fifos
+@pytest.mark.parametrize("mode", ["default", "next"])
+def test_a_fifo_phi_is_never_opened_and_the_verdict_says_it_was_not_read(tmp_path, mode):
+    """VER-18 on by default from 0.7.0 (GATE-13's promotion, `checks.PROMOTE_MASS_FLUX_PHI`), with
+    `fields.log_time` and `fields.unread`: a `phi` at the time judged that is a FIFO is never
+    opened (the gate returns), never listed, and the flux balance says it was not read, not that
+    no `phi` was found. The verdict and its grade are the ones without it: the flux balance is
+    not a field check, and a face flux it could not read is a check not run (VER-18's "not
+    checked: an unreadable phi")."""
+    import shutil
+
+    from courant.verify import checks
+
+    if mode == "default":
+        assert checks.enabled("fields.log_time") and checks.enabled("fields.unread")
+        if not checks.enabled(checks.MASS_FLUX_PHI):
+            pytest.skip("VER-18 held behind --checks next (PROMOTE_MASS_FLUX_PHI)")
+    case = _case(tmp_path)
+    shutil.copytree(case / "0", case / "0.5")       # the run's own fields at the time judged
+    gone = json.loads(verify_path(case, checks=mode).to_json())
+    assert "Net boundary mass flux ~ 0: no 0.5/phi (the face flux at the latest time) was " \
+           "found" in gone["not_assessed"]
+    os.mkfifo(case / "0.5" / "phi")
+    verdict = _within(30, lambda: verify_path(case, checks=mode), case / "0.5" / "phi")
+    assert "0.5/phi" not in _listed(verdict)
+    got = json.loads(verdict.to_json())
+    said = ("Net boundary mass flux ~ 0: 0.5/phi is not a regular file, so the face flux was "
+            "not read")
+    assert said in got["not_assessed"]
+    assert (got["verdict"], got["rule"], got["grade"]) == \
+        (gone["verdict"], gone["rule"], gone["grade"])
 
 
 @_fifos

@@ -42,13 +42,20 @@ NEEDS_THE_RUN = ("Run behaviour (residuals, the Courant number, bounding) is che
                  "default: the continuity error the log prints is reported, and graded only when "
                  "it is not finite; the balance of the boundary flux is read only by courant "
                  "verify --checks next.")
-#: The sentence under `--checks next`, where the boundary flux balance is read (VER-18).
+#: The sentence under `--checks next` while the boundary flux balance (VER-18) is read only there.
 NEEDS_THE_RUN_NEXT = ("Run behaviour (residuals, the Courant number, bounding) is checked once "
                       "the run exists: courant verify or courant watch. Conservation is judged "
                       "only by courant verify --checks next, as the balance of the boundary flux "
                       "in the latest time's phi, on a run that must balance (steady, or an "
                       "incompressible solver's) and whose phi it can read; the continuity error "
                       "the log prints is reported, and graded only when it is not finite.")
+#: The sentence once VER-18 is on by default (`checks.PROMOTE_MASS_FLUX_PHI`, 0.7.0), in both modes.
+NEEDS_THE_RUN_FLUX = ("Run behaviour (residuals, the Courant number, bounding) is checked once "
+                      "the run exists: courant verify or courant watch. Conservation is judged "
+                      "by courant verify as the balance of the boundary flux in the latest "
+                      "time's phi, on a run that must balance (steady, or an incompressible "
+                      "solver's) and whose phi it can read; the continuity error the log prints "
+                      "is reported, and graded only when it is not finite.")
 NO_MESH = "Mesh quality was not checked: no checkMesh output was found."
 #: The mesh files were read for the cell aspect ratio only (TRD VER-7a).
 MESH_PARTIAL = ("Mesh quality was read from constant/polyMesh for the cell aspect ratio only: no "
@@ -59,9 +66,11 @@ NO_CONFIG = "No readable case configuration was found (system/, constant/)."
 
 def needs_the_run(checks: str = "default") -> str:
     """What the run is needed for, in the words true of this `--checks` mode."""
-    from courant.verify.checks import enabled
+    from courant.verify.checks import MASS_FLUX_PHI, NEXT, enabled
 
-    return NEEDS_THE_RUN_NEXT if enabled("conservation.mass_flux.phi", checks) else NEEDS_THE_RUN
+    if not enabled(MASS_FLUX_PHI, checks):
+        return NEEDS_THE_RUN
+    return NEEDS_THE_RUN_NEXT if MASS_FLUX_PHI in NEXT else NEEDS_THE_RUN_FLUX
 
 
 class PreflightRun(BaseModel):
@@ -245,12 +254,15 @@ def preflight_path(path: str | Path, case_json: str | Path | None = None, *,
             config_view = CaseConfig.from_foam(
                 str(path), buoyancy=enabled("physics.laminar_regime", checks),
                 directives=enabled("case.directives", checks),
+                zero_unlisted=enabled("case.zero_unlisted", checks),
+                regions=enabled("case.regions", checks),            # VER-3d, behind next
             ).model_dump(mode="json")
         except Exception:                               # noqa: BLE001
             config_view = None
         # The aspect ratio from the mesh files (VER-7a), behind --checks next until 0.6.0.
         mesh = read_mesh_quality(str(path),
-                                 polymesh=enabled("mesh.aspect_ratio.polymesh", checks))
+                                 polymesh=enabled("mesh.aspect_ratio.polymesh", checks),
+                                 regions=(config_view or {}).get("regions") or None)
     return preflight_views(path.name, config_view,
                            mesh.model_dump(mode="json") if mesh is not None else None,
                            manifest(path, reads.paths()), checks=checks, computed_here=True)

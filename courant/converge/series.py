@@ -14,17 +14,23 @@ What it reads:
 - restarts across start-time directories (M1-S-5).
 
 What it does not read: `fieldMinMax`, whose rows interleave fields. Those files are listed as
-ignored, never guessed at.
+ignored, never guessed at. Under `--checks next` (`monitors.per_patch`, 0.7.0) neither is a table
+whose rows carry a word second (`per_patch`): a patch name, as v2406's `wallHeatFlux` (`Time
+patch min max integral`), `yPlus` and `wallShearStress` write one row per patch at each time, or
+solverInfo's solver name (`1 smoothSolver 0.01 ...`), whose rows v0.6.0 could not parse either;
+neither is a monitor. v0.6.0 took their columns for monitors, and still does under the default
+(GATE-13).
 """
 
 from __future__ import annotations
 
 import math
 import re
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 
-from courant.case.reads import may_read, reading
+from courant.case.reads import is_dir, kind, may_read, reading
 from courant.converge.assess import (
     Clock,
     Convergence,
@@ -170,6 +176,46 @@ def _merge_restarts(rows):
     return merged, discarded, span
 
 
+def _is_word(tok: str) -> bool:
+    try:
+        float(tok)
+    except ValueError:
+        return True
+    return False
+
+
+def per_patch(text: str) -> bool:
+    """Whether a table's rows carry a word second, so are no monitor: its header, the last
+    comment before its first row, names `patch` second after the time, as v2406's
+    `wallHeatFlux` writes it (`courant.verification._heat_reader.COLUMNS`, the one statement of
+    that header; `yPlus` and `wallShearStress` name the same two first); or every row with a
+    second entry has a word there that is not a number (a patch name, or solverInfo's solver
+    name, `1 smoothSolver 0.01 ...`). A row cut short (no second entry) decides nothing. A
+    monitor whose one row carries a stray word is still a monitor."""
+    from courant.verification._heat_reader import COLUMNS
+
+    header: list[str] = []
+    words = 0
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            if not words:
+                header = line.lstrip("#").split()
+            continue
+        if not words and tuple(header[:2]) == COLUMNS[:2]:
+            return True
+        ents = _entries(line)
+        if len(ents) < 2:
+            continue
+        kind, toks = ents[1]
+        if kind != "s" or not _is_word(toks[0]):
+            return False
+        words = words + 1
+    return words > 0
+
+
 # ------------------------------------------------------------------ discovery
 @dataclass
 class Discovery:
@@ -179,11 +225,28 @@ class Discovery:
     files: list[Path]
 
 
-def _candidate_files(start_dir: Path):
+def _listing(d: Path) -> list[Path] | None:
+    """`d`'s entries, sorted, or None when it cannot be listed (a directory at mode 000): a
+    directory the reader could not read is passed over and said in `ignored`, never a traceback
+    (T-ZERO-UNLISTABLE)."""
+    try:
+        return sorted(d.iterdir())
+    except OSError:
+        return None
+
+
+def _candidate_files(start_dir: Path, ignored: list[str], case_dir: Path):
     if not may_read(start_dir):         # MCP-3: a directory listed, or a table sized, is confined
         return
-    for f in sorted(start_dir.iterdir()):
-        if not f.is_file():
+    entries = _listing(start_dir)
+    if entries is None:
+        ignored.append(str(start_dir.relative_to(case_dir)))
+        return
+    for f in entries:
+        there = kind(f, stat.S_ISREG)
+        if there is None:               # listed, and its directory cannot be searched
+            ignored.append(str(f.relative_to(case_dir)))
+        if not there:
             continue
         if f.suffix == ".dat":
             if may_read(f):
@@ -198,20 +261,32 @@ def _candidate_files(start_dir: Path):
                 yield f
 
 
-def discover(case_dir: Path) -> Discovery:
+def discover(case_dir: Path, checks: str = "default") -> Discovery:
+    """Every monitor under `postProcessing/`. `checks` is `--checks` (GATE-13): under `next` a
+    table whose rows carry a word second (`per_patch`) is read, so listed (VER-14), and ignored."""
+    from courant.verify.checks import enabled
+
+    patches_aside = enabled("monitors.per_patch", checks)
     post = case_dir / POST
     searched = [POST]
-    if not may_read(post) or not post.is_dir():     # MCP-3: listed, so confined like a read
+    if not may_read(post) or not is_dir(post):      # MCP-3: listed, so confined like a read
         return Discovery([], [], searched, [])
+    entries = _listing(post)
+    if entries is None:
+        return Discovery([], [POST], searched, [])
     groups: dict[tuple[str, str], list[Path]] = {}
     ignored: list[str] = []
-    for obj in sorted(p for p in post.iterdir() if p.is_dir() and may_read(p)):
+    for obj in (p for p in entries if is_dir(p) and may_read(p)):
         if _IGNORED.search(obj.name):
             ignored.append(f"{POST}/{obj.name}")
             continue
-        for start in sorted((d for d in obj.iterdir() if d.is_dir() and _is_number(d.name)),
+        starts = _listing(obj)
+        if starts is None:
+            ignored.append(f"{POST}/{obj.name}")
+            continue
+        for start in sorted((d for d in starts if _is_number(d.name) and is_dir(d)),
                             key=lambda d: float(d.name)):
-            for f in _candidate_files(start):
+            for f in _candidate_files(start, ignored, case_dir):
                 if _IGNORED.search(f.name):
                     ignored.append(str(f.relative_to(case_dir)))
                     continue
@@ -238,6 +313,9 @@ def discover(case_dir: Path) -> Discovery:
                 with reading(p):
                     text = p.read_text(errors="replace")
             except OSError:             # unreadable: not read, so not listed (VER-14)
+                ignored.append(str(p.relative_to(case_dir)))
+                continue
+            if patches_aside and per_patch(text):
                 ignored.append(str(p.relative_to(case_dir)))
                 continue
             t = parse_table(text)
@@ -407,7 +485,8 @@ def assess_case(case_dir: str | Path | None, *, log_text: str, events, config=No
                 checks: str = "default") -> Convergence:
     """Read the case's monitors and the log's residuals and clock, then `assess()`. `checks` is
     `--checks` (GATE-13): it decides the regime (`regime_of`), and under `next` a steady run's
-    residuals are each field's first solve (VER-16a).
+    residuals are each field's first solve (VER-16a) and a per-patch table is no monitor
+    (`discover`, `monitors.per_patch`).
 
     `exit_code` is the one the log was parsed with (`courant.watcher.exitcode.run_exit_code`).
     None means the run's end is unknown (VER-5.16): the assessment says so and reports no waste
@@ -425,14 +504,14 @@ def assess_case(case_dir: str | Path | None, *, log_text: str, events, config=No
     from courant.verification.convergence import reads_first_solve
 
     residuals, clock, steps = from_events(
-        events, first_solve=reads_first_solve(config, checks))
+        events, first_solve=reads_first_solve(config, checks, events=events))
     solver = solver or solver_from_log(log_text)
     regime, basis, conflict = regime_of(config, solver, clock, checks)
     ranks, ranks_basis = ranks_from_log(log_text)
     how, last = ended_by(events, exit_code)
     if case_dir:
         with recording(case_dir) as reads:
-            found = discover(Path(case_dir))
+            found = discover(Path(case_dir), checks)
         inputs = merge(read, manifest(case_dir, reads.paths()))
     else:
         found, inputs = Discovery([], [], [], []), tuple(read)

@@ -1,0 +1,44 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  Courant test fixture: a laminar cylinder at Re 100 (T-LAMINAR-REGIME)
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       volVectorField;
+    location    "0";
+    object      U;
+}
+
+dimensions      [0 1 -1 0 0 0 0];
+
+internalField   uniform (0.012984 0 0);
+
+boundaryField
+{
+    inlet
+    {
+        type            uniformFixedValue;
+        uniformValue    table
+        (
+            (0 (0.012934592 0.0011316302 0))
+            (50 (0.012934592 0.0011316302 0))
+            (75 (0.012984 0 0))
+            (10000 (0.012984 0 0))
+        );
+    }
+    outlet
+    {
+        type            inletOutlet;
+        inletValue      uniform (0 0 0);
+        value           uniform (0.012984 0 0);
+    }
+    cylinder
+    {
+        type            noSlip;
+    }
+    frontAndBack
+    {
+        type            empty;
+    }
+}

@@ -27,6 +27,23 @@ def pytest_configure(config):
 os.environ["COURANT_NO_DOTENV"] = "1"
 
 
+@pytest.fixture
+def checks_as_060(monkeypatch):
+    """0.6.0's default, for a test of the behaviour a promoted name had switched off (GATE-13).
+
+    0.7.0 turned on by default every name 0.6.0 shipped behind `--checks next`
+    (`courant.verify.checks.PROMOTED`). Each code path still asks `enabled` and still has its
+    off branch, which `checks.PROMOTE_MASS_FLUX_PHI` (or any later hold) reaches; the tests of
+    that branch, written as "under the default", run with the promoted names put back in `NEXT`,
+    tagged "0.6.0", exactly as 0.6.0 shipped them (`tests/unit/test_checks_next.py` holds that
+    this gives 0.6.0's `NEXT`). What 0.7.0's default gives on the committed runs is
+    `test_checks_next.py`'s; each name's `next` tests are its on-by-default tests."""
+    from courant.verify import checks
+
+    monkeypatch.setattr(checks, "NEXT", {**{name: "0.6.0" for name in checks.PROMOTED},
+                                         **checks.NEXT})
+
+
 @pytest.fixture(autouse=True)
 def _isolated_environment(tmp_path_factory):
     """Restore ``os.environ`` after every test.

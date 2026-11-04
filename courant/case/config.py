@@ -136,7 +136,7 @@ class CaseConfig(BaseModel):
     #: scalars or a dictionary's `tolerance`; PIMPLE's are its scalar entries only (OpenFOAM.org's
     #: run criterion), never ESI's per-field outer-loop dictionaries. Which one the solver reads
     #: is `courant.case.solvers.residual_control_loop`; the gate's bar follows that one on a
-    #: steady run (`courant.verification.convergence.residual_bar`).
+    #: steady run (`courant.verification.convergence.judge_residuals`; `residual_bar`).
     residual_control: dict[str, dict[str, float]] = Field(default_factory=dict)
 
     # turbulence
@@ -187,6 +187,12 @@ class CaseConfig(BaseModel):
     mesh_motion: str | None = None
 
     # multi-region (CHT)
+    #: The regions `constant/regionProperties` names, in its order (every kind's names in turn),
+    #: read by `_foam_reader.read_region_properties`, the one reader of the file, under `--checks
+    #: next` (`case.regions`, T-MULTI-REGION); [] for a one-region case, under the default, and
+    #: when the file cannot be read whole (`unreadable` names it). With them, each region's
+    #: `system/<region>/` dictionaries and `0/<region>/` are read in place of the top level's, and
+    #: their keys carry `@<region>` by place (`region_pseudonym`: `U@region1`).
     regions: list[str] = Field(default_factory=list)
 
     @classmethod
@@ -223,7 +229,9 @@ class CaseConfig(BaseModel):
 
     @classmethod
     def from_foam(cls, case_dir: str, *, buoyancy: bool = True, directives: bool = False,
-                  steady_ddt: bool = False) -> "CaseConfig":  # pragma: no cover - needs a case
+                  steady_ddt: bool = False, zero_unlisted: bool = False,
+                  regions: bool = False,
+                  solver: str | None = None) -> "CaseConfig":  # pragma: no cover - needs a case
         """Parse a real OpenFOAM case with foamlib (live path). `buoyancy=False` leaves out
         `constant/g`, and so the wall faces read from the mesh files (TRD VER-17), as the gate
         does under the default `--checks` (GATE-13). `directives=True` reads a dictionary whose
@@ -231,11 +239,29 @@ class CaseConfig(BaseModel):
         does under `--checks next`; without it such a value is reported in `unread_values` (a
         dictionary foamlib cannot parse at all, in `unreadable`). `steady_ddt=True` reads
         `ddt_terms` and `ddt_read_whole` (TRD VER-13a), as the gate does under `--checks next`
-        (`cfl.steady`); without it neither is read."""
+        (`cfl.steady`); without it neither is read. `zero_unlisted=True` records a `0/` that
+        cannot be listed or searched in `unreadable` and keeps the rest (`case.zero_unlisted`,
+        `--checks next`); without it such a `0/` raises, as in v0.6.0. `regions=True` reads a
+        multi-region case as its solver does (`case.regions`, `--checks next`): `regions`, and
+        each region's dictionaries in place of the top level's; `solver` is the solver the log
+        names, which decides whether the case is multi-region (`_foam_reader.multi_region`;
+        without it, `controlDict`'s `application`)."""
         from courant.case._foam_reader import read_case_config
 
         return read_case_config(case_dir, buoyancy=buoyancy, directives=directives,
-                                steady_ddt=steady_ddt)
+                                steady_ddt=steady_ddt, zero_unlisted=zero_unlisted,
+                                regions=regions, solver=solver)
+
+    def regions_read_whole(self) -> bool:
+        """Whether every region's own dictionaries the reader reads (`system/<region>/fvSchemes`,
+        `fvSolution`, `0/<region>/`) were read: there are regions, and no path that names one is
+        `missing`, `unreadable` or holds a value not read as the solver read it
+        (`unread_values`). What the verdict's multi-region sentence may claim (VER-3d)."""
+        if not self.regions:
+            return False
+        names = set(self.regions)
+        paths = [*self.missing, *self.unreadable, *self.unread_values]
+        return not any(names & set(str(p).split("/")) for p in paths)
 
     def nothing_read(self) -> bool:
         """Whether the reader found no setting at all: every field is unset but the two that say
@@ -405,3 +431,24 @@ def phase_pseudonym(phases, name: str) -> str:
     every finding that names a phase (`case.unread_value`, `physics.nu`)."""
     listed = [str(p) for p in phases or ()]
     return f"phase{listed.index(name) + 1}" if name in listed else "a phase"
+
+
+def region_pseudonym(regions, name: str) -> str:
+    """How a configuration key names the region `name` of a multi-region case: `region1`,
+    `region2`, ... by its place in `regions` (`CaseConfig.regions`, `constant/regionProperties`'
+    order), as `redact.sanitize_config_view` names the regions themselves; "a region" when it is
+    not listed. A region's name is the case author's word, and a key reaches a finding and the
+    Evidence Bundle (T-MULTI-REGION; `phase_pseudonym`'s rule)."""
+    listed = [str(r) for r in regions or ()]
+    return f"region{listed.index(name) + 1}" if name in listed else "a region"
+
+
+def region_place_path(regions, path: str) -> str:
+    """A case-relative path with each segment that names a region of `regions` written as its
+    place (`region_pseudonym`): `system/plate/fvSolution` -> `system/region2/fvSolution`. How a
+    finding (`case.unreadable_dict`, `case.unread_value`) and the trust boundary
+    (`redact.sanitize_config_view`) name a region's dictionary; the local "not found" sentence
+    keeps the path as written."""
+    listed = {str(r) for r in regions or ()}
+    return "/".join(region_pseudonym(regions, seg) if seg in listed else seg
+                    for seg in str(path).split("/"))

@@ -355,6 +355,7 @@ def test_draw_044_keeps_its_blind_verdict(tmp_path):
     assert (v.verdict, v.rule) == ("TRUSTWORTHY", "VER-5.6")
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_the_same_room_held_hot_below_and_cold_above_is_rejected(tmp_path):
     from courant.verify import from_case_dir, verify_inputs
 

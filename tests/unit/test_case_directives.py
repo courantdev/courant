@@ -175,6 +175,7 @@ def test_a_fault_written_directly_is_rejected_as_before(tmp_path, name, checks):
 
 
 # ---------------------------------------------------------------- through a directive
+@pytest.mark.usefixtures("checks_as_060")
 @pytest.mark.parametrize("name", sorted(FOLLOWED))
 def test_by_default_a_value_behind_a_directive_is_reported_unread_and_the_verdict_stands(
         tmp_path, name):
@@ -217,6 +218,7 @@ def test_a_value_no_mode_can_read_is_reported_in_both_and_the_verdict_stands(tmp
 
 
 # ---------------------------------------------------------------- the sentences
+@pytest.mark.usefixtures("checks_as_060")
 def test_the_default_sentence_names_the_file_the_value_and_how_it_is_written(tmp_path):
     v = _verify(_case(tmp_path, FOLLOWED["nu_macro"][0]), "default")
     assert _unread(v.not_assessed) == [
@@ -225,6 +227,7 @@ def test_the_default_sentence_names_the_file_the_value_and_how_it_is_written(tmp
         "— findings that depend on them are unavailable, not absent"]
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_an_include_names_the_values_it_may_set(tmp_path):
     v = _verify(_case(tmp_path, FOLLOWED["tol_include_solvers"][0]), "default")
     [line] = _unread(v.not_assessed)
@@ -233,6 +236,7 @@ def test_an_include_names_the_values_it_may_set(tmp_path):
            "(--checks next does)" in line, line
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_a_braced_macro_foamlib_cannot_parse_is_read_under_next(tmp_path):
     """`${nuVal}` stops foamlib parsing the file at all: by default the file is reported
     unreadable, as any file that does not parse; under next it is read expanded."""
@@ -311,6 +315,7 @@ def test_the_local_sentence_keeps_what_was_written_bounded(tmp_path):
     assert "nu is written as '#calc \"0.25+0.25" in line and len(line) < 400, line
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_under_next_the_included_file_is_in_the_manifest(tmp_path):
     """VER-14: the file the value came from is a file that decided the verdict."""
     case = _case(tmp_path, FOLLOWED["nu_include"][0])

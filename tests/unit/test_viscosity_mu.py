@@ -78,11 +78,13 @@ def test_nu_written_as_nu_is_read_as_before_in_both_modes():
     assert kinematic(cfg).lo == kinematic(cfg, "next").hi == 1e-5
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_the_default_reads_no_mu():
     assert kinematic(_air(1.8e-10, equation_of_state="perfectGas", pressure=1e5)) is None
 
 
 # ------------------------------------------------------------------ the finding
+@pytest.mark.usefixtures("checks_as_060")
 @pytest.mark.parametrize("mu", [1.8e-10, 1.8e-1, 0.0])
 def test_a_mu_whose_nu_lies_outside_the_range_is_flagged_under_next(mu):
     cfg = _air(mu, equation_of_state="perfectGas", pressure=1e5,
@@ -119,6 +121,7 @@ def test_the_knowledge_base_predicate_reads_the_same_definition():
 
 
 # ------------------------------------------------------------------ preflight, end to end
+@pytest.mark.usefixtures("checks_as_060")
 @pytest.mark.parametrize("mu", ["1.8e-10", "1.8e-01"])
 def test_the_audits_hotroom_is_a_setup_fault_under_next(tmp_path, mu):
     case = hotroom(tmp_path, mu)
@@ -164,6 +167,7 @@ def test_a_phase_whose_viscosity_model_is_not_newtonian_is_not_read(tmp_path):
     assert cfg.phase_nu == {"water": 1e-06}
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_a_phase_nu_outside_the_range_is_flagged_under_next():
     cfg = CaseConfig(phase_nu={"water": 0.1, "air": 1.48e-05})
     (f,) = _nu_findings(cfg, "next")
@@ -181,6 +185,7 @@ def test_every_phase_out_of_range_is_named():
     assert "water" not in f.detail and "air" not in f.detail
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_the_audits_dambreak_is_a_setup_fault_under_next(tmp_path):
     case = _dambreak(tmp_path, water_nu="1e-01")
     nxt = preflight_path(case, checks="next")

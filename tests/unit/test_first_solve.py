@@ -107,6 +107,7 @@ def test_next_judges_every_field_on_its_first_solve():
     assert judged.worst == pytest.approx(1.72629e-3)
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_the_default_keeps_the_last_solve_as_v050_did():
     judged = judge_residuals(_events(nonorth_log()), _steady(), "default")
     assert judged.final["p"] == pytest.approx(2.20514e-4)
@@ -130,6 +131,7 @@ def test_the_series_the_stall_detector_and_the_block_read_is_the_first_solve_und
     assert first["Ux"] == last["Ux"]
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_assess_case_takes_the_mode():
     text = nonorth_log()
     events = _events(text)
@@ -139,6 +141,7 @@ def test_assess_case_takes_the_mode():
     assert b.data["residuals"]["p"]["r_final"] == pytest.approx(1.72629e-3)
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_a_transient_run_keeps_the_last_solve_in_both_modes():
     """PISO and PIMPLE correctors start each step from the last step's solution, so a first
     solve measures how far the step moved the field: residualControl's convention is a steady
@@ -171,6 +174,7 @@ def test_the_audits_run_is_rejected_under_next(tmp_path):
         "final worst residual 1.73e-03 (target 1e-03)")
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_the_default_accepts_it_as_v050_did(tmp_path):
     v = _verify(nonorth_log(), tmp_path, "default")
     assert (v.verdict, v.rule, v.grade) == ("TRUSTWORTHY", "VER-5.6", "A")
@@ -193,6 +197,7 @@ def test_with_the_second_solve_deleted_both_modes_reject(tmp_path):
         assert (v.verdict, v.rule) == ("NOT_TRUSTWORTHY", "VER-5.4"), mode
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_two_correctors_hide_it_by_default_and_not_under_next(tmp_path):
     """B2's shape: three `p` solves an iteration, the first above the bar and the last 43 times
     below it. Its corrector-free twin B1 was rejected in both modes; B2 is under `next` too."""
@@ -204,3 +209,44 @@ def test_two_correctors_hide_it_by_default_and_not_under_next(tmp_path):
     v = _verify(text, tmp_path, "next")
     assert (v.verdict, v.rule) == ("NOT_TRUSTWORTHY", "VER-5.4")
     assert "0.00125 > 0.001" in {r.code: r for r in v.reasons}["residual.not_converged"].summary
+
+
+# ---------------------------------------------------------------- a log with no step markers
+def _without_time_lines(sid: str = "simpleFoam_pitzDaily__healthy") -> str:
+    import gzip
+    import re
+
+    with gzip.open(CORPUS / f"{sid}.log.gz", "rt") as fh:
+        text = fh.read()
+    return "".join(line for line in text.splitlines(keepends=True)
+                   if not re.match(r"^Time = ", line))
+
+
+@pytest.mark.parametrize("mode", ["default", "next"])
+def test_with_no_step_markers_there_is_no_first_solve_of_a_step(mode):
+    """VER-16a reads a field's first solve OF A STEP; a log with no `Time =` line has no step
+    (VER-5.15), so the rule does not apply and the last solve is read, as 0.6.0's default read
+    it: the healthy pitzDaily log stripped of its `Time =` lines was rejected (VER-5.3, grade C)
+    on its first iteration's residuals, read as the run's final ones, once VER-16a was on by
+    default (the release preparation of 0.7.0)."""
+    events = _events(_without_time_lines())
+    assert not reads_first_solve(_steady(), mode, events=events)
+    assert reads_first_solve(_steady(), "next", events=_events(nonorth_log()))
+
+
+@pytest.mark.parametrize("mode", ["default", "next"])
+def test_the_stripped_healthy_log_is_insufficient_in_both_modes(mode, tmp_path):
+    """The same log through the gate, with its sidecar: `insufficient`, VER-5.15, as 0.6.0's
+    default judged it, in both modes (`tests/unit/test_verify.py` holds the default's)."""
+    import shutil
+
+    from courant.verify import verify_path
+
+    sid = "simpleFoam_pitzDaily__healthy"
+    log = tmp_path / f"{sid}.log"
+    log.write_text(_without_time_lines(sid))
+    side = tmp_path / f"{sid}.case.json"
+    shutil.copy(CORPUS / f"{sid}.case.json", side)
+    v = verify_path(log, side, checks=mode)
+    assert (v.verdict, v.rule, v.grade) == ("insufficient", "VER-5.15", None), \
+        [(r.code, r.summary) for r in v.reasons]

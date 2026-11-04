@@ -80,6 +80,7 @@ def _found(config: CaseConfig, checks: str):
 
 
 # ------------------------------------------------------------------ the checker
+@pytest.mark.usefixtures("checks_as_060")
 @pytest.mark.parametrize("pressure,fields", [
     ("p_rgh", {"U": "fixedValue", "p_rgh": "fixedValue", "alpha.water": "inletOutlet"}),
     ("p_rgh", {"U": "fixedValue", "p_rgh": "prghPressure"}),
@@ -110,6 +111,7 @@ def test_a_well_posed_patch_is_not_flagged(fields):
 
 
 # ------------------------------------------------------------------ preflight, end to end
+@pytest.mark.usefixtures("checks_as_060")
 def test_the_audits_dambreak_is_a_setup_fault_under_next(tmp_path):
     case = dambreak(tmp_path, atmosphere_p_rgh=FIXED_P_RGH, atmosphere_u=FIXED_U)
     assert CaseConfig.from_foam(str(case)).boundary["atmosphere"] == {
@@ -127,6 +129,7 @@ def test_the_shipped_dambreak_is_not_flagged(tmp_path):
         assert preflight_path(case, checks=mode).verdict == "NO_SETUP_FAULT_FOUND", mode
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_the_knowledge_base_predicate_and_the_checker_read_one_definition():
     from courant.diagnosis.kb import CONFIG_PREDICATES
 

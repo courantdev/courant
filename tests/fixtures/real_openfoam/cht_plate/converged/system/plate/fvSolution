@@ -1,0 +1,35 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  Courant test fixture: a heated plate under an air channel, chtMultiRegionSimpleFoam
+  (T-ENERGY-BALANCE)
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      fvSolution;
+}
+
+solvers
+{
+    h
+    {
+        solver          PCG;
+        preconditioner  DIC;
+        tolerance       1e-12;
+        relTol          0.1;
+    }
+}
+
+SIMPLE
+{
+    nNonOrthogonalCorrectors 0;
+}
+
+relaxationFactors
+{
+    equations
+    {
+        h               0.7;
+    }
+}

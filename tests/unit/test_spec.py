@@ -501,9 +501,11 @@ class TestManifest:
         conformance = {"0.orig/T", "0/include/initialConditions", "system/blockMeshDict"}
         assert conformance <= with_spec, (
             f"read by conformance but not listed: {sorted(conformance - with_spec)}")
-        only_with_spec = conformance | {"constant/g"}               # gravity is a spec item here
-        assert not only_with_spec & without, (
-            f"listed with no spec to read them: {sorted(only_with_spec & without)}")
+        # Gravity is a spec item here; from 0.7.0 the case reader reads `constant/g` by default
+        # too (VER-17, GATE-13's promotion), so it is listed with or without a spec.
+        assert not conformance & without, (
+            f"listed with no spec to read them: {sorted(conformance & without)}")
+        assert "constant/g" in with_spec and "constant/g" in without
         parsed = {"0/U", "0/k"}                                     # the case-config reader's 0/
         assert parsed <= with_spec and parsed <= without, (
             f"0/ files the case-config reader parsed but not listed: "

@@ -240,6 +240,19 @@ def is_multi_run(solver: str | None) -> bool:
     return bool(solver) and _base(solver) == "foamMultiRun"
 
 
+#: The solvers that read a case as regions (`constant/regionProperties`) and build no default
+#: region: v2406's chtMultiRegionFoam, chtMultiRegionSimpleFoam and
+#: chtMultiRegionTwoPhaseEulerFoam (createMeshes.H), and OpenFOAM.org's foamMultiRun.
+MULTI_REGION_SOLVERS = frozenset({"chtMultiRegionFoam", "chtMultiRegionSimpleFoam",
+                                  "chtMultiRegionTwoPhaseEulerFoam", "foamMultiRun"})
+
+
+def is_multi_region(solver: str | None) -> bool:
+    """Whether `solver` reads its case as regions (`MULTI_REGION_SOLVERS`). The solver half of
+    the one multi-region predicate, `courant.case._foam_reader.multi_region` (T-MULTI-REGION)."""
+    return bool(solver) and _base(solver) in MULTI_REGION_SOLVERS
+
+
 def residual_control_loop(solver: str | None) -> str | None:
     """Which `fvSolution` dictionary holds this solver's run-level `residualControl`.
 

@@ -31,6 +31,8 @@ Value = float | list[float] | str
 _NUM = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
 _DIMS = re.compile(r"^\s*\[([^\]]*)\]")
 _MACRO = re.compile(r"\$\{?([A-Za-z_][\w.]*)\}?")
+#: The `#include` alone, as 0.6.0's macro lookup follows it (`_resolve_macros`, the spec reader's
+#: lookup under the default `--checks`). `INCLUDE_DIRECTIVES` is what the solver follows.
 _INCLUDE = re.compile(r'(?m)^\s*#include\s+"([^"]+)"')
 _HEX = re.compile(r"hex\s*\([^)]*\)\s*\(\s*(\d+)\s+(\d+)\s+(\d+)\s*\)")
 
@@ -153,17 +155,21 @@ class KeywordNotEvaluated(ValueError):
     from it reaches the verdict and the support bundle (`not_evaluated`)."""
 
 
-def not_evaluated(rel: str) -> str:
-    """The note on a value whose block a keyword pattern not evaluated may name, in file `rel`:
-    the file, never the keyword (the review of the 0.6.0 hard-proofing, 22 Oct 2026, found 40
-    characters of it quoted)."""
-    return (f"a quoted keyword in {rel} is a pattern the reader does not evaluate, and it may be "
-            "the one that names this block")
+def not_evaluated(rel: str, included_by: str | None = None) -> str:
+    """The note on a value whose block a keyword pattern not evaluated may name, in file `rel`
+    (which `included_by` `#include`s, when the keyword came in through one): the file, never the
+    keyword (the review of the 0.6.0 hard-proofing, 22 Oct 2026, found 40 characters of it
+    quoted)."""
+    where = rel if included_by is None else f"{rel}, which {included_by} includes,"
+    return (f"a quoted keyword in {where} is a pattern the reader does not evaluate, and it may "
+            "be the one that names this block")
 
 
-def block(text: str, name: str) -> str | None:
+def block(text: str, name: str, found: list[tuple[str, bool, str]] | None = None) -> str | None:
     """The body of the top-level block `name`, matching OpenFOAM's lookup
-    (`dictionary::csearch`, `courant.case.wordre.csearch`).
+    (`dictionary::csearch`, `courant.case.wordre.csearch`). `found`: the text's own
+    `_quoted_blocks`, where the caller has them, so a text looked up by many names is scanned
+    once (`courant.case.reynolds._boundary`, one lookup a patch).
 
     A key whose text is `name` wins, quoted or not (OpenFOAM's hash table holds a keyword by its
     text); otherwise the last declared quoted key that matches `name` as a regular expression,
@@ -184,12 +190,14 @@ def block(text: str, name: str) -> str | None:
     """
     from courant.case import wordre
 
-    found = _quoted_blocks(text)
+    found = _quoted_blocks(text) if found is None else found
     hits, unsure = wordre.csearch([(key, quoted) for key, quoted, _ in found], name,
                                   dictionaries=True)
     if unsure:
-        raise KeywordNotEvaluated("a quoted keyword is a pattern the reader does not evaluate, "
+        exc = KeywordNotEvaluated("a quoted keyword is a pattern the reader does not evaluate, "
                                   "and it may be the one that names this block")
+        exc.keywords = tuple(found[i][0] for i in unsure)   # never in the message: case text
+        raise exc
     return "\n".join(found[i][2] for i in hits) if hits else None
 
 
@@ -359,8 +367,11 @@ _INCLUDE_TAGS = {"<case>": "", "$FOAM_CASE": "", "${FOAM_CASE}": "", "<system>":
                  "<constant>": "constant"}
 #: The includes of a file the solver reads from the case: `#include`, and `#includeIfPresent` and
 #: `#sinclude`, which it skips when the file is absent. `#includeEtc`, `#includeFunc` and
-#: `#includeModel` name files of the OpenFOAM installation, not of the case: not followed.
-_INCLUDES = re.compile(r'#(include|includeIfPresent|sinclude)[ \t]+"([^"\n]*)"')
+#: `#includeModel` name files of the OpenFOAM installation, not of the case: not followed. The one
+#: list, for both readers (`expand`; the case reader's `_foam_reader._FOLLOWED_INCLUDES` is it).
+INCLUDE_DIRECTIVES = ("#include", "#includeIfPresent", "#sinclude")
+_INCLUDES = re.compile(r'#(' + "|".join(d[1:] for d in INCLUDE_DIRECTIVES)
+                       + r')[ \t]+"([^"\n]*)"')
 _HEADER = re.compile(r"(?m)^[ \t]*FoamFile\s*\{")
 
 
@@ -414,8 +425,16 @@ def expand(text: str, path: Path, case_root: Path) -> str:
     What cannot be followed stays as written, for the reader to report: an include of a file that
     is missing or outside the case, `#includeEtc`, a macro with no definition before it, a scoped
     one (`$a.b`, `$:a`, `$..a`), and every evaluated directive (`#calc`, `#eval`, `#codeStream`).
+    Under an `#inputMode` other than merge (`protect`, `warn`, `error`) a name written more than
+    once is not expanded: which writing stands is the mode's. Linear in the dictionary, and
+    bounded: past `MAX_EXPANDED` characters the macros stay as written.
+
     Deterministic, read-only, no subprocess (INV-5)."""
-    return _macros(_inline(text, path, case_root))
+    inlined = _inline(text, path, case_root)
+    try:
+        return _macros(inlined, strict=_INPUT_STRICT.search(inlined) is not None)
+    except _TooLarge:
+        return inlined
 
 
 def _inline(text: str, path: Path, case_root: Path, depth: int = 0) -> str:
@@ -511,54 +530,118 @@ def _elements(text: str):
         i = q
 
 
-def _macros(text: str, outer: tuple[str, ...] = (), depth: int = 0) -> str:
+#: The most characters the expansion of one dictionary builds (`expand`), counted at every level
+#: it builds them. `$name;` merges that double at each level grow a text as 2^levels; past this
+#: the dictionary is left with its macros as written, so what they would set is read as unread,
+#: never guessed. A cost bound, not a physics threshold: the largest committed dictionary is some
+#: 1,000 times smaller (the review of T-VER3B-ONE, 3 Nov 2026).
+MAX_EXPANDED = 16 * 2**20
+#: An `#inputMode` under which a name written twice does not stand as its last writing: v2406's
+#: `protect` keeps the first, `warn` keeps the first and warns, `error` stops.
+_INPUT_STRICT = re.compile(r"#inputMode\s+(?:protect|warn|error)\b")
+
+
+class _TooLarge(Exception):
+    """The expansion passed `MAX_EXPANDED`."""
+
+
+class _Scope:
+    """One dictionary's names as its expansion has met them so far: each entry's value (as
+    `entry` reads it, the last writing) and how often it was written, and each block as
+    `_quoted_blocks` lists it, for `block`. Kept as the scope grows, so a lookup costs the name,
+    not the text before it (the review of T-VER3B-ONE: `entry` on the growing text rescanned it
+    for every `$name`, quadratic in the dictionary)."""
+
+    __slots__ = ("blocks", "counts", "entries")
+
+    def __init__(self) -> None:
+        self.entries: dict[str, str] = {}
+        self.counts: dict[str, int] = {}
+        self.blocks: list[tuple[str, bool, str]] = []
+
+    def add(self, piece: str) -> None:
+        """Register the top-level elements of `piece`, expanded text of this scope."""
+        for start, end, key, open_ in _elements(piece):
+            if key is None:
+                continue
+            if open_ is not None:
+                close = end - 1 if piece[end - 1:end] == "}" else end
+                quoted = len(key) > 1 and key[0] == key[-1] == '"'
+                self.blocks.append((key[1:-1] if quoted else key, quoted, piece[open_ + 1:close]))
+                continue
+            found = _entries(piece[start:end], key)
+            if found:
+                self.entries[key] = found[-1]
+                self.counts[key] = self.counts.get(key, 0) + 1
+
+
+def _macros(text: str, outer: tuple[_Scope, ...] = (), depth: int = 0, *,
+            strict: bool = False, spent: list[int] | None = None) -> str:
     """`text` (one dictionary's body) with its macros expanded; `outer` holds, outermost first,
-    the expanded text of each enclosing dictionary up to the block that holds this one."""
+    the names of each enclosing dictionary up to the block that holds this one. `strict`: an
+    `#inputMode` other than merge is in force (`_INPUT_STRICT`), so a name written more than once
+    is not expanded. `spent`: the characters built so far, against `MAX_EXPANDED`."""
+    if spent is None:
+        spent = [0]
     if "$" not in text or depth > 16:
         return text
-    done, pos = "", 0
+    here = _Scope()
+    parts: list[str] = []
+    pos = 0
     for start, end, key, open_ in _elements(text):
-        done += text[pos:start]
+        parts.append(text[pos:start])
         piece = text[start:end]
         if open_ is not None and "$" in piece:
             close = end - 1 if text[end - 1:end] == "}" else end
-            piece = (text[start:open_ + 1] + _macros(text[open_ + 1:close], (*outer, done),
-                                                       depth + 1) + text[close:end])
+            piece = (text[start:open_ + 1]
+                     + _macros(text[open_ + 1:close], (*outer, here), depth + 1, strict=strict,
+                               spent=spent)
+                     + text[close:end])
         elif key is not None and "$" in piece:
-            scopes = (done, *reversed(outer))
+            scopes = (here, *reversed(outer))
             if key.startswith("$") and text[start + len(key):end].strip() in ("", ";"):
-                merged = _named_block(key[1:], scopes)
+                merged = _named_block(key[1:], scopes, strict)
                 if merged is not None:
                     piece = merged
             else:
-                piece = key + _substitute(text[start + len(key):end], scopes)
-        done += piece
+                piece = key + _substitute(text[start + len(key):end], scopes, strict)
+        spent[0] += len(piece)
+        if spent[0] > MAX_EXPANDED:
+            raise _TooLarge
+        here.add(piece)
+        parts.append(piece)
         pos = end
-    return done + text[pos:]
+    parts.append(text[pos:])
+    return "".join(parts)
 
 
-def _named_block(name: str, scopes: tuple[str, ...]) -> str | None:
+def _named_block(name: str, scopes: tuple[_Scope, ...], strict: bool = False) -> str | None:
     if not re.fullmatch(r"[A-Za-z_]\w*", name):
         return None                                     # scoped: not followed
     for scope in scopes:
         try:
-            found = block(scope, name)
+            found = block("", name, scope.blocks)
         except KeywordNotEvaluated:
             return None                 # stays as written, for the reader to report
         if found is not None:
+            if strict and sum(1 for k, _, _ in scope.blocks if k == name) > 1:
+                return None             # which writing stands is the mode's: not guessed
             return found
     return None
 
 
-def _substitute(raw: str, scopes: tuple[str, ...]) -> str:
+def _substitute(raw: str, scopes: tuple[_Scope, ...], strict: bool = False) -> str:
     def one(m: re.Match) -> str:
         name = m.group(1)
         if "." in name or raw[m.end():m.end() + 1] in (".", ":"):
             return m.group(0)                           # scoped: not followed
         for scope in scopes:
-            found = entry(scope, name)
+            found = scope.entries.get(name)
             if found is not None:
-                return found
+                # Under `#inputMode protect` (or warn, error) v2406 keeps the first writing, or
+                # stops: a name written twice stays as written, read as unread (the review of
+                # T-VER3B-ONE found the last one taken, a false accept under next).
+                return m.group(0) if strict and scope.counts[name] > 1 else found
         return m.group(0)
 
     return _MACRO.sub(one, raw)
@@ -666,7 +749,12 @@ def _patch_absent(case: Path, rel: str, text: str, patch: str) -> bool:
 _ALIASES = {"scale": ("convertToMeters", "1"), "convertToMeters": ("scale", "1")}
 
 
-def _read_one(case: Path, rel: str, item) -> Found:
+def _read_one(case: Path, rel: str, item, macros: bool = False) -> Found:
+    """The value `item` names in the case file `rel`. `macros` (`spec.directives`, `--checks
+    next`): the file is read as the solver reads it, through `expand`, the case reader's own
+    expansion under `case.directives`, so a `$name` is the definition nearest the entry, an
+    `#includeIfPresent` is followed and a merged `$name;` is read; without it, 0.6.0's lookup
+    (`_resolve_macros`: the file's top level, then its `#include`s)."""
     if item.sha256 is not None:
         p = case / rel
         if not reads.may_read(p):        # MCP-3: asked before it is looked for, as `_read_text`
@@ -683,6 +771,9 @@ def _read_one(case: Path, rel: str, item) -> Found:
     text, why = _read_text(case, rel)
     if text is None:
         return Found(None, rel, why)
+    as_written = text
+    if macros:
+        text = expand(text, case / rel, case)
 
     if item.blocks == "cells":
         matched = list(_HEX.finditer(text))
@@ -695,6 +786,49 @@ def _read_one(case: Path, rel: str, item) -> Found:
                                     "counts; the rest use a macro or an expression")
         return Found([float(x) for m in matched for x in m.groups()], rel)
 
+    try:
+        located = _locate(case, rel, text, item)
+    except KeywordNotEvaluated as exc:
+        holder = _holder(case, rel, as_written, exc) if text is not as_written else rel
+        if holder == rel:
+            raise
+        return Found(None, rel, not_evaluated(holder, rel) if holder else not_evaluated(
+            f"a file {rel} includes"))
+    if isinstance(located, Found):
+        return located
+    raw, written = located
+    # A value the reader cannot read is named by its entry and never quoted: what the case wrote
+    # (`$acmeInletSpeed`) is the customer's text, and the note reaches the verdict and the
+    # support bundle, which pseudonymises names it knows and not this (the review of the 0.6.0
+    # follow-ups, 22 Oct 2026; `not_evaluated` for a keyword).
+    if _DIRECTIVE.search(raw):
+        return Found(None, rel, f"'{written}' is written as a directive the reader does not "
+                                "evaluate")
+    if macros:
+        resolved = None if "$" in raw else raw          # `expand` left it: not defined before it
+    else:
+        resolved = _resolve_macros(raw, text, case / rel, case)
+    if resolved is None:
+        return Found(None, rel, f"'{written}' refers to a value that could not be found")
+    if _DIRECTIVE.search(resolved):
+        # A macro that expands to `#calc ...` is no more a number than `#calc` written out:
+        # reading its last number misread `nu #calc "$a*2"` as 2 (review, 10 Oct 2026).
+        return Found(None, rel, f"'{written}' expands to a directive the reader does not "
+                                "evaluate")
+    if resolved.startswith("nonuniform") and not isinstance(item.value, str):
+        faces = nonuniform_values(resolved)
+        if faces is None:
+            return Found(None, rel, "a per-face list (nonuniform) that could not be read")
+        value, count, total = nonuniform_mode(resolved)
+        return Found(value, rel, basis=f"most common of {total} face values ({count})",
+                     faces=tuple(list(f) if isinstance(f, tuple) else f for f in faces))
+    value, dims, note = parse_value(resolved, text=isinstance(item.value, str))
+    return Found(value, rel, note, dims)
+
+
+def _locate(case: Path, rel: str, text: str, item) -> tuple[str, str] | Found:
+    """(the raw value of the entry `item` names in `text`, the key it is written under), or the
+    `Found` that says why there is none."""
     scope = text
     #: (scope, name) of every lookup on the way to the value, for the repeated-key rules.
     steps: list[tuple[str, str]] = []
@@ -734,34 +868,45 @@ def _read_one(case: Path, rel: str, item) -> Found:
             return Found(float(fallback), rel, basis=f"not written; OpenFOAM's default {fallback}")
     if raw is None:
         return Found(None, rel, f"no entry '{key}'")
-    # A value the reader cannot read is named by its entry and never quoted: what the case wrote
-    # (`$acmeInletSpeed`) is the customer's text, and the note reaches the verdict and the
-    # support bundle, which pseudonymises names it knows and not this (the review of the 0.6.0
-    # follow-ups, 22 Oct 2026; `not_evaluated` for a keyword).
-    if _DIRECTIVE.search(raw):
-        return Found(None, rel, f"'{written}' is written as a directive the reader does not "
-                                "evaluate")
-    resolved = _resolve_macros(raw, text, case / rel, case)
-    if resolved is None:
-        return Found(None, rel, f"'{written}' refers to a value that could not be found")
-    if _DIRECTIVE.search(resolved):
-        # A macro that expands to `#calc ...` is no more a number than `#calc` written out:
-        # reading its last number misread `nu #calc "$a*2"` as 2 (review, 10 Oct 2026).
-        return Found(None, rel, f"'{written}' expands to a directive the reader does not "
-                                "evaluate")
-    if resolved.startswith("nonuniform") and not isinstance(item.value, str):
-        faces = nonuniform_values(resolved)
-        if faces is None:
-            return Found(None, rel, "a per-face list (nonuniform) that could not be read")
-        value, count, total = nonuniform_mode(resolved)
-        return Found(value, rel, basis=f"most common of {total} face values ({count})",
-                     faces=tuple(list(f) if isinstance(f, tuple) else f for f in faces))
-    value, dims, note = parse_value(resolved, text=isinstance(item.value, str))
-    return Found(value, rel, note, dims)
+    return raw, written
 
 
-def read(case_dir: str | Path, item) -> Found:
+def _holder(case: Path, rel: str, text: str, exc: KeywordNotEvaluated) -> str | None:
+    """Which file holds the keywords `exc` names, read through `expand` (TRD VER-3b): `rel` when
+    its own text `text` writes each of them, else the file one of its `#include`s names that
+    does, relative to the case; None when neither (a file included in turn). A note on such a
+    keyword names it (T-FOLLOWUP-MINORS (7): the including file was named)."""
+    keywords = getattr(exc, "keywords", ())
+
+    def holds(body: str) -> bool:
+        return bool(keywords) and all(f'"{k}"' in body for k in keywords)
+
+    if holds(text):
+        return rel
+    for m in _INCLUDES.finditer(text):
+        target, _ = include_target(case / rel, m.group(2), case)
+        if target is None:
+            continue
+        included = _include_text(case / rel, m.group(2), case)      # read by `expand` already
+        if included is not None and holds(included):
+            # Resolved both, as `include_target` confined it: a case given by a relative path,
+            # or an absolute include through a link (/tmp, /private/tmp), is still the case's
+            # file; never the absolute path (the review of T-FOLLOWUP-MINORS, M3).
+            try:
+                return target.resolve().relative_to(case.resolve()).as_posix()
+            except (ValueError, OSError):
+                return None
+    return None
+
+
+def read(case_dir: str | Path, item, *, macros: bool = False) -> Found:
     """The value `item` names, read from the case the way the solver read it. Never raises.
+
+    `macros` (`spec.directives` in `courant.verify.checks.NEXT`, `--checks next`, GATE-13): the
+    file is read through `expand`, as the case reader reads it under `case.directives`: a
+    `$name` is the definition nearest the entry, looked up outwards, and every include the
+    solver follows is followed. Without it, 0.6.0's lookup: the file's top level, then its
+    `#include`s.
 
     For a file under `0/`:
     - the solver reads `0/`, so `0/` decides. A value the run rewrote into a per-face list
@@ -775,12 +920,12 @@ def read(case_dir: str | Path, item) -> Found:
     case = Path(case_dir)
     rel = item.file                                     # the file being read
     try:
-        found = _read_one(case, rel, item)
+        found = _read_one(case, rel, item, macros)
         if found.value is None and item.file.startswith("0/") and not (case / item.file).is_file():
             orig = "0.orig/" + item.file[2:]
             if (case / orig).is_file():
                 rel = orig
-                alt = _read_one(case, orig, item)
+                alt = _read_one(case, orig, item, macros)
                 if alt.value is not None:
                     return alt
         return found

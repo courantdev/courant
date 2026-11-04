@@ -323,6 +323,7 @@ def test_a_header_read_joins_the_manifest_and_one_measured_says_where_it_came_fr
         "100/U, a file the run wrote: the solver log has no banner.")
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_under_next_a_time_directory_later_than_the_log_is_not_read_for_the_version(tmp_path):
     """A banner-less window of a run that ended at 0.005, in a case where another run, on v2312,
     wrote 100/ later. Under next the field checks hold that 100/ is not this run's
@@ -398,6 +399,7 @@ def test_a_measured_run_states_its_fork_and_version_and_nothing_else_changes():
                     "next").verdict == "accept"
 
 
+@pytest.mark.usefixtures("checks_as_060")
 @pytest.mark.parametrize("banner, fork, version", [
     (esi("2412"), "esi", "v2412"), (esi("2512"), "esi", "v2512"),
     (foundation("11"), "foundation", "11"), (foundation("12"), "foundation", "12"),
@@ -530,6 +532,7 @@ UNREADABLE = {"name": "diffusivity", "file": "constant/transportProperties",
               "key": "noSuchKeyAnywhere", "value": 5}
 
 
+@pytest.mark.usefixtures("checks_as_060")
 @pytest.mark.parametrize("items, default, nxt", [
     ([{**END_TIME, "value": 1000}], ("reject", "VER-5.7"), ("reject", "VER-5.7")),
     ([END_TIME, UNREADABLE], ("insufficient", "VER-5.9"), ("insufficient", "VER-5.9")),

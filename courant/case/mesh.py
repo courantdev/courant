@@ -10,10 +10,14 @@ from __future__ import annotations
 
 import math
 import re
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
+
+# A case path's kind, never an exception where a directory cannot be searched (T-ZERO-UNLISTABLE).
+from courant.case.reads import is_dir, is_file, kind, may_read
 
 
 class MeshQuality(BaseModel):
@@ -273,74 +277,131 @@ class SolverMesh:
     #: The case holds rank directories with a mesh, or a collated decomposition, whether or not
     #: the solver read them.
     decomposed: bool = False
+    #: Why `why` is: a directory on the way could not be searched (its `OSError`'s `strerror`,
+    #: never a path), where `Path.is_dir` raised before T-ZERO-UNLISTABLE; None otherwise.
+    unsearchable: str | None = None
+
+
+class _Hidden(str):
+    """A reason `_instance` gives when a directory on the way cannot be searched, carrying the
+    error's `strerror` for `SolverMesh.unsearchable`."""
+
+    error: str = ""
+
+    @classmethod
+    def of(cls, why: str, path: Path) -> _Hidden:
+        from courant.case.reads import unknown
+
+        out = cls(why)
+        err = unknown(path)
+        out.error = (err.strerror if err is not None else None) or "an error"
+        return out
+
+
+def is_time(name: str) -> bool:
+    """Whether a directory name is a time: a finite number. The one rule (`time_dirs`, the heat
+    reader's tables)."""
+    try:
+        return math.isfinite(float(name))
+    except ValueError:
+        return False
 
 
 def time_dirs(root: Path) -> list[str]:
-    """The finite numeric time directory names directly under `root`, ascending."""
-    out = []
+    """The finite numeric time directory names directly under `root`, ascending. A `root`
+    outside the MCP roots is never listed (MCP-3: listed, so confined like a read): a rank
+    directory linked out of a case, which `solver_mesh` looks through for a mesh, was listed
+    before the tool refused (found once the demo shipped its mesh, 0.7.0's release preparation;
+    reachable by default since VER-7a and SPEC-13 were promoted)."""
+    if not may_read(root):
+        return []
     try:
         entries = list(root.iterdir())
     except OSError:
         return []
-    for d in entries:
-        try:
-            t = float(d.name)
-        except ValueError:
-            continue
-        if d.is_dir() and math.isfinite(t):
-            out.append(d.name)
-    return sorted(out, key=float)
+    return sorted((d.name for d in entries if is_time(d.name) and is_dir(d)), key=float)
 
 
-def _instance(root: Path, start: float | None) -> tuple[Path | None, str | None]:
+def _instance(root: Path, start: float | None,
+              region: str | None = None) -> tuple[Path | None, str | None]:
     """(the polyMesh directory under `root` a run starting at `start` read, None) or (None, why
     not). As OpenFOAM's `findInstance` looks it up: the latest time directory at or before the
     start that holds a `polyMesh/`, else `constant/polyMesh`. A time directory whose `polyMesh/`
     holds no `owner` (a moving mesh writes `points` alone) splits the mesh over two instances,
     which the reader does not assemble; with the start not known, any time `polyMesh/` leaves the
-    instance not known. (None, None): no mesh under `root`."""
-    timed = [n for n in time_dirs(root) if (root / n / "polyMesh").is_dir()]
+    instance not known. (None, None): no mesh under `root`. A `region` looks one level deeper,
+    `<time>/<region>/polyMesh` and `constant/<region>/polyMesh`, as OpenFOAM does for a region."""
+    sub = (region,) if region else ()
+    found = [(n, kind(root.joinpath(n, *sub, "polyMesh"))) for n in time_dirs(root)]
+    # A time directory that cannot be searched may hold the polyMesh the run read, so where it
+    # could be the run's (at or before the start, or the start not known) the instance is not
+    # known (T-ZERO-UNLISTABLE).
+    hidden = [n for n, there in found if there is None
+              and (start is None or float(n) <= start + 1e-12)]
+    if hidden:
+        return None, _Hidden.of(f"time {hidden[0]} cannot be searched for its own polyMesh",
+                                root.joinpath(hidden[0], *sub, "polyMesh"))
+    timed = [n for n, there in found if there]
     if timed and start is None:
         return None, f"time {timed[0]} carries its own polyMesh, and the run's start is not known"
     before = [n for n in timed if float(n) <= start + 1e-12] if timed else []
     if before:
-        d = root / before[-1] / "polyMesh"
+        d = root.joinpath(before[-1], *sub, "polyMesh")
         if _has_owner(d):
             return d, None
         return None, (f"{d.relative_to(root.parent if root.name.startswith('processor') else root)}"
                       " holds no owner list (a moved mesh's points alone), which the reader does "
                       "not assemble with constant/polyMesh")
-    d = root / "constant" / "polyMesh"
-    return (d, None) if _has_owner(d) else (None, None)
+    d = root.joinpath("constant", *sub, "polyMesh")
+    owner = _owner(d)
+    if owner is None:
+        return None, _Hidden.of(f"{'/'.join(('constant', *sub, 'polyMesh'))} cannot be searched",
+                                d / "owner")
+    return (d, None) if owner else (None, None)
+
+
+def _hidden(why: str | None) -> str | None:
+    """`SolverMesh.unsearchable` of `_instance`'s reason: its error when it is a `_Hidden`."""
+    return why.error if isinstance(why, _Hidden) else None
 
 
 def _has_owner(d: Path) -> bool:
     """Whether `d` holds a polyMesh, written plain or compressed (`owner.gz`)."""
-    return (d / "owner").is_file() or (d / "owner.gz").is_file()
+    return bool(_owner(d))
+
+
+def _owner(d: Path) -> bool | None:
+    """`_has_owner`, or None when that cannot be told (`kind`)."""
+    plain, packed = kind(d / "owner", stat.S_ISREG), kind(d / "owner.gz", stat.S_ISREG)
+    if plain or packed:
+        return True
+    return None if None in (plain, packed) else False
 
 
 def rank_dirs(case: Path) -> list[Path]:
     """The case's uncollated rank directories (`processor0`, `processor1`, ...), in rank order."""
     try:
-        ranks = [d for d in case.iterdir() if d.is_dir() and _RANK.fullmatch(d.name)]
+        ranks = [d for d in case.iterdir() if _RANK.fullmatch(d.name) and is_dir(d)]
     except OSError:
         return []
     return sorted(ranks, key=lambda d: int(d.name[len("processor"):]))
 
 
 def solver_mesh(case_dir: str | Path, log_text: str | None = None, *,
-                start: float | None = None) -> SolverMesh:
+                start: float | None = None, region: str | None = None) -> SolverMesh:
     """The mesh the solver read, or why it cannot be named: the one rule, for the mesh metrics
     (`solver_polymesh`, VER-7a) and for conformance's mesh items (`courant.spec.as_run`,
     SPEC-13). `log_text` is the run's log, `start` the time it started from (None: not known).
 
-    - A multi-region case (`constant/regionProperties`) reads `constant/<region>/polyMesh`, one
-      per region: not named.
+    - A case holding `constant/regionProperties` (a multi-region case reads
+      `constant/<region>/polyMesh`, one per region): not named.
     - A parallel run (`ran_parallel`, either signal) read its ranks: `processor<N>/`, each at its
       instance (`_instance`), all of them present and, when its banner gives `nProcs`, as many.
       A collated decomposition (`processors<N>/`), no rank directories, a rank without a mesh,
       or a parallel signal while the solver's own Exec line says serial (a log of several
       applications): not named.
+    - With `region` (one region of a multi-region case, TRD VER-22): the same rule one level
+      deeper, `[processor<N>/]constant/<region>/polyMesh` or `<time>/<region>/polyMesh`.
     - A serial run read the case's own mesh at its instance; rank directories left beside it are
       not what it read.
     - With no word of either (no log, or a log naming no solver): the case's own mesh, when
@@ -350,30 +411,41 @@ def solver_mesh(case_dir: str | Path, log_text: str | None = None, *,
     from courant.case.solvers import solver_exec
 
     case = Path(case_dir)
-    ranks = [r for r in rank_dirs(case) if (r / "constant" / "polyMesh").is_dir()
-             or any((r / n / "polyMesh").is_dir() for n in time_dirs(r))]
+    sub = (region,) if region else ()
+    ranks = [r for r in rank_dirs(case) if is_dir(r.joinpath("constant", *sub, "polyMesh"))
+             or any(is_dir(r.joinpath(n, *sub, "polyMesh")) for n in time_dirs(r))]
     try:
         collated = sorted(d.name for d in case.iterdir()
-                          if d.is_dir() and _COLLATED.fullmatch(d.name))
+                          if _COLLATED.fullmatch(d.name) and is_dir(d))
     except OSError:
         collated = []
-    decomposed = bool(collated) or any((r / "constant" / "polyMesh").is_dir()
+    decomposed = bool(collated) or any(is_dir(r.joinpath("constant", *sub, "polyMesh"))
                                        for r in rank_dirs(case))
-    if (case / "constant" / "regionProperties").is_file():
+    # Any regionProperties leaves the mesh not named, whatever the solver: the conservative side
+    # of `_foam_reader.multi_region` (which also asks the solver, for the case reader). A mesh not
+    # named is not checked and the verdict says so; a single-region solver beside a stray file
+    # did read constant/polyMesh, but the committed tests hold this reading
+    # (test_mesh_polymesh_aspect `regions`, test_conformance_what_the_solver_read), and changing
+    # it is left to the orchestrator (T-MULTI-REGION's review, B1).
+    from courant.case._foam_reader import REGION_PROPERTIES
+
+    if region is None and is_file(case / REGION_PROPERTIES):
         return SolverMesh(why="a multi-region case (constant/regionProperties): each region reads "
                               "its own constant/<region>/polyMesh, which the reader does not read",
                           decomposed=decomposed)
     parallel = ran_parallel(log_text)
     ex = solver_exec(log_text) if log_text else None
 
+    mesh_dir = "/".join(("constant", *sub, "polyMesh"))
+
     def own() -> SolverMesh:
-        d, why = _instance(case, start)
-        where = d.relative_to(case).as_posix() if d is not None else "constant/polyMesh"
+        d, why = _instance(case, start, region)
+        where = d.relative_to(case).as_posix() if d is not None else mesh_dir
         return SolverMesh(dirs=(d,) if d is not None else (), why=why, where=where,
-                          decomposed=decomposed)
+                          decomposed=decomposed, unsearchable=_hidden(why))
 
     def by_rank() -> SolverMesh:
-        where = "processor*/constant/polyMesh"
+        where = f"processor*/{mesh_dir}"
         if collated:
             return SolverMesh(why=f"the case is decomposed collated ({collated[0]}/, "
                                   "-fileHandler collated), which the reader does not read",
@@ -390,10 +462,10 @@ def solver_mesh(case_dir: str | Path, log_text: str | None = None, *,
                               decomposed=True)
         dirs = []
         for r in ranks:
-            d, why = _instance(r, start)
+            d, why = _instance(r, start, region)
             if d is None:
                 return SolverMesh(why=f"{r.name}: {why or 'no mesh'}", where=where,
-                                  decomposed=True)
+                                  decomposed=True, unsearchable=_hidden(why))
             dirs.append(d)
         rel = {d.relative_to(r).as_posix() for d, r in zip(dirs, ranks)}
         return SolverMesh(dirs=tuple(dirs), where="processor*/" + (rel.pop() if len(rel) == 1
@@ -445,7 +517,7 @@ def solver_polymesh(case_dir: str, *, log_text: str | None = None, wedge: bool =
 
     case = Path(case_dir)
     d = case / "constant" / "polyMesh"
-    if not all((d / n).is_file() for n in FILES) or _not_what_the_solver_read(case, log_text):
+    if not all(is_file(d / n) for n in FILES) or _not_what_the_solver_read(case, log_text):
         return None
     try:
         for n in FILES:                 # MCP-3: sized and read only inside the roots
@@ -533,6 +605,20 @@ def skewness_of_faces_with_area(case_dir: str, quality: "MeshQuality", *,
         "zero_area_patches": tuple(patches)})
 
 
+def solved_directions(empty):
+    """The directions a mesh solves, from its `empty` faces' summed |area| components (every
+    rank's, summed): all three without any, else those where the normalised sum is at most 1e-6
+    (`polyMesh::calcDirections`, src/OpenFOAM/meshes/polyMesh/polyMesh.C, v2406). One definition,
+    for VER-7a's aspect ratio (`polymesh_quality`) and VER-5b's Reynolds number
+    (`courant.case.reynolds`)."""
+    import numpy as np
+
+    empty = np.asarray(empty, dtype=float)
+    if np.linalg.norm(empty) > 0:
+        return empty / np.linalg.norm(empty) <= 1e-6
+    return np.ones(3, dtype=bool)
+
+
 def polymesh_quality(case_dir: str, *, log_text: str | None = None) -> "MeshQuality | None":
     """checkMesh's cell aspect ratio, from `constant/polyMesh` as the solver read it, or None.
 
@@ -563,13 +649,11 @@ def polymesh_quality(case_dir: str, *, log_text: str | None = None) -> "MeshQual
         sum_mag = np.zeros((mesh.n_cells, 3))
         np.add.at(sum_mag, mesh.owner, mag)
         np.add.at(sum_mag, mesh.neighbour, mag[:ni])
-        solved = np.ones(3, dtype=bool)
         empty = np.zeros(3)
         for p in mesh.boundary:
             if p.type == "empty" and p.n:
                 empty += mag[p.start:p.start + p.n].sum(axis=0)
-        if np.linalg.norm(empty) > 0:
-            solved = empty / np.linalg.norm(empty) <= 1e-6
+        solved = solved_directions(empty)
         if not solved.any() or not mesh.n_cells:
             return None
         cmp = sum_mag[:, solved]
@@ -587,8 +671,64 @@ def polymesh_quality(case_dir: str, *, log_text: str | None = None) -> "MeshQual
                        source=POLYMESH_SOURCE, **extent)
 
 
-def read_mesh_quality(case_dir: str, *, polymesh: bool = False,
-                      log_text: str | None = None) -> "MeshQuality | None":
+def region_checkmesh_logs(case_dir: str, regions) -> tuple[dict[str, Path], list[str]]:
+    """({region: its checkMesh log}, [regions without one]) for a multi-region case: the log
+    `runApplication -s <region> checkMesh -region <region>` writes, `log.checkMesh.<region>`
+    (T-MULTI-REGION). Nothing is opened."""
+    found: dict[str, Path] = {}
+    absent: list[str] = []
+    for region in regions or ():
+        log = Path(case_dir) / f"log.checkMesh.{region}"
+        if is_file(log):
+            found[region] = log
+        else:
+            absent.append(region)
+    return found, absent
+
+
+def _regions_quality(logs: dict[str, Path]) -> MeshQuality | None:
+    """Every region's checkMesh log read, as one reading: the worst of each metric (the largest
+    non-orthogonality, skewness and aspect ratio), the cells and the faces counted summed, the
+    average non-orthogonality weighted by cells when every log gives both, `mesh_ok` only when
+    every region's is. The extent (bounding box, volume, directions) is no region's alone and is
+    not given. None when a log cannot be read (each read log is noted, VER-14)."""
+    from courant.case.reads import reading
+
+    parts: list[MeshQuality] = []
+    for log in logs.values():
+        try:
+            with reading(log):
+                text = log.read_text(errors="replace")
+            parts.append(MeshQuality.from_checkmesh(text))
+        except Exception:  # noqa: BLE001 — a partial log is not a failure: no metrics
+            return None
+
+    def worst(name: str) -> float | None:
+        values = [getattr(q, name) for q in parts if getattr(q, name) is not None]
+        return max(values) if values else None
+
+    def total(name: str) -> int | None:
+        values = [getattr(q, name) for q in parts]
+        return None if any(v is None for v in values) else sum(values)
+
+    cells = total("n_cells")
+    averages = [(q.average_non_orthogonality, q.n_cells) for q in parts]
+    average = (sum(a * n for a, n in averages) / cells
+               if cells and all(a is not None and n for a, n in averages) else None)
+    return MeshQuality(
+        n_cells=cells, max_non_orthogonality=worst("max_non_orthogonality"),
+        average_non_orthogonality=average, max_skewness=worst("max_skewness"),
+        max_aspect_ratio=worst("max_aspect_ratio"),
+        n_negative_volume_cells=sum(q.n_negative_volume_cells for q in parts),
+        mesh_ok=None if any(q.mesh_ok is None for q in parts) else all(q.mesh_ok for q in parts),
+        zero_area_faces=any(q.zero_area_faces for q in parts),
+        n_zero_area_faces=total("n_zero_area_faces") if any(q.zero_area_faces for q in parts)
+        else None,
+        n_skew_faces=total("n_skew_faces"))
+
+
+def read_mesh_quality(case_dir: str, *, polymesh: bool = False, log_text: str | None = None,
+                      regions=None) -> "MeshQuality | None":
     """Mesh metrics from a checkMesh log already sitting in the case, or None.
 
     With `polymesh`, a case with no checkMesh log gets the aspect ratio computed from its mesh
@@ -609,13 +749,32 @@ def read_mesh_quality(case_dir: str, *, polymesh: bool = False,
 
     Never raises. A partial or truncated checkMesh log is common, and losing
     mesh metrics must not cost the rest of the diagnosis.
+
+    `regions` (a multi-region case's `CaseConfig.regions`, given under `--checks next`,
+    `case.regions`): the regions' own checkMesh logs (`region_checkmesh_logs`) are the reading
+    (`_regions_quality`), the worst of each metric; with some and not all, the counts that need
+    every region are not given; with none, the case is read as without them.
     """
 
     from courant.case.reads import reading
 
+    if regions:
+        logs, absent = region_checkmesh_logs(case_dir, regions)
+        if logs:
+            quality = _regions_quality(logs)
+            if absent and quality is not None:
+                # Some regions only (the review of T-MULTI-REGION, M2): the worst of what those
+                # logs report still stands, so a fault in one is never thrown away; what needs
+                # every region (the cell count, the mean, checkMesh's verdict) is not given, and
+                # the verdict says the rest were not read (`MESH_REGIONS_PARTIAL`).
+                quality = quality.model_copy(update={
+                    "n_cells": None, "average_non_orthogonality": None, "mesh_ok": None,
+                    "n_zero_area_faces": None, "n_skew_faces": None})
+            return quality
+
     for name in CHECKMESH_LOG_NAMES:
         candidate = Path(case_dir) / name
-        if not candidate.is_file():
+        if not is_file(candidate):
             continue
         try:
             with reading(candidate):    # VER-14: read, so listed, whether or not it parses

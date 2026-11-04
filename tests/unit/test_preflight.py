@@ -88,6 +88,7 @@ def test_watch_fails_at_step_zero_on_a_setup_fault(tmp_path):
     assert any("setup fault found before the first timestep" in ln for ln in lines)
 
 
+@pytest.mark.usefixtures("checks_as_060")
 @pytest.mark.parametrize("mode", ["default", "next"])
 def test_preflight_lists_what_it_read(tmp_path, mode):
     """C5 and C7 (VER-14). Preflight builds its manifest with the verifier's recorder: the 0/

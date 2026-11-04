@@ -243,6 +243,7 @@ def test_only_an_end_after_the_last_time_step_is_the_solvers_end_under_next():
     assert not ends_in_end(utility + cut + f"{pad}End\n" + MPI_FINALIZE, after_last_step=True)
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_one_reading_of_the_end_serves_the_verdict_the_report_and_the_convergence(tmp_path,
                                                                                  monkeypatch):
     """`verdict_exit_code` is the end a verdict reads under its checks (VER-3, VER-3a): the
@@ -278,6 +279,7 @@ def test_one_reading_of_the_end_serves_the_verdict_the_report_and_the_convergenc
     assert asked == [("next", None)] * 3
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_a_utilitys_end_ahead_of_a_cut_solver_log_is_not_the_runs_end_under_next(tmp_path):
     """VER-3 as released reads `End` anywhere on a line of its own, so a utility's `End` ahead of
     the solver's output reads as the run's end, and a run cut mid-way is judged as finished: here

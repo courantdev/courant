@@ -324,12 +324,22 @@ class _NameSet:
 
 def _name_set(parsed, flags: int) -> _NameSet | None:
     """`parsed` as a set of names, when it is one: inside any enclosing groups, plain characters
-    and then, optionally, an alternation of plain-character sequences. `re`'s parser moves the
+    and then, optionally, an alternation of plain-character sequences, or a group that is itself
+    such a set (`wing_(n000|n001|...)`: plain characters, then a group). `re`'s parser moves the
     alternatives' common prefix out (`(wing_upper|wing_lower)` is `wing_` then `(upper|lower)`),
     and writes alternatives of one character each as a class of them (`(wing_a|wing_b)` is
     `wing_[ab]`), so a patch group is this shape. Not under IGNORECASE (`re` folds case by its
-    own tables, which the automaton's one-character tests use): None, and the automaton decides."""
-    items = list(_data(parsed))
+    own tables, which the automaton's one-character tests use): None, and the automaton decides.
+    A group behind plain characters was left to the automaton, which passed `MAX_STATES` at some
+    75 names of five characters, so a default accept became insufficient where 0.5.0's `re`
+    judged it (the 0.6.0 follow-up review; T-FOLLOWUP-MINORS (1))."""
+    found = _names(list(_data(parsed)), flags)
+    return None if found is None else _NameSet(*found)
+
+
+def _names(items, flags: int) -> tuple[str, frozenset[str]] | None:
+    """(the prefix, the rest of each name) of `items` when they are a set of names
+    (`_name_set`), else None."""
     while len(items) == 1 and items[0][0] is _c.SUBPATTERN:
         _group, add, remove, body = items[0][1]
         flags = _scoped(flags, add, remove)
@@ -348,12 +358,16 @@ def _name_set(parsed, flags: int) -> _NameSet | None:
                 if any(o is not _c.LITERAL for o, _ in pieces):
                     return None
                 rest.append("".join(chr(a) for _, a in pieces))
-            return _NameSet("".join(head), frozenset(rest))
+            return "".join(head), frozenset(rest)
         elif op is _c.IN and last and all(o is _c.LITERAL for o, _ in av):
-            return _NameSet("".join(head), frozenset(chr(a) for _, a in av))
+            return "".join(head), frozenset(chr(a) for _, a in av)
+        elif op is _c.SUBPATTERN and last:          # a group behind plain characters
+            _group, add, remove, body = av
+            inner = _names(list(_data(body)), _scoped(flags, add, remove))
+            return None if inner is None else ("".join(head) + inner[0], inner[1])
         else:
             return None
-    return _NameSet("".join(head), frozenset(("",)))
+    return "".join(head), frozenset(("",))
 
 
 @lru_cache(maxsize=1024)

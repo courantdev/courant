@@ -31,6 +31,7 @@ raises `NotRegularFile`, an `OSError`, so each reader's fallback takes it as a f
 
 from __future__ import annotations
 
+import errno
 import os
 import stat
 from collections import deque
@@ -268,6 +269,49 @@ def regular_file(path: str | os.PathLike[str]) -> None:
         raise NotRegularFile(f"{kind}, not a regular file")
 
 
+#: The errors Python's `Path.is_dir` and `Path.is_file` read as "not there" (`pathlib.
+#: _IGNORED_ERRNOS`, Python 3.11). Any other error they raise, `EACCES` from a directory on the
+#: way that cannot be searched first: under `--checks next` that ended `courant verify` in an
+#: internal error (T-ZERO-UNLISTABLE, `courant.case.mesh._instance` on a `0/` at mode 000).
+_ABSENT = frozenset({errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP})
+
+
+def kind(path: str | os.PathLike[str], test=stat.S_ISDIR) -> bool | None:
+    """Whether `path` is a directory (with `test=stat.S_ISREG`, a regular file), following links:
+    True; False when it is something else or is not there; None when that cannot be told (a
+    directory on the way cannot be searched, `unknown` says why). One `os.stat`, which opens
+    nothing; never raises. The test of a case path a reader makes before it reads, so a
+    directory it may not search is a gap in what was read, never a traceback."""
+    try:
+        return test(os.stat(path).st_mode)
+    except OSError as exc:
+        return False if exc.errno in _ABSENT else None
+    except ValueError:                  # a path the system cannot take (an embedded NUL)
+        return False
+
+
+def unknown(path: str | os.PathLike[str]) -> OSError | None:
+    """Why `kind(path)` cannot be told, the error itself (say it with `reason`, which never
+    names the path), or None when it can."""
+    try:
+        os.stat(path)
+    except OSError as exc:
+        return None if exc.errno in _ABSENT else exc
+    except ValueError:
+        return None
+    return None
+
+
+def is_dir(path: str | os.PathLike[str]) -> bool:
+    """`Path.is_dir`, False where that cannot be told instead of an exception (`kind`)."""
+    return bool(kind(path))
+
+
+def is_file(path: str | os.PathLike[str]) -> bool:
+    """`Path.is_file`, False where that cannot be told instead of an exception (`kind`)."""
+    return bool(kind(path, stat.S_ISREG))
+
+
 class Reads:
     """The regular files read under one root, as root-relative POSIX paths.
 
@@ -306,6 +350,15 @@ def recording(root: str | os.PathLike[str]) -> Iterator[Reads]:
         yield reads
     finally:
         _current.reset(token)
+
+
+def plain_or_gz(path: str) -> str:
+    """The file OpenFOAM's reader opens for `path`: `path`, or its `.gz` when `path` is absent and
+    the `.gz` is there. The one rule (the field reader's `_field_file`, the heat reader's
+    boundary). Nothing is opened."""
+    if not os.path.exists(path) and os.path.exists(path + ".gz"):
+        return path + ".gz"
+    return path
 
 
 def note(path: str | os.PathLike[str]) -> None:

@@ -176,6 +176,7 @@ def test_a_single_region_log_parses_the_same_either_way():
 
 
 # ---------------------------------------------------------------- the verdict
+@pytest.mark.usefixtures("checks_as_060")
 def test_the_hidden_fluid_is_rejected_under_next_and_the_default_says_it_merged():
     """The default's accept here is v0.5.0's verdict and a false accept: the bottom fluid's `h`
     ends at 5e-2. GATE-13 keeps a default accept unless S names the change; whether the CHT case
@@ -348,6 +349,7 @@ def test_without_the_prefix_read_the_org_log_has_no_time_step():
     assert dump(LogParser(run_id="org", regions=True).parse_text(text)) == dump(events)
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_the_default_says_it_did_not_read_the_org_prefix():
     v = _verify_org(_org_log(ORG_HIDDEN), "default")
     assert (v.verdict, v.rule) == ("insufficient", "VER-5.15")          # v0.5.0's verdict

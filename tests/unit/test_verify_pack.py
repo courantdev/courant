@@ -352,6 +352,7 @@ def test_the_manifest_is_exactly_what_the_readers_opened(tmp_path, subject, mode
                               f"listed but not read: {sorted(listed - opened)}")
 
 
+@pytest.mark.usefixtures("checks_as_060")
 @pytest.mark.parametrize("mode", ["default", "next"])
 @pytest.mark.parametrize("with_spec", [False, True], ids=["no_spec", "spec"])
 def test_editing_each_file_changes_the_manifest_only_if_it_was_read(tmp_path, with_spec, mode):
@@ -464,6 +465,7 @@ def _unreadable(path: Path):
         path.chmod(mode)
 
 
+@pytest.mark.usefixtures("checks_as_060")
 @_root_reads_everything
 @pytest.mark.parametrize("rel", ["0/U", "0/p", "0.5/U", "0/include/initialConditions"])
 @pytest.mark.parametrize("with_spec", [False, True], ids=["no_spec", "spec"])

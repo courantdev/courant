@@ -11,6 +11,7 @@ import re
 
 from courant.events import EventKind
 from courant.events.diverged import diverged
+from courant.events.time_markers import no_time_markers
 
 #: Markers any OpenFOAM solver log carries. Without one of them the text is not
 #: a solver log, and inferring "it crashed" from a missing `End` would judge a
@@ -75,16 +76,6 @@ def is_residual_step(event) -> bool:
         return False
     p = getattr(event, "payload", None)
     return p is not None and p.iteration is not None and bool(p.initial_residuals)
-
-
-def no_time_markers(events) -> bool:
-    """VER-5.15: field residuals were read, but no step carries a step number, because no
-    `Time =` line was read. The log cannot show which step the run reached, or that its time
-    loop ran to the end, so its residuals are not a history (T-VER-TIME)."""
-    steps = [e.payload for e in events
-             if e.kind is EventKind.RESIDUAL and getattr(e, "payload", None) is not None]
-    return (any(p.initial_residuals for p in steps)
-            and all(p.iteration is None for p in steps))
 
 
 def decide(is_recognised: bool, events, findings, trust, *,

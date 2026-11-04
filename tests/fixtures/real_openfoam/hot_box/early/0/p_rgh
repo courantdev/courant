@@ -1,0 +1,43 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  Courant test fixture: a closed heated box of air, buoyantSimpleFoam (T-ENERGY-BALANCE)
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       volScalarField;
+    location    "0";
+    object      p_rgh;
+}
+
+dimensions      [1 -1 -2 0 0 0 0];
+
+internalField   uniform 100000;
+
+boundaryField
+{
+    hot
+    {
+        type fixedFluxPressure;
+        value uniform 100000;
+    }
+    cold
+    {
+        type fixedFluxPressure;
+        value uniform 100000;
+    }
+    top
+    {
+        type fixedFluxPressure;
+        value uniform 100000;
+    }
+    bottom
+    {
+        type fixedFluxPressure;
+        value uniform 100000;
+    }
+    frontAndBack
+    {
+        type empty;
+    }
+}

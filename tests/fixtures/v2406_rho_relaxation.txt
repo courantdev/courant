@@ -1,0 +1,25 @@
+# v2406 tutorials whose fvSolution relaxes rho (opencfd/openfoam-default:2406, the pinned image),
+# grep of every tutorials/**/fvSolution with relaxationFactors, 3 Nov 2026 (T-RELAX-RHO):
+# application|file|the rho line. A blank application is a multi-region region file.
+buoyantSimpleFoam|./heatTransfer/buoyantSimpleFoam/buoyantCavity/system/fvSolution| rho 1.0;
+buoyantSimpleFoam|./heatTransfer/buoyantSimpleFoam/circuitBoardCooling/system/fvSolution| rho 1.0;
+buoyantSimpleFoam|./heatTransfer/buoyantSimpleFoam/hotRadiationRoom/system/fvSolution| rho 1.0;
+buoyantSimpleFoam|./heatTransfer/buoyantSimpleFoam/hotRadiationRoomFvDOM/system/fvSolution| rho 1.0;
+buoyantSimpleFoam|./heatTransfer/buoyantSimpleFoam/simpleCarSolarPanel/system/fvSolution| rho 1;
+overRhoSimpleFoam|./compressible/overRhoSimpleFoam/hotCylinder/cylinderAndBackground/system/fvSolution| rho 1;
+rhoPorousSimpleFoam|./compressible/rhoPorousSimpleFoam/angledDuct/explicit/system/fvSolution| rho 0.03;
+rhoPorousSimpleFoam|./compressible/rhoPorousSimpleFoam/angledDuct/implicit/system/fvSolution| rho 1;
+rhoSimpleFoam|./compressible/rhoSimpleFoam/aerofoilNACA0012/system/fvSolution| rho 0.01;
+rhoSimpleFoam|./compressible/rhoSimpleFoam/angledDuctExplicitFixedCoeff/system/fvSolution| rho 0.01;
+rhoSimpleFoam|./compressible/rhoSimpleFoam/gasMixing/injectorPipe/system/fvSolution| rho 0.05;
+rhoSimpleFoam|./lagrangian/reactingParcelFoam/airRecirculationRoom/steady/system/fvSolution| rho 0.01;
+simpleReactingParcelFoam|./lagrangian/simpleReactingParcelFoam/verticalChannel/system/fvSolution| rho 1;
+snappyHexMesh|./mesh/snappyHexMesh/aerofoilNACA0012_directionalRefinement/system/fvSolution| rho 0.01;
+|./heatTransfer/chtMultiRegionSimpleFoam/cpuCabinet/system/domain0/fvSolution| rho 1;
+|./heatTransfer/chtMultiRegionSimpleFoam/externalCoupledHeater/system/bottomAir/fvSolution| rho 1.0;
+|./heatTransfer/chtMultiRegionSimpleFoam/externalCoupledHeater/system/bottomWater/fvSolution| rho 1.0;
+|./heatTransfer/chtMultiRegionSimpleFoam/externalCoupledHeater/system/topAir/fvSolution| rho 1.0;
+|./heatTransfer/chtMultiRegionSimpleFoam/heatExchanger/system/air/fvSolution| rho 1;
+|./heatTransfer/chtMultiRegionSimpleFoam/heatExchanger/system/porous/fvSolution| rho 1;
+|./heatTransfer/chtMultiRegionSimpleFoam/multiRegionHeaterRadiation/system/bottomAir/fvSolution| rho 1.0;
+|./heatTransfer/chtMultiRegionSimpleFoam/multiRegionHeaterRadiation/system/topAir/fvSolution| rho 1.0;

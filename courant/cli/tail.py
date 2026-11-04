@@ -263,6 +263,17 @@ _UTILITIES = frozenset({
     "transformPoints", "refineMesh", "splitMeshRegions", "foamDictionary",
     "changeDictionary", "redistributePar", "collapseEdges", "zipUpMesh",
 })
+#: Under `--checks next` (`log.post_process`, T-MULTI-REGION): the post-processing utility, ESI's
+#: `postProcess` and OpenFOAM.org's `foamPostProcess`. It prints `Time = <t>` for each time it
+#: processes and runs after the solve, so it ranked level with the solver's log and, newer, won.
+_POST_PROCESS = frozenset({"postProcess", "foamPostProcess"})
+
+
+def _utilities(checks: str = "default") -> frozenset[str]:
+    """The known utilities under `checks` (GATE-13)."""
+    from courant.verify.checks import enabled
+
+    return _UTILITIES | _POST_PROCESS if enabled("log.post_process", checks) else _UTILITIES
 
 #: A solver iterates; a utility does not. Either marker is decisive.
 _TIME_LOOP = re.compile(r"^(?:Starting time loop|Time = )", re.M)
@@ -271,7 +282,7 @@ _TIME_LOOP = re.compile(r"^(?:Starting time loop|Time = )", re.M)
 _EXEC_LINE = re.compile(r"^Exec\s*:\s*(\S+)", re.M)
 
 
-def _log_rank(path: Path) -> int:
+def _log_rank(path: Path, utilities: frozenset[str] = _UTILITIES) -> int:
     """2 = a solve · 1 = unknown · 0 = a known utility.
 
     THE BANNER WINS, and this order is the whole point. The obvious rule —
@@ -293,7 +304,7 @@ def _log_rank(path: Path) -> int:
     exec_match = _EXEC_LINE.search(head)
     if exec_match:
         app = exec_match.group(1).rsplit("/", 1)[-1]
-        if app in _UTILITIES:
+        if app in utilities:
             return 0
         # A named application that is not a known utility: a solver, or a solver
         # we have never heard of. Either way it outranks a utility.
@@ -304,10 +315,10 @@ def _log_rank(path: Path) -> int:
 
     # No banner: not an OpenFOAM log, or truncated before the header was written.
     stem = path.name[4:] if path.name.startswith("log.") else path.stem
-    return 0 if stem in _UTILITIES else 1
+    return 0 if stem in utilities else 1
 
 
-def find_log(case_dir: str | Path) -> Path | None:
+def find_log(case_dir: str | Path, *, checks: str = "default") -> Path | None:
     """Guess the log an OpenFOAM run is writing to.
 
     Convention is ``log.<solver>`` in the case directory — near-universal, and
@@ -339,12 +350,14 @@ def find_log(case_dir: str | Path) -> Path | None:
     candidates += [p for p in case.glob("*.log") if p.is_file()]
     if not candidates:
         return None
-    rank, _, best = max((_log_rank(p), p.stat().st_mtime, p) for p in candidates)
+    utilities = _utilities(checks)
+    rank, _, best = max((_log_rank(p, utilities), p.stat().st_mtime, p) for p in candidates)
     return best if rank > 0 else None
 
 
-def utility_logs(case_dir: str | Path) -> list[str]:
+def utility_logs(case_dir: str | Path, *, checks: str = "default") -> list[str]:
     """The known utilities' logs in a case directory, by name: what `find_log` passed over."""
     case = Path(case_dir)
+    utilities = _utilities(checks)
     return sorted(p.name for p in case.glob("log.*")
-                  if p.is_file() and p.name[4:] in _UTILITIES)
+                  if p.is_file() and p.name[4:] in utilities)

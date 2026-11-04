@@ -1,0 +1,17 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  Courant test fixture: a laminar cylinder at Re 100 (T-LAMINAR-REGIME)
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      decomposeParDict;
+}
+
+numberOfSubdomains  2;
+method              hierarchical;
+coeffs
+{
+    n               (2 1 1);
+}

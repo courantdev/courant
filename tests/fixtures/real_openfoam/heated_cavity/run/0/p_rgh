@@ -1,0 +1,38 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  Courant test fixture: a differentially heated cavity, run to its endTime (T-VER16C)
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       volScalarField;
+    location    "0";
+    object      p_rgh;
+}
+
+dimensions      [0 2 -2 0 0 0 0];
+
+internalField   uniform 0;
+
+boundaryField
+{
+    hot
+    {
+        type fixedFluxPressure;
+        value uniform 0;
+    }
+    cold
+    {
+        type fixedFluxPressure;
+        value uniform 0;
+    }
+    adiabatic
+    {
+        type fixedFluxPressure;
+        value uniform 0;
+    }
+    frontAndBack
+    {
+        type empty;
+    }
+}

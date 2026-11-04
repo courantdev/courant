@@ -1,0 +1,65 @@
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2406                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _be01ca78-20240625 OPENFOAM=2406 version=2406
+Arch   : "LSB;label=32;scalar=64"
+Exec   : postProcess -latestTime -funcs ( flowRatePatch(name=inlet) flowRatePatch(name=outlet) flowRatePatch(name=walls) )
+Date   : Nov 03 2026
+Time   : 03:22:14
+Host   : bee45e723436
+PID    : 228
+I/O    : uncollated
+Case   : /case/duct_early
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 20
+
+surfaceFieldValue flowRatePatch(name=inlet):
+    operation     = sum
+
+
+surfaceFieldValue flowRatePatch(name=outlet):
+    operation     = sum
+
+
+surfaceFieldValue flowRatePatch(name=walls):
+    operation     = sum
+
+
+Time = 20
+
+Reading fields:
+    surfaceScalarField: phi
+
+Executing functionObjects
+surfaceFieldValue flowRatePatch(name=inlet) write:
+    total faces   = 10
+    total area    = 4e-05
+
+    sum(inlet) of phi = -4.644137675e-05
+
+surfaceFieldValue flowRatePatch(name=outlet) write:
+    total faces   = 10
+    total area    = 4e-05
+
+    sum(outlet) of phi = 4.642753676e-05
+
+surfaceFieldValue flowRatePatch(name=walls) write:
+    total faces   = 100
+    total area    = 0.0008
+
+    sum(walls) of phi = 0
+
+
+End
+

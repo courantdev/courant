@@ -8,8 +8,10 @@ it (`read_fields(fluxes=True)`), the check's scope (which runs must balance), an
 `courant verify --checks next` reads `phi`; under the default nothing new is opened and the
 verdict is v0.5.0's.
 
-Every case here is synthetic, or this repository's own committed pitzDaily run with a synthetic
-solved time directory added.
+Every case before the last section is synthetic, or this repository's own committed pitzDaily
+run with a synthetic solved time directory added. The last section, "on a phi a solver wrote"
+(T-MASSFLUX-2), reads only `phi` files OpenFOAM v2406 wrote in this repository's committed solves,
+each patch sum held to OpenFOAM's own `flowRatePatch` output committed beside them.
 """
 
 from __future__ import annotations
@@ -17,7 +19,9 @@ from __future__ import annotations
 import gzip
 import json
 import os
+import re
 import shutil
+from decimal import Decimal
 from pathlib import Path
 
 import numpy as np
@@ -360,6 +364,7 @@ def test_only_a_run_that_must_balance_is_judged(tmp_path, dims, solver, ddt, jud
         assert r.skipped and r.detail.startswith("1/phi holds ")
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_whether_the_run_is_steady_is_asked_in_the_verdicts_mode():
     """A solver only v2406's own table knows to be steady (`V2406_STEADY`), its fvSchemes not
     read: under next it is steady for the residual bar (`is_steady("next")`), and so for the
@@ -559,6 +564,7 @@ def test_next_sums_the_phi_of_the_time_the_field_checks_judge_not_a_later_one(tm
     assert "282/phi" in paths and "500/phi" not in paths
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_the_default_verdict_does_not_read_phi_and_is_the_one_without_it(tmp_path):
     """GATE-13, the check's own side: under the default an imbalanced run is judged exactly as
     the same run with no `phi` at all, byte for byte, and as v0.5.0 judged it (accepted)."""
@@ -570,6 +576,7 @@ def test_the_default_verdict_does_not_read_phi_and_is_the_one_without_it(tmp_pat
     assert "282/phi" not in {f["path"] for f in with_phi["run"]["inputs"]}
 
 
+@pytest.mark.usefixtures("checks_as_060")
 @pytest.mark.parametrize("mode", ["default", "next"])
 def test_the_manifest_is_exactly_what_the_readers_opened_with_a_phi(tmp_path, mode):
     """VER-14 against the interpreter's own record of what was opened (the audit hook of
@@ -586,6 +593,7 @@ def test_the_manifest_is_exactly_what_the_readers_opened_with_a_phi(tmp_path, mo
     assert ("0.5/phi" in opened) is (mode == "next")
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_a_preflight_says_what_checks_conservation_in_either_mode():
     from courant.data import DEMO
     from courant.verify.preflight import NEEDS_THE_RUN, NEEDS_THE_RUN_NEXT, preflight_path
@@ -604,6 +612,50 @@ def test_a_preflight_says_what_checks_conservation_in_either_mode():
     # The log's continuity error is graded when it is not finite (ContinuityCheck: MAJOR).
     assert "is reported, and graded only when it is not finite." in NEEDS_THE_RUN_NEXT
     assert "reported, not graded" not in NEEDS_THE_RUN_NEXT
+
+
+def test_from_0_7_0_the_preflight_says_courant_verify_judges_conservation():
+    """GATE-13's promotion: VER-18 is on by default from 0.7.0, on RM-37's result
+    (`checks.PROMOTE_MASS_FLUX_PHI`). Promoted, both modes say the default judges it; held, the
+    default says it does not and `next` that only it does, as 0.6.0 said."""
+    from courant.data import DEMO
+    from courant.verify import checks
+    from courant.verify.preflight import (
+        NEEDS_THE_RUN,
+        NEEDS_THE_RUN_FLUX,
+        NEEDS_THE_RUN_NEXT,
+        preflight_path,
+    )
+
+    log, side = DEMO / "icoFoam_cavity__healthy.log.gz", DEMO / "icoFoam_cavity__healthy.case.json"
+    default = preflight_path(log, side).not_checked
+    nxt = preflight_path(log, side, checks="next").not_checked
+    if checks.PROMOTE_MASS_FLUX_PHI:
+        assert NEEDS_THE_RUN_FLUX in default and NEEDS_THE_RUN_FLUX in nxt
+        assert not {NEEDS_THE_RUN, NEEDS_THE_RUN_NEXT} & {*default, *nxt}
+    else:
+        assert NEEDS_THE_RUN in default and NEEDS_THE_RUN_NEXT in nxt
+        assert NEEDS_THE_RUN_FLUX not in {*default, *nxt}
+    assert "Conservation is judged by courant verify as the balance" in NEEDS_THE_RUN_FLUX
+    assert "--checks next" not in NEEDS_THE_RUN_FLUX
+    assert NEEDS_THE_RUN_FLUX.endswith("is reported, and graded only when it is not finite.")
+
+
+@pytest.mark.parametrize("mode", ["default", "next"])
+def test_from_0_7_0_the_default_reads_phi_as_next_does(tmp_path, mode):
+    """VER-18 promoted: the default opens the solved `phi` as `next` does (held behind the flag,
+    `PROMOTE_MASS_FLUX_PHI` False, it does not)."""
+    from courant.verify import checks
+    from tests.unit import test_verify_pack as tvp
+
+    case = tvp._case(tmp_path)
+    _write(case / "0.5" / "phi", _phi({"inlet": ("calculated", _list([-1.0])),
+                                        "outlet": ("calculated", _list([1.0])),
+                                        "walls": ("calculated", "uniform 0")}))
+    verdict, opened = tvp._verify_observed(case, None, mode)
+    assert {f.path for f in verdict.run.inputs} == opened
+    assert ("0.5/phi" in opened) is checks.enabled(checks.MASS_FLUX_PHI, mode)
+    assert ("0.5/phi" in opened) is (checks.PROMOTE_MASS_FLUX_PHI or mode == "next")
 
 
 def test_the_hand_built_balance_still_judges_net_over_inflow():
@@ -629,3 +681,307 @@ def test_the_hand_built_balance_still_judges_net_over_inflow():
     out = MassFluxCheck().run(VerifyContext(
         run_id="r", events=[], fields=FieldData(time=1, patch_fluxes={"outlet": 3.0})))
     assert out.severity is VSeverity.MAJOR and out.value == 1.0          # v0.5.0: 3.0
+
+
+# ------------------------------------------------------------- on a phi a solver wrote
+# T-MASSFLUX-2: the reader and the check on `phi` files OpenFOAM v2406 wrote, held to OpenFOAM's
+# own `postProcess -func 'flowRatePatch(name=<patch>)'` output, committed beside the cases in
+# `tests/fixtures/real_openfoam/flow_rates/` (not a second Courant summation). Every case is a
+# committed solve of this repository's; each is copied into `tmp_path` first (TST-4).
+REAL = ROOT / "tests" / "fixtures" / "real_openfoam"
+FLOW_RATES = REAL / "flow_rates"
+DUCT_BINARY = REAL / "duct" / "binary"
+
+#: Each solve: its committed case directory, OpenFOAM's flowRatePatch output for it, and the
+#: patches that bound its domain, listed literally (empty patches out), not re-derived.
+SOLVES = {
+    "wedge_flow": (REAL / "wedge_pipe" / "flow", "wedge_pipe_flow.log",
+                   {"inlet", "outlet", "wall", "front", "back"}),
+    "heated_cavity": (REAL / "heated_cavity" / "run", "heated_cavity.log",
+                      {"hot", "cold", "adiabatic"}),
+    "cylinder": (REAL / "laminar_cylinder" / "run", "laminar_cylinder.log",
+                 {"inlet", "outlet", "cylinder"}),
+    "duct_converged": (REAL / "duct" / "converged", "duct_converged.log",
+                       {"inlet", "outlet", "walls"}),
+    "duct_early": (REAL / "duct" / "early", "duct_early.log", {"inlet", "outlet", "walls"}),
+}
+#: The judged solves, and which of them converged (their balance must be OK).
+JUDGED = ["wedge_flow", "cylinder", "duct_converged", "duct_early"]
+CONVERGED = {"wedge_flow", "cylinder", "duct_converged"}
+EPS = float(np.finfo(float).eps)
+
+
+def _unpack_fixture(src: Path, dst: Path) -> Path:
+    """A committed fixture as a case directory, its `.gz` files unzipped. One more copy of the
+    helper `test_wedge_steady._unpack` and `test_laminar_regime._unpack` hold (a later tidy)."""
+    for f in src.rglob("*"):
+        if not f.is_file():
+            continue
+        out = dst / f.relative_to(src)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        if f.suffix == ".gz":
+            with gzip.open(f, "rb") as s, open(out.with_suffix(""), "wb") as d:
+                shutil.copyfileobj(s, d)
+        else:
+            shutil.copyfile(f, out)
+    return dst
+
+
+def _fixture(name: str) -> Path:
+    src = SOLVES[name][0]
+    assert src.is_dir(), f"the solve {src.relative_to(ROOT)} is not committed"
+    return src
+
+
+def _solve(tmp: Path, name: str, *, packed: bool = False) -> Path:
+    """The solve copied into `tmp` (TST-4): as committed (`packed`), or unzipped. The directory's
+    own name is the fixture's, so two copies under different parents give the same document."""
+    src = _fixture(name)
+    case = tmp / src.name
+    if packed:
+        shutil.copytree(src, case)
+        return case
+    return _unpack_fixture(src, case)
+
+
+def _solved_time(case: Path) -> str:
+    """The time directory holding the solve's `phi` (the solver's last write)."""
+    times = sorted({p.parent.name for p in case.glob("*/phi*")}, key=float)
+    assert times, f"no time directory of {case.name} holds a phi"
+    return times[-1]
+
+
+def _openfoam_flow_rates(name: str) -> tuple[str, dict[str, Decimal]]:
+    """OpenFOAM's own `sum(<patch>) of phi` per patch, at the last `Time =` its postProcess
+    printed, as the digits it printed."""
+    path = FLOW_RATES / SOLVES[name][1]
+    assert path.is_file(), (f"OpenFOAM's flowRatePatch output {path.relative_to(ROOT)} is not "
+                            f"committed")
+    parts = re.split(r"^Time = (\S+)[ \t]*$", path.read_text(), flags=re.MULTILINE)
+    assert len(parts) >= 3, f"{path.name} names no time"
+    time, body = parts[-2], parts[-1]
+    sums = {m.group(1): Decimal(m.group(2)) for m in re.finditer(
+        r'sum\("?([^\s")]+)"?\) of phi = (\S+)', body)}
+    assert sums, f"{path.name} holds no sum(<patch>) of phi at {time}"
+    return time, sums
+
+
+def _precision(name: str) -> int:
+    """The significant digits OpenFOAM printed the solve's sums to: its controlDict's
+    `writePrecision`, which Time sets as IOstream's default precision, and which Info and the
+    function objects print to. The digits shown are not it: the general format drops trailing
+    zeros, so `-0.000701136` at writePrecision 10 is good to 5e-14, not 5e-10 (the review of
+    T-MASSFLUX-2, 2 Nov 2026)."""
+    from courant.spec import deck
+
+    text, _ = deck._read_text(SOLVES[name][0], "system/controlDict")
+    got = deck.entry(text or "", "writePrecision")
+    assert got and got.isdigit(), f"{name}'s controlDict sets no writePrecision"
+    return int(got)
+
+
+def _half_unit(printed: Decimal, precision: int) -> float:
+    """Half a unit in the `precision`-th significant digit of a printed value, the solve's own
+    writePrecision (`_precision`); a printed 0 carries no digits to round."""
+    if printed == 0:
+        return 0.0
+    return 0.5 * 10.0 ** (printed.copy_abs().adjusted() - (precision - 1))
+
+
+def _face_counts_of(src: Path, tmp: Path) -> dict[str, int]:
+    from courant.case.polymesh import read_boundary
+
+    mesh = _unpack_fixture(src / "constant" / "polyMesh", tmp / "polyMesh-of-" / src.name)
+    return {p.name: p.n for p in read_boundary(mesh / "boundary")}
+
+
+def _reference_balance(name: str) -> tuple[float, float, float]:
+    """OpenFOAM's own ratio, |the sum of the patch sums| over minus the sum of the negative ones,
+    its denominator, and the ratio's uncertainty from the digits printed."""
+    _, ref = _openfoam_flow_rates(name)
+    inflow = -sum(float(v) for v in ref.values() if v < 0)
+    assert inflow > 0, f"OpenFOAM's flowRatePatch output for {name} shows no inflow"
+    ratio = abs(sum(float(v) for v in ref.values())) / inflow
+    digits = _precision(name)
+    spread = sum(_half_unit(v, digits) for v in ref.values())
+    spread_in = sum(_half_unit(v, digits) for v in ref.values() if v < 0)
+    return ratio, inflow, spread / inflow + ratio * spread_in / inflow
+
+
+def _graded(ratio: float) -> VSeverity:
+    if ratio <= MassFluxCheck.TARGET:
+        return VSeverity.OK
+    return VSeverity.MINOR if ratio <= MassFluxCheck.LOOSE else VSeverity.MAJOR
+
+
+def _as_the_pipeline_judges(case: Path):
+    """`MassFluxCheck` on what `courant verify --checks next` reads: the fields at the log's last
+    time step, with the case configuration and the solver the pipeline reads."""
+    from courant.spec.as_run import Run
+    from courant.verify import from_case_dir
+    from courant.verify.pipeline import _solver
+    from courant.watcher.parser import LogParser
+
+    inputs = from_case_dir(case, checks="next")
+    config = CaseConfig.from_view(inputs.config_view, read_here=inputs.source == "case_dir")
+    events = tuple(LogParser(run_id="r").parse_text(inputs.log_text))
+    last = Run(inputs.log_text, inputs.log_name, events, exit_code=None).last_time
+    assert last is not None, f"the log of {case.name} records no time step"
+    f = read_fields(str(case), fluxes=True, until=last)
+    r = MassFluxCheck().run(VerifyContext(run_id="r", events=[], config=config, fields=f,
+                                          checks="next", solver=_solver(inputs, config)))
+    return f, r
+
+
+@pytest.mark.parametrize("packed", [True, False], ids=["packed", "unpacked"])
+@pytest.mark.parametrize("name", list(SOLVES))
+def test_each_patch_of_a_solved_phi_sums_as_openfoams_flowRatePatch(tmp_path, name, packed):
+    """C1. Each patch's sum is OpenFOAM's own to the digits it printed; a patch whose flux is
+    round-off (a wedge's front and back, a closed cavity's walls) to `n_faces * eps * largest`,
+    where the order of summation decides the bits. The committed (gzipped) directory reads as an
+    unpacked copy does."""
+    expected = SOLVES[name][2]
+    time, ref = _openfoam_flow_rates(name)
+    case = _solve(tmp_path / "case", name, packed=packed)
+    f = read_fields(str(case), fluxes=True)
+    assert f.flux_note is None, f.flux_note
+    assert f.time == float(time), (f.time, time)
+    assert set(f.patch_fluxes) == expected
+    assert set(ref) == expected, f"the reference covers {sorted(ref)}"
+    faces = _face_counts_of(_fixture(name), tmp_path)
+    for patch in sorted(expected):
+        tol = max(_half_unit(ref[patch], _precision(name)), faces[patch] * EPS * f.flux_source.largest)
+        assert abs(f.patch_fluxes[patch] - float(ref[patch])) <= tol, (
+            patch, f.patch_fluxes[patch], str(ref[patch]), tol)
+    if packed:
+        unpacked = read_fields(str(_solve(tmp_path / "unpacked", name)), fluxes=True)
+        assert unpacked.patch_fluxes == f.patch_fluxes
+        assert (unpacked.flux_source.inflow, unpacked.flux_source.outflow,
+                unpacked.flux_source.largest, unpacked.flux_source.kind) == (
+            f.flux_source.inflow, f.flux_source.outflow, f.flux_source.largest,
+            f.flux_source.kind)
+
+
+def test_a_compressible_solvers_written_phi_is_a_mass_flux(tmp_path):
+    """C2. rhoSimpleFoam writes a mass flux, and the check's detail gives it in kg/s whatever
+    the grade (the detail names the unit whenever the file is read, OK or not, so the early
+    stop, which OpenFOAM's own ratio grades OK, holds it on a solver's file). A volume-flux
+    solve (simpleFoam's wedge flow) gives m^3/s, so both kinds' units are held on real files."""
+    converged = read_fields(str(_solve(tmp_path / "c", "duct_converged")), fluxes=True)
+    assert converged.flux_note is None, converged.flux_note
+    assert converged.flux_source.kind == "mass"
+    f, r = _as_the_pipeline_judges(_solve(tmp_path / "e", "duct_early"))
+    assert f.flux_source.kind == "mass"
+    assert not r.skipped, r.detail
+    assert "kg/s" in r.detail and "m^3/s" not in r.detail, r.detail
+    f, r = _as_the_pipeline_judges(_solve(tmp_path / "w", "wedge_flow"))
+    assert f.flux_source.kind == "volume"
+    assert not r.skipped, r.detail
+    assert "m^3/s" in r.detail and "kg/s" not in r.detail, r.detail
+
+
+@pytest.mark.parametrize("name", JUDGED)
+def test_next_grades_each_solved_run_on_openfoams_own_balance(tmp_path, name):
+    """C3. The check's result is the fixed bars applied to OpenFOAM's own ratio. The reader's
+    face-by-face inflow is OpenFOAM's denominator only while every inlet face takes flow in, and
+    that is asserted. A converged solve graded above TARGET is a false alarm to report, not a bar
+    or a case to change."""
+    ratio, inflow, spread = _reference_balance(name)
+    grade = _graded(ratio)
+    assert _graded(max(ratio - spread, 0.0)) is grade is _graded(ratio + spread), (
+        f"OpenFOAM's printed digits put {name}'s ratio {ratio:.3e} +/- {spread:.1e} across a bar")
+    case = _solve(tmp_path, name)
+    t = _solved_time(case)
+    f, r = _as_the_pipeline_judges(case)
+    assert not r.skipped, r.detail
+    assert f.flux_source.file == f"{t}/phi"
+    assert r.value == pytest.approx(ratio, rel=1e-5, abs=spread), (r.value, ratio, spread)
+    assert r.severity is grade, (r.severity, grade, r.detail)
+    if name in CONVERGED:
+        assert r.severity is VSeverity.OK, (
+            f"false alarm on the converged solve {name}: OpenFOAM's own ratio is {ratio:.3e}; "
+            f"report it to the orchestrator, do not change the bar or the case")
+    spread_in = sum(_half_unit(v, _precision(name)) for v in _openfoam_flow_rates(name)[1].values()
+                    if v < 0)
+    assert f.flux_source.inflow == pytest.approx(inflow, rel=1e-5, abs=spread_in)
+
+    from courant.verify import from_case_dir, verify_inputs
+
+    v = json.loads(verify_inputs(from_case_dir(case, checks="next")).to_json())
+    assert f"{t}/phi" in {i["path"] for i in v["run"]["inputs"]}
+    assert not [s for s in v["not_assessed"] if s.startswith(MassFluxCheck.name)]
+    cited = [x for x in v["reasons"] if x["code"] == MassFluxCheck.code]
+    if r.severity is VSeverity.OK:
+        assert cited == []
+    else:
+        assert len(cited) == 1 and cited[0]["severity"] == r.severity.value
+        assert cited[0]["input"] == f"{t}/phi (boundary face fluxes)"
+
+
+def test_a_solved_closed_cavity_is_not_judged_and_says_so(tmp_path):
+    """C3, a guard on a solver's own round-off: the heated cavity's walls carry none of the flow,
+    and the closed-domain sentence names the file."""
+    from courant.verify import from_case_dir, verify_inputs
+
+    case = _solve(tmp_path, "heated_cavity")
+    v = json.loads(verify_inputs(from_case_dir(case, checks="next")).to_json())
+    assert ("Net boundary mass flux ~ 0: no flow crosses the boundary in 200/phi (a closed "
+            "domain): there is no balance to judge") in v["not_assessed"]
+    assert "200/phi" in {i["path"] for i in v["run"]["inputs"]}
+
+
+def test_a_binary_phi_openfoam_wrote_is_not_read_and_says_so(tmp_path):
+    """C4. The converged duct's `phi` as OpenFOAM itself wrote it in binary
+    (`foamFormatConvert`, `writeFormat binary`): not read, the reason given, no traceback, and
+    the verdict the one of the same case with no `phi`."""
+    from courant.verify import from_case_dir, verify_inputs
+
+    binaries = sorted(DUCT_BINARY.glob("*/phi.gz"))
+    assert len(binaries) == 1, (f"OpenFOAM's binary phi {DUCT_BINARY.relative_to(ROOT)}/<t>/"
+                                f"phi.gz is not committed")
+    case = _solve(tmp_path / "binary", "duct_converged")
+    t = _solved_time(case)
+    assert binaries[0].parent.name == t, (binaries[0], t)
+    with gzip.open(binaries[0], "rb") as s, open(case / t / "phi", "wb") as d:
+        shutil.copyfileobj(s, d)
+    bare = _solve(tmp_path / "bare", "duct_converged")
+    (bare / t / "phi").unlink()
+
+    note = f"{t}/phi is written binary; only an ASCII phi is read"
+    f = read_fields(str(case), fluxes=True)
+    assert f.patch_fluxes == {} and f.flux_source is None
+    assert f.flux_note == note
+    v = json.loads(verify_inputs(from_case_dir(case, checks="next")).to_json())
+    without = json.loads(verify_inputs(from_case_dir(bare, checks="next")).to_json())
+    assert f"{MassFluxCheck.name}: {note}" in v["not_assessed"]
+    assert (v["verdict"], v["rule"], v["grade"]) == (
+        without["verdict"], without["rule"], without["grade"])
+
+
+@pytest.mark.usefixtures("checks_as_060")
+@pytest.mark.parametrize("name", list(SOLVES))
+def test_the_default_never_opens_a_solved_phi(tmp_path, name):
+    """C5, GATE-13 on solver-written files: under the default the verdict document is byte for
+    byte the one for the same case with its `phi` removed, and `phi` is not in its inputs."""
+    from courant.verify import from_case_dir, verify_inputs
+
+    case = _solve(tmp_path / "a", name)
+    t = _solved_time(case)
+    bare = _solve(tmp_path / "b", name)
+    (bare / t / "phi").unlink()
+    with_phi = verify_inputs(from_case_dir(case)).to_json()
+    without = verify_inputs(from_case_dir(bare)).to_json()
+    assert with_phi == without
+    assert f"{t}/phi" not in {i["path"] for i in json.loads(with_phi)["run"]["inputs"]}
+
+
+def test_the_reference_is_held_to_the_digits_the_solve_was_written_to():
+    """The review of T-MASSFLUX-2: OpenFOAM prints at the case's writePrecision and drops trailing
+    zeros, so the cylinder's inlet `-0.000701136` is good to 5e-14, not 5e-10. The ratio's spread
+    is then far below OpenFOAM's own ratio (7.7e-9), so the reader is held to that ratio."""
+    assert _precision("cylinder") == 10
+    assert _half_unit(Decimal("-0.000701136"), 10) == pytest.approx(5e-14)
+    assert _half_unit(Decimal("0.0007011360054"), 10) == pytest.approx(5e-14)
+    assert _half_unit(Decimal("0"), 10) == 0.0
+    ratio, _, spread = _reference_balance("cylinder")
+    assert spread < 1e-9 and spread < ratio / 5, (ratio, spread)

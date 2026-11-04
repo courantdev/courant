@@ -1,0 +1,65 @@
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2406                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _be01ca78-20240625 OPENFOAM=2406 version=2406
+Arch   : "LSB;label=32;scalar=64"
+Exec   : postProcess -latestTime -funcs ( flowRatePatch(name=hot) flowRatePatch(name=cold) flowRatePatch(name=adiabatic) )
+Date   : Nov 03 2026
+Time   : 03:22:14
+Host   : bee45e723436
+PID    : 222
+I/O    : uncollated
+Case   : /case/heated_cavity
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 200
+
+surfaceFieldValue flowRatePatch(name=hot):
+    operation     = sum
+
+
+surfaceFieldValue flowRatePatch(name=cold):
+    operation     = sum
+
+
+surfaceFieldValue flowRatePatch(name=adiabatic):
+    operation     = sum
+
+
+Time = 200
+
+Reading fields:
+    surfaceScalarField: phi
+
+Executing functionObjects
+surfaceFieldValue flowRatePatch(name=hot) write:
+    total faces   = 24
+    total area    = 0.00025
+
+    sum(hot) of phi = 0
+
+surfaceFieldValue flowRatePatch(name=cold) write:
+    total faces   = 24
+    total area    = 0.00025
+
+    sum(cold) of phi = 1.32348898e-23
+
+surfaceFieldValue flowRatePatch(name=adiabatic) write:
+    total faces   = 48
+    total area    = 0.0005
+
+    sum(adiabatic) of phi = 0
+
+
+End
+

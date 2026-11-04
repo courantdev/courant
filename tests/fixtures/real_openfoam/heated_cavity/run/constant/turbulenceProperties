@@ -1,0 +1,12 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  Courant test fixture: a differentially heated cavity, run to its endTime (T-VER16C)
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      turbulenceProperties;
+}
+
+simulationType  laminar;

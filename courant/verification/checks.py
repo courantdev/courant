@@ -281,6 +281,19 @@ class TurbulenceBoundsCheck:
 # Field-based checks (live; skip when fields unavailable)
 # ---------------------------------------------------------------------------
 
+def run_as_set_up(config: CaseConfig, ran: str | None,
+                  checks: str = "default") -> tuple[bool, bool]:
+    """(whether the solver that ran, `ran`, is another than the one system/controlDict's
+    `application` names; whether the run is steady, `CaseConfig.is_steady` under `checks`). The
+    one test of both for a balance a run owes: the boundary flux's (VER-18, `_balance_not_owed`)
+    and the wall heat flux's (VER-22, `courant.verification._heat_reader`). Either solver not
+    named: not another."""
+    from courant.case.solvers import same_solver
+
+    other = bool(ran and config.solver and not same_solver(ran, config.solver))
+    return other, config.is_steady(checks)
+
+
 def _balance_not_owed(fields: FieldData, config: CaseConfig | None,
                       ran: str | None = None, checks: str = "default") -> str | None:
     """Why this run's boundary flux need not balance, or None when it must (TRD VER-18).
@@ -295,7 +308,7 @@ def _balance_not_owed(fields: FieldData, config: CaseConfig | None,
     carries no such facts and is judged as given. Steady is `CaseConfig.is_steady` under
     `checks`, as the residual bar asks it in the same verdict (under `next` the solver fallback
     knows v2406's own steady solvers; the final review of 0.6.0 found this asking the default)."""
-    from courant.case.solvers import keeps_volume_flux_solenoidal, same_solver
+    from courant.case.solvers import keeps_volume_flux_solenoidal
 
     src = fields.flux_source
     if src is None:
@@ -303,12 +316,13 @@ def _balance_not_owed(fields: FieldData, config: CaseConfig | None,
     if config is None:
         return (f"{src.file} was read, and the case configuration was not, so whether the run "
                 f"must balance (steady, or a divergence-free volume flux) is unknown")
-    if ran and config.solver and not same_solver(ran, config.solver):
+    other, steady = run_as_set_up(config, ran, checks)
+    if other:
         return (f"the solver that ran is {ran} and system/controlDict names {config.solver}: "
                 f"on a case set up for another solver, whether {src.file} must balance is not "
                 f"judged")
     solver = ran or config.solver
-    if config.is_steady(checks):
+    if steady:
         return None
     if src.kind == "mass":
         return (f"{src.file} holds a mass flux and the run is transient: the flux through its "
@@ -342,6 +356,46 @@ class MassFluxCheck:
     #: precision, and a real inlet carries a fraction of the flow far above this.
     ROUND_OFF = 1e-9
 
+    @classmethod
+    def round_off(cls, value: float, largest: float) -> bool:
+        """Whether |`value`| is round-off next to `largest`: at most `ROUND_OFF` times it. The
+        one test, for the boundary flux (VER-18, `denominator`) and the wall heat flux (VER-22,
+        `_heat_reader`, which also asks it of a face's heat flux next to the largest face heat
+        flux the case wrote). `largest` is a scale the sums judged do not set: VER-18's largest
+        face flux in the file, interior faces included; VER-22's largest integral (or face heat
+        flux) in every row the case wrote at the time judged, every region's. `ROUND_OFF` is read
+        at call time; a non-finite `value` is not round-off."""
+        return abs(value) <= cls.ROUND_OFF * largest
+
+    @classmethod
+    def denominator(cls, inflow: float, outflow: float,
+                    largest: float) -> tuple[float, str] | None:
+        """(what the imbalance is a fraction of, "in" or "out"), or None for a closed boundary:
+        the inflow, or the outflow when the inflow is round-off next to `largest` (`round_off`: a
+        wall's round-off is not inflow); None when both are round-off. The one rule, for the
+        boundary flux (VER-18) and the wall heat flux (VER-22, `_heat_reader`), each giving its
+        own `largest` (`round_off` says which). `inflow` and `outflow` are each at least 0."""
+        if cls.round_off(inflow, largest) and cls.round_off(outflow, largest):
+            return None
+        return (outflow, "out") if cls.round_off(inflow, largest) else (inflow, "in")
+
+    @classmethod
+    def grade(cls, rel: float) -> tuple[VSeverity, bool, float]:
+        """(severity, passed, the bar cited) of a balance out by `rel`: OK within `TARGET`, MINOR
+        within `LOOSE` (citing `TARGET`), else MAJOR (citing `LOOSE`). The one ladder, for the
+        boundary flux (VER-18) and the wall heat flux (VER-22, `energy_balance`); the bars are
+        read at call time."""
+        if rel <= cls.TARGET:
+            return OK, True, cls.TARGET
+        if rel <= cls.LOOSE:
+            return MINOR, True, cls.TARGET
+        return MAJOR, False, cls.LOOSE
+
+    @staticmethod
+    def against(rel: float, bar: float) -> str:
+        """How a measure stands against the bar `grade` cited: "above 1e-02", "within 1e-03"."""
+        return f"{'above' if rel > bar else 'within'} {bar:.0e}"
+
     def run(self, ctx: VerifyContext) -> VerificationResult:
         f = ctx.fields
         if f is None or not f.patch_fluxes:
@@ -369,25 +423,20 @@ class MassFluxCheck:
                                   f"(nan or inf)")
         # Closed only when both directions are round-off; otherwise the denominator is the
         # inflow, or the outflow when no real flux comes in (a wall's round-off is not inflow).
-        tiny = self.ROUND_OFF * largest
-        scale, through = (inflow, "inflow") if inflow > tiny else (outflow, "outflow")
-        if inflow <= tiny and outflow <= tiny:
+        over = self.denominator(inflow, outflow, largest)
+        if over is None:
             where = f" in {src.file}" if src is not None else ""
             return _skip(self.code, self.name,
                          f"no flow crosses the boundary{where} (a closed domain): there is no "
                          f"balance to judge")
+        scale, through = over[0], f"{over[1]}flow"
         rel = abs(net) / scale
-        if rel <= self.TARGET:
-            sev, passed, bar = OK, True, self.TARGET
-        elif rel <= self.LOOSE:
-            sev, passed, bar = MINOR, True, self.TARGET
-        else:
-            sev, passed, bar = MAJOR, False, self.LOOSE
+        sev, passed, bar = self.grade(rel)
         detail = f"net/inflow flux imbalance {rel:.2e}"
         if src is not None:
             detail = (f"net boundary flux {net:.3g}{unit} against an {through} of "
                       f"{scale:.3g}{unit}: out of balance by {rel:.2e} of the {through} "
-                      f"({'above' if rel > bar else 'within'} {bar:.0e})")
+                      f"({self.against(rel, bar)})")
         return _result(self.code, self.name, sev, passed, value=rel, threshold=bar,
                        detail=detail, evidence=evidence)
 
@@ -517,6 +566,34 @@ def run_checks(ctx: VerifyContext,
 #: TRD VER-7b, behind `--checks next` (`fields.unread`): not one of `DEFAULT_CHECKS`, whose
 #: results every caller lists; the gate adds it to its own report under next.
 FIELDS_UNREAD = ("fields.unread", "Solution fields at the time judged read")
+#: TRD VER-22, behind `--checks next` (`conservation.energy.wallheatflux`): not one of
+#: `DEFAULT_CHECKS`; the gate adds its result to its own report under next, as `fields.unread`'s.
+ENERGY = ("conservation.energy", "Net wall heat flux ~ 0")
+
+
+def energy_balance(reading) -> VerificationResult | None:
+    """The heat balance of a steady run, from the wall heat flux OpenFOAM wrote (TRD VER-22):
+    the worst of the balances `reading` (`courant.verification._heat_reader.HeatReading`) judged,
+    each a closed region's |net| over its heat in (or out) or an interface's |q_a + q_b| over the
+    larger side, graded by the boundary balance's own ladder, `MassFluxCheck.grade` (its bars
+    `TARGET` and `LOOSE`, read at call time), never restated. A non-finite integral in a row read is MAJOR. None
+    when no balance was judged: the reading's sentences say why, under "not assessed"."""
+    balances = getattr(reading, "balances", ())
+    if not balances:
+        return None
+    bad = [b for b in balances if not math.isfinite(b.measure)]
+    if bad:
+        b = bad[0]
+        return _result(*ENERGY, MAJOR, False, evidence={"input": ", ".join(b.files)},
+                       detail=f"a wall heat flux integral of {b.where} read at time "
+                              f"{b.time:g} is not finite (nan or inf)")
+    b = max(balances, key=lambda x: x.measure)
+    rel = b.measure
+    sev, passed, bar = MassFluxCheck.grade(rel)
+    detail = (f"{b.where} at time {b.time:g}: {b.sums}; out of balance by {rel:.2e} of "
+              f"{b.scale_name} ({MassFluxCheck.against(rel, bar)})")
+    return _result(*ENERGY, sev, passed, value=rel, threshold=bar, detail=detail,
+                   evidence={"input": ", ".join(b.files)})
 
 
 def fields_unread(read: FieldData | None) -> VerificationResult | None:

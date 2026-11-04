@@ -1,0 +1,40 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  Courant test fixture: a heated plate under an air channel, chtMultiRegionSimpleFoam
+  (T-ENERGY-BALANCE)
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      thermophysicalProperties;
+}
+
+thermoType
+{
+    type            heRhoThermo;
+    mixture         pureMixture;
+    transport       const;
+    thermo          hConst;
+    equationOfState perfectGas;
+    specie          specie;
+    energy          sensibleEnthalpy;
+}
+
+mixture
+{
+    specie
+    {
+        molWeight   28.96;
+    }
+    thermodynamics
+    {
+        Cp          1005;
+        Hf          0;
+    }
+    transport
+    {
+        mu          1.8e-05;
+        Pr          0.7;
+    }
+}

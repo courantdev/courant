@@ -22,6 +22,7 @@ the verdict's manifest once its bytes are read, parsed or not (VER-14, `reads.re
 
 from __future__ import annotations
 
+import gzip
 import re
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -49,6 +50,10 @@ class Patch:
     type: str
     start: int
     n: int
+    #: A mapped patch's `sampleRegion` and `samplePatch` as its boundary entry writes them (a
+    #: region interface, TRD VER-22), None where the entry has none.
+    sample_region: str | None = None
+    sample_patch: str | None = None
 
 
 def cell_count(owner: np.ndarray, neighbour: np.ndarray, noted: int | None = None) -> int:
@@ -253,8 +258,21 @@ _HEADER_ENTRY = re.compile(r"(\w{1,64})[ \t]+([^;\n]{0,256});")
 
 def _body(path: Path) -> tuple[str, dict]:
     """(the text after the FoamFile header, the header's entries). Comments removed; binary
-    refused."""
-    text = strip_comments(path.read_text(errors="replace"))
+    refused. A `.gz` file is read decompressed, as OpenFOAM reads it."""
+    if path.suffix == ".gz":            # as OpenFOAM reads a compressed file (IFstream)
+        # Decompressed to the bound the mesh reader holds a mesh's files to on disk: a small
+        # file can decompress to gigabytes (T-FOLLOWUP-MINORS, T-ENERGY-BALANCE's minors).
+        from courant.case import mesh
+
+        bound = mesh.POLYMESH_MAX_BYTES
+        with gzip.open(path, "rt", errors="replace") as fh:
+            raw = fh.read(bound + 1)
+        if len(raw) > bound:
+            raise ValueError(f"{path.name} decompresses past the reader's "
+                             f"{bound // 2**20} MiB bound")
+    else:
+        raw = path.read_text(errors="replace")
+    text = strip_comments(raw)
     header: dict = {}
     k = text.find("FoamFile")
     if k >= 0:
@@ -380,13 +398,24 @@ def _boundary(path: Path) -> tuple[Patch, ...]:
             raise ValueError("boundary: a patch without a name")
         kv = dict(_HEADER_ENTRY.findall(block))
         out.append(Patch(name=name.split()[-1], type=kv.get("type", "patch").strip(),
-                         start=int(kv["startFace"]), n=int(kv["nFaces"])))
+                         start=int(kv["startFace"]), n=int(kv["nFaces"]),
+                         sample_region=_word(kv.get("sampleRegion")),
+                         sample_patch=_word(kv.get("samplePatch"))))
     return tuple(out)
+
+
+def _word(raw: str | None) -> str | None:
+    """A boundary entry's word value, unquoted, or None where it is absent or empty."""
+    if raw is None:
+        return None
+    word = raw.strip().strip('"').strip()
+    return word or None
 
 
 def read_boundary(path: str | Path) -> tuple[Patch, ...]:
     """One `polyMesh/boundary` file's patches, in order (the boundary flux's face counts, TRD
-    VER-18). Noted for the manifest once its bytes are read (VER-14)."""
+    VER-18; each patch's type and a mapped patch's `sampleRegion` and `samplePatch`, VER-22),
+    plain or `.gz`. Noted for the manifest once its bytes are read (VER-14)."""
     return _read(Path(path), _boundary)
 
 

@@ -24,11 +24,13 @@ the checks it runs (VER-3a under `--checks next`): the pipeline decides VER-5.16
 on it, and the same code is what the endTime item and the ended-short line read
 (`courant.spec.as_run.Run.exit_code`), and what the HTML report and `courant
 convergence` parse the log with. The replay tier and `courant watch` ask
-`infer_exit_code` and `ends_in_end` here too. One reader does not yet:
+`infer_exit_code` and `ends_in_end` here too. So does
 `courant.verify.schema.executed_in_log`, SB-11's advisory `executed` (the MCP
-`score_agent_output` and SilentBench's `grade`), still reads a line `End`
-anywhere and no "FOAM FATAL" its own way (TRD VER-3; graph node T-EXECUTED-ONE,
-since it feeds SilentBench's scoring).
+`score_agent_output` and SilentBench's `grade`), under `--checks next`
+(`silentbench.executed.verdict_end`; T-EXECUTED-ONE): `verdict_exit_code` under the
+verdict's checks, and no crash the parser reads. Under the default it keeps
+v0.6.0's own reading, a line `End` anywhere and no "FOAM FATAL" (GATE-13: it
+feeds SilentBench's scoring), until that name is promoted.
 """
 
 from __future__ import annotations

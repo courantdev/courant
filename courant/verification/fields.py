@@ -27,6 +27,16 @@ class FluxSource:
     largest: float   # the largest |phi| on any face in the file, internal faces included
 
 
+def case_nu(config) -> float | None:
+    """The kinematic viscosity the case reader read (`CaseConfig.transport`, in the verify's
+    mode), or None: the one reader of nu, which `FieldData.nu` takes (TRD VER-3b). The field
+    reader read it again with its own `FoamFile(...)["nu"]`, so a nu written as `$nuVal` was 0.5
+    to the setup rules under `--checks next` and None to the field checks (the review of
+    hp/audit-robustness, 21 Oct 2026)."""
+    nu = (getattr(config, "transport", None) or {}).get("nu") if config is not None else None
+    return float(nu) if isinstance(nu, (int, float)) and not isinstance(nu, bool) else None
+
+
 @dataclass
 class FieldData:
     time: float
@@ -34,7 +44,7 @@ class FieldData:
     patch_fluxes: dict[str, float] = field(default_factory=dict)    # patch -> signed phi
     yplus: np.ndarray | None = None                                 # per wall-face y+
     length_scale: float | None = None                              # characteristic L
-    nu: float | None = None                                        # kinematic viscosity
+    nu: float | None = None             # kinematic viscosity: the case reader's (`case_nu`)
     inlet_speed: float | None = None                              # reference |U|
     #: The file `patch_fluxes` was summed from, when the reader filled it (VER-18).
     flux_source: FluxSource | None = None
@@ -61,9 +71,13 @@ class FieldData:
         return np.linalg.norm(u, axis=1) if u.ndim == 2 else np.abs(u)
 
     @classmethod
-    def from_case(cls, case_dir: str, time: str | None = None) -> "FieldData":  # pragma: no cover
-        """Read solution fields from a solved case (live path). The boundary flux is not read
-        here: only `courant verify --checks next` reads it (VER-18, GATE-13)."""
+    def from_case(cls, case_dir: str, time: str | None = None,
+                  config=None) -> "FieldData":  # pragma: no cover
+        """Read solution fields from a solved case (live path), with the viscosity the case
+        reader read (`config`, a `CaseConfig`; `case_nu`). The boundary flux is not read here:
+        only `courant verify --checks next` reads it (VER-18, GATE-13)."""
         from courant.verification._fluid_reader import read_fields
 
-        return read_fields(case_dir, time)
+        data = read_fields(case_dir, time)
+        data.nu = case_nu(config)
+        return data

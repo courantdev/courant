@@ -75,6 +75,7 @@ def test_lts_is_openfoams_own_test(ddt, lts):
     assert CaseConfig(ddt_scheme=ddt).is_local_euler() is lts
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_lts_is_not_steady_and_marches_to_a_steady_state_only_under_next():
     cfg = _lts()
     assert not cfg.is_steady() and not cfg.is_steady("next")
@@ -86,6 +87,7 @@ def test_lts_is_not_steady_and_marches_to_a_steady_state_only_under_next():
 
 
 # ---------------------------------------------------------------- the residual bar
+@pytest.mark.usefixtures("checks_as_060")
 def test_an_lts_run_that_stopped_far_from_steady_is_judged_on_its_residuals_under_next():
     """p ends at 3e-2, three times the gate's MAJOR line. Under the default it is a transient
     run with no Courant number to fail, and passes."""
@@ -97,6 +99,7 @@ def test_an_lts_run_that_stopped_far_from_steady_is_judged_on_its_residuals_unde
     assert nxt.severity.value == "major" and nxt.value == pytest.approx(3e-2)
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_the_verdict_follows_under_next_and_the_default_keeps_v050s():
     text = _lts_log({"Ux": 1e-4, "p": 3e-2, "e": 1e-4})
     default, nxt = _verify(text, _lts(), "default"), _verify(text, _lts(), "next")
@@ -106,6 +109,7 @@ def test_the_verdict_follows_under_next_and_the_default_keeps_v050s():
     assert json.loads(nxt.to_json())["tool"]["checks"] == "next"
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_a_residual_just_above_the_target_raises_the_not_converged_finding_under_next():
     events = _events(_lts_log({"Ux": 1e-4, "p": 4e-3}))
     ids = lambda checks: {f.id for f in run_all_checkers(CheckContext(  # noqa: E731
@@ -132,6 +136,7 @@ def test_lts_relaxation_of_one_is_not_a_finding(checks):
     assert "scheme.relaxation" not in found
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_an_lts_case_is_not_a_fixed_timestep_under_next():
     """`adjustTimeStep no` on an LTS case says nothing: each cell's step is set from maxCo."""
     events = _events(_lts_log({"Ux": 1e-5, "p": 2e-5}))
@@ -142,6 +147,7 @@ def test_an_lts_case_is_not_a_fixed_timestep_under_next():
     assert "scheme.fixed_dt" not in found("next")
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_the_convergence_regime_is_steady_under_next_with_no_conflict():
     clock = Clock([float(i) for i in range(1, 11)], [None] * 10, [None] * 10)
     assert regime_of(_lts(), "rhoPimpleFoam", clock) == ("transient", "config", None)
@@ -153,6 +159,7 @@ def test_the_convergence_regime_is_steady_under_next_with_no_conflict():
 
 
 # ---------------------------------------------------------------- the cause ranking asks the same
+@pytest.mark.usefixtures("checks_as_060")
 def test_the_fixed_step_predicate_asks_the_same_question_as_the_fixed_step_note():
     """The knowledge base's `fixed_dt_no_adaptivity` ranks `NUM.MISSING_ADJUSTABLE_DT` from the
     configuration. On an LTS case under `next` `scheme.fixed_dt` is silent (each cell's step is

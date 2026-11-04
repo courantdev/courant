@@ -54,12 +54,33 @@ _ID_INPUT = {"solver.": "system/fvSolution",
 
 #: A mesh finding's input when the metric was computed from the mesh files (VER-7a).
 _POLYMESH_INPUT = "constant/polyMesh (cell aspect ratio)"
+#: TRD VER-22's name in `checks.NEXT`: the heat balance from the wall heat flux the run wrote.
+ENERGY_WALLHEATFLUX = checks.ENERGY_WALLHEATFLUX     # its NEXT name, defined once
+#: VER-5b: `physics.laminar_unstable`'s input when it cites a Reynolds number, which it does only
+#: under `--checks next` (its `threshold` is then the flow's turbulent bound).
+_REYNOLDS_INPUT = ("the solver log (its start, transport and laminar stress models), "
+                   "constant/transportProperties, U at the start and the mesh the solver read "
+                   "(wall and inlet faces)")
+
+
+def _cited_input(f) -> str | None:
+    """VER-5b: the input of a `physics.laminar_unstable` that cites a regime number (it carries
+    that number's turbulent bound as its threshold; under the default it never does)."""
+    from courant.case import regime
+
+    if f.id != "physics.laminar_unstable" or f.threshold is None:
+        return None
+    if f.threshold == regime.RE_EXTERNAL_TURBULENT:
+        return _REYNOLDS_INPUT
+    if f.threshold == regime.RA_TRANSITION:
+        return _ID_INPUT["physics.laminar_regime"]
+    return None
 
 
 def _finding_input(f, log_name: str, mesh_view: dict | None = None) -> str:
     from courant.case.mesh import POLYMESH_SOURCE
 
-    base = next((v for k, v in _ID_INPUT.items() if f.id.startswith(k)), None)
+    base = _cited_input(f) or next((v for k, v in _ID_INPUT.items() if f.id.startswith(k)), None)
     if f.checker == "mesh" and (mesh_view or {}).get("source") == POLYMESH_SOURCE:
         base = _POLYMESH_INPUT
     base = base or _CHECKER_INPUT.get(f.checker) or log_name
@@ -84,20 +105,29 @@ def _kb():
     return build_default_kb()
 
 
-def _fields(case_dir: str | None, last: float | None = None, mode: str = "default"):
+def _fields(case_dir: str | None, last: float | None = None, mode: str = "default",
+            config=None):
     """What the field reader read (TRD VER-7b), or None for no case directory. Under `--checks
     next` (`fields.log_time`) it stops at `last`, the log's last time step, and
-    (`conservation.mass_flux.phi`, VER-18) it reads the boundary flux from that time's `phi`."""
+    (`conservation.mass_flux.phi`, VER-18) it reads the boundary flux from that time's `phi`.
+    Its viscosity is the case reader's (`config`, read in the verify's mode; `fields.case_nu`):
+    one reader of nu, so a nu written through a macro is one number to the setup rules and to
+    the field checks (TRD VER-3b; T-VER3B-ONE)."""
     if not case_dir:
         return None
     try:
         from courant.verification._fluid_reader import read_fields
+        from courant.verification.fields import case_nu
 
-        # VER-18: the boundary flux from the `phi` of the time read, behind --checks next.
-        fluxes = checks.enabled("conservation.mass_flux.phi", mode)
+        # VER-18: the boundary flux from the `phi` of the time read (on by default from 0.7.0,
+        # on RM-37's result: `checks.PROMOTE_MASS_FLUX_PHI`).
+        fluxes = checks.enabled(checks.MASS_FLUX_PHI, mode)
         if last is not None and checks.enabled("fields.log_time", mode):
-            return read_fields(case_dir, fluxes=fluxes, until=last)
-        return read_fields(case_dir, fluxes=fluxes)
+            data = read_fields(case_dir, fluxes=fluxes, until=last)
+        else:
+            data = read_fields(case_dir, fluxes=fluxes)
+        data.nu = case_nu(config)
+        return data
     except Exception:                                   # noqa: BLE001
         return None
 
@@ -174,6 +204,29 @@ def _zero_sentence(zero, read) -> list[str]:
     return [sentences.zero_components(zero, time)]
 
 
+def _judgement_sentences(events, config, mode: str, zero: tuple[str, ...]) -> list[str]:
+    """What the residual judgement read and did not hold against the run, from the judgement the
+    residual checks make (`convergence.judge_residuals`, the same exclusions), under `--checks
+    next` only: VER-16c's note (`residual.control.floor`), the `residualControl` tolerances below
+    the residual target the run's fields did not reach; and VER-3b's (`residual.control`, where
+    the keywords are read at all), the keywords the matcher did not evaluate that may set a
+    field's bar or relaxation (`ResidualJudgement.unevaluated`). Under the default nothing is
+    asked, and nothing is said."""
+    if not checks.enabled("residual.control", mode):
+        return []
+    from courant.verification.convergence import judge_residuals
+
+    judged = judge_residuals(events, config, mode, exclude=zero)
+    if judged is None:
+        return []
+    out = []
+    if judged.unmet and checks.enabled("residual.control.floor", mode):
+        out.append(sentences.tolerances_unmet(judged.unmet))
+    if judged.unevaluated:
+        out.append(sentences.keywords_not_evaluated(judged.unevaluated))
+    return out
+
+
 def _steady_courant_sentence(events, config, log_text: str | None,
                              mode: str = "default") -> list[str]:
     """VER-13a's sentence, when the log printed a Courant number on a declared steady case:
@@ -184,6 +237,48 @@ def _steady_courant_sentence(events, config, log_text: str | None,
     why = steady_courant(config, log_text, mode)
     peak = peak_courant(events) if why else None
     return [] if peak is None else [sentences.COURANT_STEADY.format(co=f"{peak:.3g}", why=why)]
+
+
+def _skip_detail(result, reynolds_read: bool) -> str:
+    """A skipped check's line. `regime.reynolds` says it is not implemented because nothing feeds
+    it a length scale (VER-7c); where VER-5b read the case's Reynolds number (under `--checks
+    next`, for physics.laminar_unstable alone) that reason is not true, so the line says what is:
+    the check is not fed from it (`sentences.REYNOLDS_NOT_FED`)."""
+    from courant.verification.checks import REYNOLDS_NOT_IMPLEMENTED
+
+    if reynolds_read and result.check_code == "regime.reynolds" and \
+            result.detail == REYNOLDS_NOT_IMPLEMENTED:
+        return sentences.REYNOLDS_NOT_FED
+    return result.detail
+
+
+def _reynolds_reader(inputs: RunInputs, config, run):
+    """VER-5b's Reynolds reading for the checks (`CheckContext.read_reynolds`), under `--checks
+    next` (`physics.laminar_unstable.regime`) and for a case directory only: the case's files
+    the solver read, read inside this verdict's recording, so each joins its manifest (VER-14).
+    None under the default, or for a log or a sidecar, which hold no mesh."""
+    from courant.diagnosis.checkers import LAMINAR_REGIME
+
+    if not inputs.case_dir or run is None or not checks.enabled(LAMINAR_REGIME, inputs.checks):
+        return None
+    from courant.case.reynolds import reynolds_number
+
+    return lambda: reynolds_number(inputs.case_dir, config, run)
+
+
+def _still_reader(inputs: RunInputs, config, run):
+    """VER-5b's other reading (`CheckContext.read_still`), on the same terms: whether the case's
+    files show that buoyancy alone moves its fluid (`courant.case.reynolds.buoyancy_alone`),
+    without which physics.laminar_regime's Rayleigh number sets nothing aside. None under the
+    default, or for a log or a sidecar, which hold no mesh and no fields: their Rayleigh number,
+    if they state one, never sets a run aside."""
+    from courant.diagnosis.checkers import LAMINAR_REGIME
+
+    if not inputs.case_dir or run is None or not checks.enabled(LAMINAR_REGIME, inputs.checks):
+        return None
+    from courant.case.reynolds import buoyancy_alone
+
+    return lambda temperatures: buoyancy_alone(inputs.case_dir, config, run, temperatures)
 
 
 def _solver(inputs: RunInputs, config) -> str | None:
@@ -267,6 +362,8 @@ def _verify(inputs: RunInputs, reads: Reads | None) -> tuple[Verdict, forks.Solv
         not_assessed.append(sentences.NO_MESH)
     elif mesh.source is not None:                       # the aspect ratio only (RM-35 dev)
         not_assessed.append(sentences.MESH_PARTIAL)
+    if _regions_checkmesh_partial(inputs, config):      # VER-3d, under `case.regions`
+        not_assessed.append(sentences.MESH_REGIONS_PARTIAL)
     skew_set_aside = sentences.skewness_zero_area(mesh)  # VER-7d, as preflight says it
     if skew_set_aside:
         not_assessed.append(skew_set_aside)
@@ -282,6 +379,9 @@ def _verify(inputs: RunInputs, reads: Reads | None) -> tuple[Verdict, forks.Solv
     version_at = len(not_assessed)
 
     events, findings, trust, diagnosis = [], [], None, None
+    #: VER-5b, under `--checks next`: whether physics.laminar_unstable read a Reynolds number of
+    #: this case, which `regime.reynolds`' line then says it does not take (`_skip_detail`).
+    reynolds_read = False
     if is_recognised:
         from courant.case.solvers import is_multi_run
         from courant.watcher.parser import LogParser
@@ -292,8 +392,14 @@ def _verify(inputs: RunInputs, reads: Reads | None) -> tuple[Verdict, forks.Solv
         multirun = is_multi_run(_solver(inputs, config))
         parser = LogParser(run_id=inputs.run_id, regions=keyed, multirun=multirun)
         events = list(parser.parse_text(inputs.log_text, return_code=exit_code))
+        # VER-3d (`case.regions`): the regions' own dictionaries were read from this directory.
+        # "whole" when no region dictionary or 0/<region>/ was missing or unread (the review, m2).
+        read = None
+        if (inputs.source == "case_dir" and config is not None and config.regions
+                and checks.enabled("case.regions", inputs.checks)):
+            read = "whole" if config.regions_read_whole() else "part"
         not_assessed.extend(_region_sentences(inputs.log_text, parser, keyed=keyed,
-                                              multirun=multirun))
+                                              multirun=multirun, read=read))
     from courant.spec.as_run import Run
 
     #: The solver's own record of the run, for what conformance, the end time and the field read
@@ -312,7 +418,7 @@ def _verify(inputs: RunInputs, reads: Reads | None) -> tuple[Verdict, forks.Solv
     version_line = forks.not_checked(seen)
     if version_line:
         not_assessed.insert(version_at, version_line)
-    read = _fields(inputs.case_dir, last, inputs.checks)
+    read = _fields(inputs.case_dir, last, inputs.checks, config)
     fields = read if getattr(read, "internal", None) else None
     not_assessed.extend(_field_sentences(read, last, config))
     if is_recognised and events:
@@ -327,15 +433,31 @@ def _verify(inputs: RunInputs, reads: Reads | None) -> tuple[Verdict, forks.Solv
         zero = _zero_components(fields, events, config, inputs.checks, last)
         not_assessed.extend(_zero_sentence(zero, read))
         names = tuple(c.name for c in zero)
-        finding_set = run_all_checkers(CheckContext(
+        # Under `--checks next`: a residualControl tolerance below the target that a field did
+        # not reach, which the bar no longer holds it to (VER-16c), and a keyword the matcher did
+        # not evaluate that may set a field's bar or relaxation (VER-3b).
+        not_assessed.extend(_judgement_sentences(events, config, inputs.checks, names))
+        ctx = CheckContext(
             run_id=inputs.run_id, events=events, config=config, mesh=mesh,
-            log_text=inputs.log_text, checks=inputs.checks, zero_components=names))
+            log_text=inputs.log_text, checks=inputs.checks, zero_components=names,
+            read_reynolds=_reynolds_reader(inputs, config, run),
+            read_still=_still_reader(inputs, config, run))
+        finding_set = run_all_checkers(ctx)
         finding_set = checks.only_enabled(finding_set, inputs.checks)
         findings = list(finding_set)
         # VER-13a, under `--checks next`: a steady run's Courant number is judged by no check,
         # and the verdict says so.
         not_assessed.extend(_steady_courant_sentence(events, config, inputs.log_text,
                                                      inputs.checks))
+        # VER-5b, under `--checks next`: a transient laminar run's residual history the case's
+        # own numbers set aside, and why (`CheckContext.laminar`, read once by the checker).
+        from courant.diagnosis.checkers import laminar_spared_sentence
+
+        spared = laminar_spared_sentence(ctx.laminar)
+        if spared is not None:
+            not_assessed.append(spared)
+        reynolds_read = ctx.laminar is not None and any(
+            n.name == "Reynolds" for n in ctx.laminar.numbers)
         # The solver the verdict names (the log's Exec line), not only controlDict's
         # `application`: the flux balance a run owes is the solver's that ran (VER-18).
         trust = verify(VerifyContext(run_id=inputs.run_id, events=events,
@@ -348,6 +470,25 @@ def _verify(inputs: RunInputs, reads: Reads | None) -> tuple[Verdict, forks.Solv
             unread = fields_unread(read)
             if unread is not None:
                 trust = TrustReport.from_results(trust.run_id, [*trust.results, unread])
+        # VER-22, behind next: a case directory's own wallHeatFlux output (a log holds none).
+        if inputs.case_dir and checks.enabled(ENERGY_WALLHEATFLUX, inputs.checks):
+            from courant.verification._heat_reader import read_heat
+            from courant.verification.checks import energy_balance
+            from courant.verification.grade import TrustReport
+
+            try:
+                heat = read_heat(inputs.case_dir, last, config, _solver(inputs, config),
+                                 inputs.checks, log_text=inputs.log_text)
+            except Exception:                           # noqa: BLE001 - said, never raised
+                from courant.verification._heat_reader import HeatReading, _say
+
+                heat = HeatReading(sentences=(_say(
+                    "the run's wallHeatFlux output could not be read whole, so the heat balance "
+                    "is not judged"),))
+            not_assessed.extend(heat.sentences)
+            energy = energy_balance(heat)
+            if energy is not None:
+                trust = TrustReport.from_results(trust.run_id, [*trust.results, energy])
         bundle = assemble_bundle(run_id=inputs.run_id, events=events, findings=finding_set,
                                  kb=_kb(), config=config, mesh=mesh, log_text=inputs.log_text,
                                  checks=inputs.checks)
@@ -405,8 +546,8 @@ def _verify(inputs: RunInputs, reads: Reads | None) -> tuple[Verdict, forks.Solv
     if checks.enabled("version.unsupported", inputs.checks):     # VER-5.10, behind --checks next
         verdict, rule = policy.apply_version(verdict, rule, seen.measured)
     if trust is not None:
-        not_assessed.extend(f"{r.check_name}: {r.detail}" for r in trust.results
-                            if r.skipped and r.detail)
+        not_assessed.extend(f"{r.check_name}: {_skip_detail(r, reynolds_read)}"
+                            for r in trust.results if r.skipped and r.detail)
     not_assessed.extend(limitations(findings, config))
 
     extracted = conformance is not None and extracted_unconfirmed(inputs.spec)
@@ -624,18 +765,42 @@ def _reasons(inputs: RunInputs, events, findings, trust) -> list[Reason]:
     return out
 
 
-def _region_sentences(text: str, parser, *, keyed: bool, multirun: bool) -> list[str]:
+def _regions_checkmesh_partial(inputs, config) -> bool:
+    """Whether some regions of a multi-region case have a checkMesh log and not all, so the
+    mesh reader read those alone (`mesh.read_mesh_quality`; VER-3d, `case.regions`, a case
+    directory only)."""
+    if not (inputs.source == "case_dir" and inputs.case_dir and config is not None
+            and config.regions and checks.enabled("case.regions", inputs.checks)):
+        return False
+    from courant.case.mesh import region_checkmesh_logs
+
+    logs, absent = region_checkmesh_logs(inputs.case_dir, config.regions)
+    return bool(logs) and bool(absent)
+
+
+def _region_sentences(text: str, parser, *, keyed: bool, multirun: bool,
+                      read: str | None = None) -> list[str]:
     """What a verdict says of a multi-region log (TRD VER-20): how its residuals were read. ESI's
     CHT solvers name a region in a header (`regions_in`), OpenFOAM.org's foamMultiRun in a prefix
-    on each line, read under `next` once its width is (`LogParser.prefix_width`)."""
+    on each line, read under `next` once its width is (`LogParser.prefix_width`). `read`: the
+    case reader read the regions' own dictionaries (VER-3d, `case.regions`), "whole" when each
+    was read (`CaseConfig.regions_read_whole`), "part" when one was missing or not read; the
+    sentence says which."""
     from courant.watcher.parser import has_coupled_solve, regions_in
 
     if not (regions_in(text) or parser.prefix_width is not None):
         return [sentences.MULTI_REGION_PREFIX_UNREAD] if multirun and not keyed else []
     if not keyed:
         return [sentences.MULTI_REGION_MERGED]
-    out = [sentences.MULTI_REGION_KEYED_COURANT if parser.region_courant
-           else sentences.MULTI_REGION_KEYED]
+    if read == "whole":
+        out = [sentences.MULTI_REGION_KEYED_COURANT_READ if parser.region_courant
+               else sentences.MULTI_REGION_KEYED_READ]
+    elif read == "part":
+        out = [sentences.MULTI_REGION_KEYED_COURANT_PART if parser.region_courant
+               else sentences.MULTI_REGION_KEYED_PART]
+    else:
+        out = [sentences.MULTI_REGION_KEYED_COURANT if parser.region_courant
+               else sentences.MULTI_REGION_KEYED]
     if has_coupled_solve(text):
         out.append(sentences.MULTI_REGION_COUPLED)
     return out

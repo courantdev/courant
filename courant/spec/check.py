@@ -145,16 +145,19 @@ def check_conformance(spec: Spec | dict, case_dir: str | Path | None, *, spec_sh
     `checks` is `--checks` (GATE-13). Under `next` each value is also checked against what ran
     (`conformance.as_run`, TRD SPEC-13, `courant.spec.as_run`): `run` is the solver's log
     (`as_run.Run`), when there is one, and the case's own mesh files are read for the mesh
-    items. Under the default the deck alone decides, as in v0.5.0."""
+    items. Under the default the deck alone decides, as in v0.5.0. Under `next` too, each file is
+    read as the solver reads it, as the case reader reads it (`spec.directives`, TRD VER-3b:
+    `deck.read`'s `macros`)."""
     from courant.spec.impossible import impossibilities
     from courant.verify.checks import enabled
     from courant.verify.schema import ConformanceBlock, ConformanceItem
 
+    macros = enabled("spec.directives", checks)
     as_run = None
     if enabled("conformance.as_run", checks) and case_dir is not None:
         from courant.spec.as_run import AsRun
 
-        as_run = AsRun(case_dir, run)
+        as_run = AsRun(case_dir, run, macros=macros)
     if isinstance(spec, dict):
         spec = Spec.model_validate(spec)
     invalid = impossibilities(spec)
@@ -179,7 +182,7 @@ def check_conformance(spec: Spec | dict, case_dir: str | Path | None, *, spec_sh
         if case_dir is None:
             found = deck.Found(None, item.file, "only a log was given; the case directory is needed")
         else:
-            found = deck.read(case_dir, item)
+            found = deck.read(case_dir, item, macros=macros)
             if as_run is not None:
                 found = as_run.read(item, found, rel=rel)
         ok = conforms(item, found.value, rel=rel, angle_deg=angle)
@@ -276,8 +279,8 @@ _PHASES_FILE = "constant/transportProperties"
 _TEXT_KEYS = {"application", "simulationType", "RASModel", "LESModel", "model", "solver"}
 
 
-def _probe(case: Path, item: SpecItem):
-    found = deck.read(case, item)
+def _probe(case: Path, item: SpecItem, macros: bool = False):
+    found = deck.read(case, item, macros=macros)
     return found.value
 
 
@@ -302,11 +305,17 @@ def draft_spec(case_dir: str | Path, *, task: str | None = None,
     case = Path(case_dir)
     items: list[SpecItem] = []
     names: set[str] = set()
+    #: TRD VER-3b (`spec.directives`, --checks next): each value read as the solver reads it, as
+    #: `check_conformance` reads it in the same mode, so the draft conforms to its own case.
+    macros = enabled("spec.directives", checks)
     #: SPEC-13, under `conformance.as_run` (--checks next): blockMeshDict's cells and scale are
     #: drafted only when the case's own mesh is the one blockMeshDict describes; on a mesh
     #: refined, scaled or snapped after blockMesh they name a mesh nobody solved on, and the draft
     #: would not conform to its own case under next. The default drafts as v0.5.0 did.
-    solved = AsRun(case) if enabled("conformance.as_run", checks) else None
+    solved = AsRun(case, macros=macros) if enabled("conformance.as_run", checks) else None
+
+    def read(item: SpecItem) -> deck.Found:
+        return deck.read(case, item, macros=macros)
 
     def add(**kw) -> None:
         if kw["name"] in names:
@@ -315,10 +324,10 @@ def draft_spec(case_dir: str | Path, *, task: str | None = None,
             item = SpecItem(**kw)
         except ValueError:
             return
-        if _probe(case, item) is None:
+        if _probe(case, item, macros) is None:
             return
         if solved is not None and names_the_mesh(item):
-            written = deck.read(case, item)
+            written = read(item)
             if solved.read(item, written, rel=0.0).value != written.value:
                 return
         names.add(item.name)
@@ -348,7 +357,7 @@ def draft_spec(case_dir: str | Path, *, task: str | None = None,
                 item_kw = {"name": f"{name} at {label}" + ("" if key == "value" else f" ({key})"),
                            "file": f"0/{name}", "patch": patch,
                            "key": None if key == "value" else key}
-                found = deck.read(case, SpecItem(**item_kw, value=0.0))
+                found = read(SpecItem(**item_kw, value=0.0))
                 if found.value is None:
                     continue
                 add(**item_kw, value=found.value)
@@ -356,7 +365,7 @@ def draft_spec(case_dir: str | Path, *, task: str | None = None,
     # Properties, forces, run control, modelling choices.
     properties = _PROPERTIES
     if solved is not None and _probe(case, SpecItem(name="a", file=_MODULE[0], key="application",
-                                                    value="x")) == "foamRun":
+                                                    value="x"), macros) == "foamRun":
         properties = (*_PROPERTIES, _MODULE)
     for file, path, key, name, choice in properties:
         if not (case / file).is_file():
@@ -364,7 +373,7 @@ def draft_spec(case_dir: str | Path, *, task: str | None = None,
         is_text = key in _TEXT_KEYS
         probe = SpecItem(name=name, file=file, path=path, key=key,
                          value="x" if is_text else 0.0)
-        found = deck.read(case, probe)
+        found = read(probe)
         if found.value is None:
             continue
         dims = found.dimensions if found.dimensions else None
@@ -378,7 +387,7 @@ def draft_spec(case_dir: str | Path, *, task: str | None = None,
             for key in ("nu", "rho"):
                 probe = SpecItem(name=f"{phase} {key}", file=_PHASES_FILE, path=(phase,),
                                  key=key, value=0.0)
-                found = deck.read(case, probe)
+                found = read(probe)
                 if found.value is not None:
                     add(name=f"{phase} {key}", file=_PHASES_FILE, path=(phase,), key=key,
                         value=found.value, dimensions=found.dimensions or None)
@@ -386,7 +395,7 @@ def draft_spec(case_dir: str | Path, *, task: str | None = None,
     # The mesh: cell counts are a modelling choice; surface geometry is identity.
     if include_mesh and (case / "system/blockMeshDict").is_file():
         cells = _probe(case, SpecItem(name="c", file="system/blockMeshDict", blocks="cells",
-                                      value=(0.0,)))
+                                      value=(0.0,)), macros)
         if cells:
             add(name="mesh cells", file="system/blockMeshDict", blocks="cells",
                 value=tuple(cells), modelling_choice=True)

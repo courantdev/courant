@@ -133,6 +133,45 @@ def names_regions(text: str | None) -> bool:
                 or _RE_REGION_COURANT_IN_TEXT.search(t) or _RE_PREFIXED_TIME_IN_TEXT.search(t))
 
 
+#: A foamMultiRun residual line behind a region's prefix: the region's name, the padding, then the
+#: linear solver's own line (`bottomAir DILUPBiCGStab:  Solving for h, Initial residual = ...`).
+#: Its prefix names its region whether or not the prefix's width is known yet.
+_RE_PREFIXED_RESIDUAL = re.compile(r"^(\S+) +\S+:\s+Solving for [\w.]+,\s*Initial residual")
+#: The lines foamMultiRun writes behind the blank prefix that the trust boundary keeps, any of
+#: which gives the prefix's width: `Time =`, `deltaT =`, `ExecutionTime =`, `End`.
+_RE_BLANK_PREFIXED = re.compile(r"^( +)(?:Time = \S|deltaT = |ExecutionTime = |End[ \t]*$)")
+
+
+def log_regions(text: str | None) -> tuple[str, ...]:
+    """Every region a multi-region log names, in any way this parser reads one, in the order the
+    log first names them: an ESI region header (`Solving for fluid region air`), a `Region: air
+    Courant Number` line, the region in foamMultiRun's prefix of a residual line
+    (`_RE_PREFIXED_RESIDUAL`), and of a Courant line once a line behind the blank prefix has
+    given the prefix's width (`_RE_BLANK_PREFIXED`, `_RE_PREFIX`, as `LogParser` reads it under
+    `multirun`). A window of the log (the 200 lines the trust boundary keeps of a run with many
+    regions) may hold no `Time =` line, so the width is not taken from that line alone (the
+    review of T-REGION-KEYS-BUNDLE). Read from the text whatever the mode and the solver, so the
+    trust boundary knows every name the lines it keeps may carry
+    (`courant.diagnosis.redact.region_places`). A one-region log names none."""
+    names: dict[str, None] = {}
+    width = None
+    for line in (text or "").splitlines():
+        m = (_RE_REGION.match(line) or _RE_REGION_COURANT.match(line)
+             or _RE_PREFIXED_RESIDUAL.match(line))
+        if m:
+            names.setdefault(m.group(1))
+            continue
+        if width is None:
+            m = _RE_BLANK_PREFIXED.match(line)
+            if m is not None:
+                width = len(m.group(1))
+            continue
+        head = _RE_PREFIX.match(line[:width])
+        if head is not None and head.group(1) and _RE_COURANT.search(line[width:]):
+            names.setdefault(head.group(1))
+    return tuple(names)
+
+
 #: The command line as v2406 prints it in its banner (argList.C: `"Exec   : " << commandLine_`,
 #: the arguments as given, joined by spaces).
 _RE_EXEC = re.compile(r"^Exec[ \t]*:", re.MULTILINE)

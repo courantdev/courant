@@ -91,7 +91,8 @@ def score_agent_output(case: str, spec: str, spec_sha256: str | None = None,
             verdict = verify_inputs(inputs)
     except InputError as exc:
         return {"error": str(exc)}
-    scored = outcome_of(verdict, executed=executed_in_log(inputs.log_text),
+    executed = executed_in_log(inputs.log_text, inputs.checks, given=inputs.exit_code)
+    scored = outcome_of(verdict, executed=executed,
                         executed_source="agent_log", reported_success=reported_success
                         ).model_dump(include=_SCORED)
     return {"advisory": True, "note": ADVISORY,

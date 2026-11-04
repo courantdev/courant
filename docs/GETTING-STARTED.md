@@ -10,7 +10,7 @@ checks never use the network; the few commands whose purpose is a network call (
 update`, and a language model you name) say what they contact first. [NETWORK.md](NETWORK.md)
 lists them.
 
-Version 0.6.0. Measured on OpenFOAM v2406. Every figure quoted below carries its denominator;
+Version 0.7.0. Measured on OpenFOAM v2406. Every figure quoted below carries its denominator;
 `courant verify --about` prints the error rates measured for this version.
 
 <!-- Every bash block below is run by tests/integration/test_docs_commands.py on the demo data
@@ -104,9 +104,9 @@ stderr goes there too, as `runApplication` and `foamJob` send it
 (`simpleFoam > log.simpleFoam`) leaves a log that just stops: `insufficient`, not `reject`,
 unless a residual it wrote is non-finite. Verify it again once the solver has printed `End`.
 With a specification, a case that set up a different problem is still a `reject`. Give the
-solver a log of its own (`log.<solver>`): by default a utility's `End` written ahead of it in
-the same file reads as the run's end (`--checks next` counts only an `End` after the last time
-step).
+solver a log of its own (`log.<solver>`): only an `End` after the log's last time step is the
+solver's, so a utility's `End` written ahead of a cut solver's output in the same file leaves the
+verdict `insufficient`.
 
 The previous verdict names (`TRUSTWORTHY`, `NOT_TRUSTWORTHY`, `NOT_ASSESSABLE`,
 `courant.verdict/1`) are available for one more minor release with `--schema 1`; the decision
@@ -163,19 +163,20 @@ RM-18): of 20 runs with the right physics and the wrong input, a verdict without
 specification rejected 8; against the specification, 20. What a specification does not name
 is not checked, and the report says so.
 
-By default each value is read from the file the specification names. Six kinds of item are
-also in what ran: the solver in the log's `Exec` line, the end time in `stopAt` and the log's
+Each value is read from the file the specification names. Six kinds of item are also in what
+ran: the solver in the log's `Exec` line, the end time in `stopAt` and the log's
 last step, the turbulence model in its `turbulence` switch, a value under `0/` in the time
 directory the run started from, a boundary value in its patch's type (the solver applies only
-the entries its type reads), and the mesh cells and scale in `constant/polyMesh`. With
-`--checks next` (on `courant verify` and `courant spec check`) they are checked against that too:
+the entries its type reads), and the mesh cells and scale in `constant/polyMesh`. Since 0.7.0
+(`courant verify` and `courant spec check`) they are checked against that too:
 a deck run by another solver, a run that ended early, a model switched off, a run restarted from
 an edited later time, a lid switched to `zeroGradient` with its old `value` left behind, or a
 mesh scaled after `blockMesh` no longer conforms, and a mesh refined after it, a mesh that cannot
 be read whole (binary, compressed), or a log with no `Exec` line, leaves the item not checked
-(TRD SPEC-13; the measurements above are of the default). `courant spec init --checks next`
-drafts for it, leaving out the blockMeshDict items the reference's own mesh does not give. By
-default, a verdict whose run ended away from its endTime says so under "not checked".
+(TRD SPEC-13; the measurements above were made before 0.6.0, reading the deck alone). `courant
+spec init` drafts for it, leaving out the blockMeshDict items the reference's own mesh does not
+give. Without a specification that names it, a verdict whose run ended away from its endTime says
+so under "not checked".
 
 ## 3. Before the run: preflight
 
@@ -184,13 +185,14 @@ courant preflight ./my_case
 ```
 
 This checks what no timestep can change before the solver spends anything:
-- the viscosity's units (the top-level `nu` of `constant/transportProperties`; with
-  `--checks next`, each interFoam phase's `nu` and a `mu` too, through the case's density);
+- the viscosity's units (the top-level `nu` of `constant/transportProperties`, each interFoam
+  phase's `nu`, and a `mu` through the case's density);
 - linear-solver tolerances;
 - relaxation on a steady loop;
-- boundaries that fix both pressure and velocity (`p`; with `--checks next`, the `p_rgh` of
-  interFoam and the buoyant solvers too);
-- mesh quality, when `checkMesh` output exists.
+- boundaries that fix both pressure and velocity (`p`, and the `p_rgh` of interFoam and the
+  buoyant solvers);
+- mesh quality, when `checkMesh` output exists, and the cell aspect ratio from
+  `constant/polyMesh` when it does not.
 
 `SETUP_FAULT` exits 2, with the file and value for each fault. On the corpus it caught 8 of 23
 broken setups and flagged 0 of 8 good ones. Everything that needs the run is listed as not

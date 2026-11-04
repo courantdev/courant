@@ -213,8 +213,12 @@ class TestTheBarFollowsOpenFOAMsMatching:
         cfg = _steady({"p": 1.0})
         assert residual_bar(cfg, "p") == RESIDUAL_LOOSE
 
-    def test_a_tighter_declared_tolerance_tightens_the_bar(self):
+    def test_a_tighter_declared_tolerance_never_tightens_the_bar(self):
+        """VER-16c (`residual.control.floor`, S's decision on H-VER16-ENDTIME): a tolerance below
+        the target leaves the field on the flat bar. Without the floor (`residual_bar`'s default
+        mode, VER-16 as 0.6.0 ships it) a tighter tolerance tightened the bar."""
         cfg = _steady({"p": 1e-5})
+        assert residual_bar(cfg, "p", CHECKS) == RESIDUAL_TARGET
         assert residual_bar(cfg, "p") == 1e-5
 
 
@@ -249,17 +253,35 @@ class TestTheDictionaryIsTheSolversAlgorithms:
 
 
 class TestAMalformedToleranceGivesAVerdict:
-    """A tolerance of 0 divided by zero; NaN from a JSON sidecar was never exceeded."""
+    """A tolerance of 0 divided by zero; NaN from a JSON sidecar was never exceeded.
 
-    def test_zero_is_declared_and_never_met(self):
+    Under VER-16c (`residual.control.floor`) zero and a negative tolerance are below the target,
+    so the field is judged on the flat bar and the tolerance is a note; with the floor put back
+    (VER-16 as 0.6.0 ships it) they are bars no residual meets, ranked without dividing."""
+
+    def test_zero_is_declared_and_never_met(self, monkeypatch):
+        from tests.unit.test_residual_floor import _floor_off
+
         cfg = _steady({"p": 0.0})
         assert declared_tolerance(cfg, "p") == 0.0
         judged = judge_residuals(_events(HEALTHY_058), cfg)
-        assert judged.over == ("p",) and judged.field == "p"
+        # 058's p ends at 1.02e-3: over the flat bar, on which a zero tolerance leaves it
+        assert judged.over == ("p",) and judged.field == "p" and judged.bar == RESIDUAL_TARGET
+        assert not judged.field_declared and [u.field for u in judged.unmet] == ["p"]
+        _floor_off(monkeypatch)
+        judged = judge_residuals(_events(HEALTHY_058), cfg)
+        assert judged.over == ("p",) and judged.field == "p" and judged.bar == 0.0
+        assert judged.field_declared
 
-    def test_a_negative_tolerance_is_never_met(self):
-        judged = judge_residuals(_events(HEALTHY_058), _steady({"p": -1e-3, "U": 1e-3}))
+    def test_a_negative_tolerance_is_never_met(self, monkeypatch):
+        from tests.unit.test_residual_floor import _floor_off
+
+        cfg = _steady({"p": -1e-3, "U": 1e-3})
+        judged = judge_residuals(_events(HEALTHY_058), cfg)
         assert "p" in judged.over and judged.field == "p"
+        _floor_off(monkeypatch)
+        judged = judge_residuals(_events(HEALTHY_058), cfg)
+        assert "p" in judged.over and judged.field == "p" and judged.bar == -1e-3
 
     def test_nan_is_no_tolerance(self):
         cfg = _steady({"p": float("nan")})
@@ -304,6 +326,7 @@ class TestTheDeclaredBarReadsTheFirstSolve:
         judged = judge_residuals(events, _steady({"p": 1e-3, "U": 1e-3}))
         assert judged.final["p"] == 3e-3 and judged.over == ("p",)
 
+    @pytest.mark.usefixtures("checks_as_060")
     def test_the_flat_bar_keeps_the_value_it_was_always_judged_on(self):
         """Under the default checks, v0.5.0's judgement. Under `next` VER-16a reads the first
         solve for the flat bar too (the test below; `tests/unit/test_first_solve.py`)."""
@@ -561,15 +584,27 @@ class TestTheVerdicts:
         v = _verify(log, cfg, tmp_path)
         assert v.verdict == "TRUSTWORTHY", [(r.code, r.summary) for r in v.reasons]
 
-    def test_a_tighter_tolerance_that_was_not_met_is_not_converged(self, tmp_path):
+    def test_a_tighter_tolerance_that_was_not_met_is_a_note(self, tmp_path, monkeypatch):
+        """VER-16c: residuals under the flat bar and above a tighter residualControl are judged
+        on the flat bar and accepted, and the tolerance not reached is said under "not
+        assessed". With the floor put back (VER-16 as 0.6.0 ships it) the same run was rejected
+        by its own tolerance."""
+        from tests.unit.test_residual_floor import _floor_off
+
         log = tmp_path / "log.simpleFoam"
         log.write_text(_synthetic_log(("Ux", "Uy", "p"), decades_per_step=1 / 80, tol=1e-4,
                                       converged_line=False))
         cfg = _pitz_config(residual_control={"p": 1e-6, "U": 1e-6})
         v = _verify(log, cfg, tmp_path)
+        assert v.verdict == "TRUSTWORTHY", [(r.code, r.summary) for r in v.reasons]
+        assert any(s.startswith("Ux, Uy and p did not reach the residualControl tolerance")
+                   for s in v.not_assessed)
+        _floor_off(monkeypatch)
+        v = _verify(log, cfg, tmp_path)
         assert v.verdict == "NOT_TRUSTWORTHY"
         nc = next(r for r in v.reasons if r.code == "residual.not_converged")
         assert "residualControl" in nc.summary
+        assert not any("did not reach the residualControl" in s for s in v.not_assessed)
 
 
 def _synthetic_log(fields, *, decades_per_step: float, tol: float,

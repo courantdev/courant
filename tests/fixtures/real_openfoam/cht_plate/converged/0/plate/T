@@ -1,0 +1,44 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  Courant test fixture: a heated plate under an air channel, chtMultiRegionSimpleFoam
+  (T-ENERGY-BALANCE)
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       volScalarField;
+    location    "0";
+    object      T;
+}
+
+dimensions      [0 0 0 1 0 0 0];
+
+internalField   uniform 300;
+
+boundaryField
+{
+    heater
+    {
+        type fixedValue;
+        value uniform 350;
+    }
+    plate_left
+    {
+        type zeroGradient;
+    }
+    plate_right
+    {
+        type zeroGradient;
+    }
+    plate_to_air
+    {
+        type            compressible::turbulentTemperatureCoupledBaffleMixed;
+        Tnbr            T;
+        kappaMethod     solidThermo;
+        value           uniform 300;
+    }
+    frontAndBack
+    {
+        type empty;
+    }
+}

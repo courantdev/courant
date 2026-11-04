@@ -735,14 +735,22 @@ def _config_058(control: dict) -> CaseConfig:
     return CaseConfig.model_validate(meta["config"])
 
 
-def test_a_tolerance_only_a_keyword_not_evaluated_may_give_is_never_said_to_be_declared():
+def test_a_tolerance_only_a_keyword_not_evaluated_may_give_is_never_said_to_be_declared(
+        monkeypatch):
     """With only a keyword the matcher does not evaluate before it, and none certain to match, a
     field may have that keyword's tolerance or none: the case is not said to declare one (the
     review of the 0.6.0 hard-proofing found `field_declared` and "its residualControl" said of
-    the flat bar). The healthy 058 run: p ends at 1.02e-3 on its first solve."""
+    the flat bar). The healthy 058 run: p ends at 1.02e-3 on its first solve.
+
+    A tolerance below the target sets no bar under VER-16c (`residual.control.floor`): the field
+    is on the flat bar whichever reading holds, and the note says the keyword may set it. The
+    keyword's own reading, stricter than the flat bar, is VER-16 as 0.6.0 ships it (the floor put
+    back, below)."""
     from courant.diagnosis.checkers import CheckContext, ResidualAnalyzer
     from courant.verification.checks import ConvergenceCheck, VerifyContext
     from courant.verification.convergence import judge_residuals
+    from courant.verify import sentences
+    from tests.unit.test_residual_floor import _floor_off
 
     events = _events_058()
     flat = _config_058({'"(?=p)p"': 5e-3})
@@ -754,9 +762,18 @@ def test_a_tolerance_only_a_keyword_not_evaluated_may_give_is_never_said_to_be_d
     check = ConvergenceCheck().run(VerifyContext(run_id="r", events=events, config=flat,
                                                  checks="next"))
     assert "residualControl" not in check.detail and "(target 1e-03)" in check.detail
-    # a tolerance stricter than the flat bar, which the keyword may give: judged on it, and
-    # said to be the keyword's, not the case's
+    # a tolerance stricter than the flat bar, which the keyword may give: on the floor, the flat
+    # bar, and a note that says the keyword may set it
     stricter = _config_058({"p": 1e-2, '"(k|epsilon|omega|f|v2)"': 1e-3, '"(?=U)U"': 1e-4})
+    judged = judge_residuals(events, stricter, "next")
+    assert judged.declared and judged.over == () and not judged.unsure
+    assert judged.bars["Ux"] == judged.bars["Uy"] == 1e-3
+    unmet = {u.field: u for u in judged.unmet}
+    assert {"Ux", "Uy"} <= set(unmet) and not unmet["Uy"].certain
+    assert "which a residualControl keyword the reader does not evaluate may set" in \
+        sentences.tolerances_unmet(judged.unmet)
+    # ... and without the floor: judged on it, and said to be the keyword's, not the case's
+    _floor_off(monkeypatch)
     judged = judge_residuals(events, stricter, "next")
     assert judged.declared and set(judged.over) == {"Ux", "Uy"} and judged.field == "Uy"
     assert not judged.field_declared and judged.field_unsure and judged.bar == 1e-4
@@ -793,9 +810,18 @@ def test_a_tolerance_a_keyword_may_give_never_accepts_what_a_certain_reading_rej
     reading. The worst residual was the deciding reading's alone, so p at 2e-2 then 5e-3 under
     a tolerance of 1e-2 was decided on the flat reading (5e-3 is further over 1e-3 than 2e-2 is
     over 1e-2), its worst 5e-3 was inside LOOSE, and `ConvergenceCheck` graded MINOR (B, VER-5.4)
-    a run the named reading grades MAJOR (C, VER-5.3) (the review of the 0.6.0 follow-ups)."""
+    a run the named reading grades MAJOR (C, VER-5.3) (the review of the 0.6.0 follow-ups).
+
+    A tolerance below the target (6e-4) sets no bar under VER-16c: it is clamped to the target,
+    met as the flat bar is met (`<=`) and never declared, and read at both solves, where the
+    tolerance is read (the first) and where the flat bar reads (here the last), so p is over
+    when either is above 1e-3 and its reading is the larger. Read at the last alone, p at 2e-2
+    then 5e-4 was accepted under 6e-4 where 1e-3 rejects it, and the keyword's reading at 2e-2
+    then 5e-3 graded MINOR, not MAJOR (the review of T-VER16C); read at the first alone, p at
+    5e-4 then 2e-3 was accepted under 6e-4 where no residualControl rejects it (its final
+    review)."""
     from courant.verification.checks import ConvergenceCheck, VerifyContext
-    from courant.verification.convergence import RESIDUAL_TARGET, judge_residuals
+    from courant.verification.convergence import RESIDUAL_TARGET, judge_residuals, sets_bar
     from courant.verification.grade import VSeverity
     from tests.unit.test_first_solve import _events, nonorth_log
 
@@ -803,8 +829,16 @@ def test_a_tolerance_a_keyword_may_give_never_accepts_what_a_certain_reading_rej
     configs = {"unsure": _lts({'"(?=p)p"': tolerance}), "named": _lts({"p": tolerance}),
                "not": _lts({})}
     unsure, if_named, if_not = (judge_residuals(events, c, "next") for c in configs.values())
-    assert if_named.field_declared and not if_not.declared               # the two readings
-    assert if_named.final["p"] == pytest.approx(first) and if_not.final["p"] == pytest.approx(last)
+    assert not if_not.declared
+    if sets_bar(tolerance, "next"):                                      # the two readings
+        assert if_named.field_declared and if_named.final["p"] == pytest.approx(first)
+    else:                                   # clamped to the target, at both solves
+        assert not if_named.declared and if_named.final["p"] == pytest.approx(max(first, last))
+        assert if_named.bars["p"] == RESIDUAL_TARGET
+        assert ("p" in if_named.over) is (max(first, last) > RESIDUAL_TARGET)
+        assert if_named.worst == pytest.approx(max(first, last))
+        assert ("p" in if_named.over) >= ("p" in if_not.over)      # never more lenient than none
+    assert if_not.final["p"] == pytest.approx(last)
     assert ("p" in unsure.over) is ("p" in if_named.over or "p" in if_not.over)
     assert not unsure.declared and not unsure.field_declared
     assert unsure.bars["p"] in (min(tolerance, 1e-2), RESIDUAL_TARGET)
@@ -815,6 +849,8 @@ def test_a_tolerance_a_keyword_may_give_never_accepts_what_a_certain_reading_rej
     assert grade["unsure"].rank == max(grade["named"].rank, grade["not"].rank)
     if max(first, last) > 1e-2:
         assert grade["unsure"] is VSeverity.MAJOR
+    if first > 1e-2:                        # whatever the tolerance, 1e-2, 1e-3 or below
+        assert grade["named"] is VSeverity.MAJOR
 
 
 def _verify_058(control: dict, tmp_path: Path, checks: str):
@@ -828,6 +864,7 @@ def _verify_058(control: dict, tmp_path: Path, checks: str):
     return verify_inputs_v1(from_log(HEALTHY_058, side).model_copy(update={"checks": checks}))
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_the_review_case_a_lookahead_before_a_looser_entry_is_not_converged(tmp_path):
     """The healthy 058 run (U ends at 1.0e-3 on Uy) meets `U 1e-3`. With `"(?=U)U" 1e-6;` first,
     OpenFOAM holds U to 1e-6, which it did not meet: not converged, as when `re` matched it."""

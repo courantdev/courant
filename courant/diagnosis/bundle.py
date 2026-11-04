@@ -129,6 +129,11 @@ def _config_view(config: CaseConfig | None) -> dict:
     return {k: v for k, v in d.items() if v not in ({}, [], None)}
 
 
+def _digest(config_view: dict) -> str:
+    """The short deterministic hash of a configuration view (`CaseSummary.key_dicts_digest`)."""
+    return hashlib.sha256(json.dumps(config_view, sort_keys=True).encode()).hexdigest()[:12]
+
+
 def assemble_bundle(
     run_id: str,
     events: list[Event],
@@ -144,17 +149,20 @@ def assemble_bundle(
     """Deterministically assemble the Evidence Bundle from run artifacts. `checks` is
     `--checks` (GATE-13), for the knowledge base's configuration predicates."""
     config_view = _config_view(config)
-    digest = hashlib.sha256(
-        json.dumps(config_view, sort_keys=True).encode()
-    ).hexdigest()[:12]
+    digest = _digest(config_view)
 
     series, iters = _extract_residual_series(events)
     kb_matches = kb.query(findings=findings, log_text=log_text, config=config, top_k=5,
                           checks=checks)
 
-    from courant.diagnosis.redact import redact_log_lines, redact_log_window
+    from courant.diagnosis.redact import (
+        place_bundle_regions,
+        redact_log_lines,
+        redact_log_window,
+        region_places,
+    )
 
-    return EvidenceBundle(
+    bundle = EvidenceBundle(
         run_id=run_id,
         log_lines=redact_log_lines(log_text),
         log_window=redact_log_window(log_text),
@@ -172,3 +180,17 @@ def assemble_bundle(
         det_findings=list(findings),
         kb_matches=kb_matches,
     )
+    # SEC-6 (T-REGION-KEYS-BUNDLE): a multi-region run's regions are the case author's words,
+    # and its log carries them into the residual keys (`h@air`), the event window, a finding and
+    # the kept log lines. The bundle is what a model and the cloud are sent, so each region is
+    # written as its place: `regionProperties`' order when the case reader read it, else the
+    # order the log first names them (`redact.region_places`). The findings the verdict reports
+    # are not these copies, and keep the case's words.
+    places = region_places(config.regions if config is not None else (), log_text,
+                           list(series))
+    if not places:
+        return bundle
+    placed = place_bundle_regions(bundle.model_dump(), places)
+    # the digest is of the configuration that is sent, so it holds no region's name either
+    placed["case_summary"]["key_dicts_digest"] = _digest(placed["config_view"])
+    return EvidenceBundle.model_validate(placed)

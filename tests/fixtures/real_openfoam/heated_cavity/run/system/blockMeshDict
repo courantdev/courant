@@ -1,0 +1,47 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  Courant test fixture: a differentially heated cavity, run to its endTime (T-VER16C)
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      blockMeshDict;
+}
+
+scale 1;
+
+vertices
+(
+    (0 0 0) (0.05 0 0) (0.05 0.05 0) (0 0.05 0)
+    (0 0 0.005) (0.05 0 0.005) (0.05 0.05 0.005) (0 0.05 0.005)
+);
+
+blocks
+(
+    hex (0 1 2 3 4 5 6 7) (24 24 1) simpleGrading (1 1 1)
+);
+
+boundary
+(
+    hot
+    {
+        type wall;
+        faces ((0 4 7 3));
+    }
+    cold
+    {
+        type wall;
+        faces ((1 2 6 5));
+    }
+    adiabatic
+    {
+        type wall;
+        faces ((0 1 5 4) (3 7 6 2));
+    }
+    frontAndBack
+    {
+        type empty;
+        faces ((0 3 2 1) (4 5 6 7));
+    }
+);

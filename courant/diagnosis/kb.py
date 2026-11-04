@@ -70,6 +70,12 @@ class KBMatch(BaseModel):
     canonical_fixes: list[CanonicalFix]
 
 
+def _undamped(factors):
+    from courant.diagnosis.checkers import undamped_relaxation  # the one test (T-RELAX-RHO)
+
+    return undamped_relaxation(factors)
+
+
 # Named config predicates the signatures can reference. Each takes the case and `--checks`
 # (GATE-13), so a predicate that restates a checker's question asks it in the checker's mode:
 # under `next` the steady test has two answers (`is_steady`, `marches_to_steady_state`; TRD VER-21,
@@ -80,8 +86,8 @@ CONFIG_PREDICATES: dict[str, Callable[..., bool]] = {
     # and `interFoam/damBreak` — two unmodified tutorials that ship those values
     # and converge fine. See the checker for the argument. Steady as `scheme.relaxation` asks
     # it, `is_steady(checks)`: a local-time-stepping case is not steady there.
-    "relaxation_high": lambda c, checks="default": c.is_steady(checks) and any(
-        v >= 1.0 for v in c.relaxation_factors.values()),
+    "relaxation_high": lambda c, checks="default": c.is_steady(checks) and bool(
+        _undamped(c.relaxation_factors)),
     # Not marching to a steady state, as `scheme.fixed_dt` asks it: under `next` a
     # local-time-stepping case's step is per cell, set from maxCo, whatever adjustTimeStep says.
     "fixed_dt_no_adaptivity": lambda c, checks="default": (

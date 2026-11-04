@@ -103,6 +103,7 @@ def test_a_case_with_no_time_directory_keeps_the_fixed_sentence(tmp_path, checks
 
 
 # ---------------------------------------------------------------- a later directory the log never reached
+@pytest.mark.usefixtures("checks_as_060")
 def test_by_default_a_later_directory_is_read_and_the_verdict_says_it_is_later(tmp_path):
     v = _verify(_case(tmp_path, STALE_LATER), "default")
     assert v.verdict == "accept", "GATE-13: no default verdict moves"
@@ -121,6 +122,7 @@ def test_under_next_the_fields_are_read_at_the_logs_last_time(tmp_path):
     assert "0.5/U" in listed and "0.6/U" not in listed
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_a_stale_diverged_later_directory_no_longer_rejects_a_clean_run_under_next(tmp_path):
     """The reverse: the later directory is the bad one. By default it is still read (and the
     verdict says it is later than the log); under next the run's own fields are."""
@@ -130,6 +132,7 @@ def test_a_stale_diverged_later_directory_no_longer_rejects_a_clean_run_under_ne
 
 
 # ---------------------------------------------------------------- a partial reconstruct
+@pytest.mark.usefixtures("checks_as_060")
 def test_by_default_a_partial_reconstruct_reads_the_root_and_says_the_ranks_went_further(
         tmp_path):
     v = _verify(_case(tmp_path, PARTIAL), "default")
@@ -147,6 +150,7 @@ def test_under_next_a_partial_reconstruct_reads_the_ranks(tmp_path):
 
 
 # ---------------------------------------------------------------- fields that exist and do not parse
+@pytest.mark.usefixtures("checks_as_060")
 @pytest.mark.parametrize("checks", ["default", "next"])
 def test_a_field_cut_mid_write_is_named_not_called_missing(tmp_path, checks):
     """By default the grade is v0.5.0's (A, the field checks skipped); under next a field the run
@@ -163,6 +167,7 @@ def test_a_field_cut_mid_write_is_named_not_called_missing(tmp_path, checks):
               "judged was not checked"])), (v.grade, v.reasons)
 
 
+@pytest.mark.usefixtures("checks_as_060")
 @pytest.mark.parametrize("checks", ["default", "next"])
 def test_a_collated_field_is_named_as_not_read(tmp_path, checks):
     """`processors2/0.5/U` as the collated file handler writes it (`decomposedBlockData`)."""
@@ -240,6 +245,7 @@ def test_a_field_file_holding_no_field_of_its_shape_is_named_as_not_read(tmp_pat
 # what VER-3's end time (ENDED_SHORT, SPEC-13) reads; the field read had a second definition
 # (the `ts_sim` of whatever event came last) and a second equal-time tolerance. Pinned by moving
 # `Run.last_time`: the field read and the end-time sentence must both follow it.
+@pytest.mark.usefixtures("checks_as_060")
 @pytest.mark.parametrize("checks", ["default", "next"])
 def test_the_field_read_and_the_end_time_ask_one_last_time_step(tmp_path, monkeypatch, checks):
     from courant.spec import as_run
@@ -276,6 +282,7 @@ RANKS = ("Solution fields at t = 0.5 were read on some ranks only (U on 1 of 2):
          "need them judged only those ranks' cells.")
 
 
+@pytest.mark.usefixtures("checks_as_060")
 @pytest.mark.parametrize("checks", ["default", "next"])
 def test_a_field_one_rank_could_not_read_is_said_to_be_read_on_part_of_the_domain(tmp_path,
                                                                                   checks):

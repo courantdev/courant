@@ -13,7 +13,9 @@ keeps the facts trustworthy.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
+from functools import cached_property
 from typing import Protocol
 
 from courant.case.config import PRESSURE_FIXING, CaseConfig
@@ -23,7 +25,10 @@ from courant.case.viscosity import NU_MAX, NU_MIN, Viscosity, viscosities
 from courant.case.regime import (
     DNS_SPACING,
     RA_TRANSITION,
+    BuoyantRegime,
+    RegimeNumber,
     buoyant_regime,
+    regime_numbers,
     solver_read_gravity,
 )
 from courant.diagnosis.findings import Finding, FindingSet, FindingSeverity
@@ -55,9 +60,119 @@ class CheckContext:
     #: TRD VER-16b: the velocity components the latest U shows to be zero to machine precision
     #: (`convergence.zero_components`), left out of the residual bar. () without fields.
     zero_components: tuple[str, ...] = ()
+    #: TRD VER-5b, under `--checks next` (`LAMINAR_REGIME`): how to read the case's Reynolds
+    #: number from the files its solver read (`courant.case.reynolds.reynolds_number`), given by
+    #: the run that has its case directory. Called at most once (`reynolds`), and only for a
+    #: transient laminar run that `physics.laminar_unstable` would otherwise reject, so no other
+    #: run reads, or lists in its manifest, a file more. None without a case directory.
+    read_reynolds: Callable[[], object] | None = None
+    #: TRD VER-5b, likewise: whether the case's files show that nothing but buoyancy moves its
+    #: fluid and nothing but its held walls heat it, within the temperatures given
+    #: (`courant.case.reynolds.buoyancy_alone`), which physics.laminar_regime's Rayleigh number
+    #: needs before it may set a run aside. Called at most once (`still`), only for a case with
+    #: that number. None without a case directory: then it never may.
+    read_still: Callable[[tuple[float, float]], bool] | None = None
 
     def events_of(self, kind: EventKind) -> list[Event]:
         return [e for e in self.events if e.kind == kind]
+
+    @cached_property
+    def buoyant(self) -> BuoyantRegime | None:
+        """VER-17's estimate (`buoyant_regime`), read once per run: `physics.laminar_regime` and
+        VER-5b's regime numbers both take it from here. Only under `physics.laminar_regime`
+        (behind `--checks next`), on a laminar case whose solver's log says it read `constant/g`;
+        None otherwise."""
+        from courant.verify.checks import enabled
+
+        c = self.config
+        if (c is None or not enabled("physics.laminar_regime", self.checks)
+                or not c.is_laminar(self.checks) or not solver_read_gravity(self.log_text)):
+            return None
+        return buoyant_regime(c, self.mesh)
+
+    @cached_property
+    def reynolds(self):
+        """The case's Reynolds number (`courant.case.reynolds.Reynolds`), read once, or None."""
+        return self.read_reynolds() if self.read_reynolds is not None else None
+
+    @cached_property
+    def still(self) -> bool:
+        """VER-5b: whether buoyancy alone moves the fluid (`read_still`), asked once and only for
+        a case with physics.laminar_regime's estimate (`buoyant`), with the temperatures that
+        estimate was taken between. False otherwise."""
+        regime = self.buoyant
+        if regime is None or self.read_still is None:
+            return False
+        return bool(self.read_still(regime.temperatures))
+
+    @cached_property
+    def laminar(self) -> "LaminarReading | None":
+        """What `physics.laminar_unstable` weighs, read once per run (`LaminarReading`): the
+        checker raises the finding from it, and the verdict says from it why it did not (VER-5b).
+        None for a case that is not laminar or a run with no configuration."""
+        from courant.verify.checks import enabled
+
+        c = self.config
+        if c is None or not c.is_laminar(self.checks):
+            return None
+        oscillating = any(is_residual_climb(e) for e in self.events_of(EventKind.DIVERGENCE))
+        stalled_high = _finished_above_tolerance(self)
+        died = bool(self.events_of(EventKind.CRASH))
+        within = bool((oscillating or stalled_high or died) and _courant_within(self))
+        numbers: tuple[RegimeNumber, ...] = ()
+        # VER-5b: only on a time-marching run (`judged_on_the_bar`, VER-21's one test) the
+        # finding would reject, so no other run reads a file more.
+        if within and enabled(LAMINAR_REGIME, self.checks) and \
+                not judged_on_the_bar(c, self.checks):
+            numbers = regime_numbers(self.buoyant, self.reynolds, still=self.still)
+        return LaminarReading(oscillating=oscillating, stalled_high=stalled_high, died=died,
+                              courant_within=within, numbers=numbers)
+
+
+#: TRD VER-5b: `physics.laminar_unstable` defers to the case's own regime numbers on a
+#: time-marching run, behind `--checks next` (`courant.verify.checks.NEXT`). A behaviour of the
+#: finding: under the default it is v0.6.0's on every run.
+from courant.verify.checks import LAMINAR_REGIME  # its NEXT name, defined once in checks
+
+
+@dataclass(frozen=True)
+class LaminarReading:
+    """`physics.laminar_unstable`'s evidence on one run (`CheckContext.laminar`).
+
+    The three signatures and the Courant condition are v0.6.0's (the comment in
+    `PhysicsChecker.run`). `numbers` is VER-5b's: under `--checks next`, on a time-marching run
+    the finding would reject, the case's regime numbers (`courant.case.regime.regime_numbers`);
+    () otherwise, so under the default the finding is v0.6.0's exactly."""
+
+    oscillating: bool
+    stalled_high: bool
+    died: bool
+    #: Some signature holds and the run kept within its Courant limit (`_courant_within`).
+    courant_within: bool
+    numbers: tuple[RegimeNumber, ...] = ()
+
+    @property
+    def spared(self) -> tuple[RegimeNumber, ...]:
+        """The numbers that set the residual history aside: every number the case gives is below
+        its flow's laminar bound, and the finding would rest on the residual history alone (a
+        crash is not residual history, and keeps the finding). () when nothing is set aside."""
+        if (not self.numbers or self.died or not (self.oscillating or self.stalled_high)
+                or not all(n.below for n in self.numbers)):
+            return ()
+        return self.numbers
+
+    @property
+    def cited(self) -> tuple[RegimeNumber, ...]:
+        """The numbers the finding cites: above their flow's turbulent bound."""
+        return tuple(n for n in self.numbers if n.above)
+
+    @property
+    def raises(self) -> bool:
+        """Whether `physics.laminar_unstable` is raised: a signature, the Courant number within
+        its limit, and a residual history not set aside (`spared`)."""
+        if not self.courant_within:
+            return False
+        return self.died or (not self.spared and (self.oscillating or self.stalled_high))
 
 
 class Checker(Protocol):
@@ -65,6 +180,14 @@ class Checker(Protocol):
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         ...
+
+
+#: The checkers whose findings quote the log's own words (a residual key, `h@air` under VER-20's
+#: `log.regions`), and never a key the case reader wrote by place (`U@region1`): the event-based
+#: checkers below. The trust boundary writes every region name as its place in their findings,
+#: and in any other finding only a name that is not itself shaped like a place
+#: (`redact.place_bundle_regions`, T-REGION-KEYS-BUNDLE).
+LOG_CHECKERS = frozenset({"cfl", "residual", "bounding", "crash"})
 
 
 # ---------------------------------------------------------------------------
@@ -201,9 +324,20 @@ class CourantChecker:
             # diagnosis the solver cannot have, whose canonical fix is the
             # invalid `adjustTimeStep` advice already removed from the proposer.
             # The same solver-awareness, one layer up.
+            #
+            # And only a case that switched it off: `adjustTimeStep no` written. An absent entry
+            # is v2406's default, a fixed step (VER-21), as the case's author shipped it
+            # (planarContraction's own controlDict has none): there the climb is the fixed
+            # step's, and the step is too large, NUM.CFL_VIOLATION. Before, with VER-21 on by
+            # default (0.7.0's release preparation), the catalogue's `cfl_blowup` on
+            # planarContraction (deltaT x10, adjustTimeStep left absent) ranked the missing
+            # switch first, and its `fixed_dt_on_adaptive_solver` twin, which writes `no`, is
+            # the one fault whose repair is to turn it on (the fault catalogue).
             solver = ctx.config.solver if ctx.config is not None else None
             adaptive_possible = _honours_adaptive_dt(solver, ctx.checks)
-            climbing_suggests = (["NUM.MISSING_ADJUSTABLE_DT"] if adaptive_possible
+            switched_off = ctx.config is None or ctx.config.adjust_timestep is False
+            climbing_suggests = (["NUM.MISSING_ADJUSTABLE_DT"]
+                                 if adaptive_possible and switched_off
                                  else ["NUM.CFL_VIOLATION"])
             out.append(Finding(
                 id="cfl.climbing", checker=self.name,
@@ -563,6 +697,28 @@ RELAXATION_SUSPECT = 0.8
 #: own tutorials make routinely (`pitzDaily` ships 0.9), so it is not evidence
 #: of anything.
 RELAXATION_UNDAMPED = 1.0
+#: Relaxed and never damping an equation: v2406's steady solvers relax `rho`, the thermo's
+#: density, after the energy and pressure equations (`rho.relax()`), each of those damped by its
+#: own factor; at 1 the new density is taken. Its own tutorials ship `rho 1` in 16 steady
+#: fvSolution files (all 5 buoyantSimpleFoam ones, 8 chtMultiRegionSimpleFoam regions,
+#: overRhoSimpleFoam hotCylinder, rhoPorousSimpleFoam angledDuct implicit and
+#: simpleReactingParcelFoam verticalChannel; tests/fixtures/v2406_rho_relaxation.txt), so it is
+#: no over-relaxation (T-RELAX-RHO: a measured false alarm, fixed on by default in 0.7.0).
+RELAXATION_NOT_DAMPING = frozenset({"rho"})
+
+
+def _damps_nothing(name: str) -> bool:
+    """Whether a factor's field damps no equation (`RELAXATION_NOT_DAMPING`), a multi-region
+    case's key (`rho@region1`, VER-3d) by its field."""
+    return name.partition("@")[0] in RELAXATION_NOT_DAMPING
+
+
+def undamped_relaxation(factors: dict[str, float | None]) -> dict[str, float]:
+    """The factors that leave nothing to damp: at `RELAXATION_UNDAMPED` or above, less those
+    that damp no equation (`RELAXATION_NOT_DAMPING`). The one test, for `scheme.relaxation`
+    and the knowledge base's `relaxation_high` predicate."""
+    return {f: v for f, v in (factors or {}).items()
+            if v is not None and v >= RELAXATION_UNDAMPED and not _damps_nothing(f)}
 
 
 def _growth_suggests(config, checks: str = "default") -> list[str]:
@@ -572,7 +728,8 @@ def _growth_suggests(config, checks: str = "default") -> list[str]:
     if config is None or not config.is_steady(checks):
         return []
     factors = config.relaxation_factors or {}
-    hot = any(v is not None and v >= RELAXATION_SUSPECT for v in factors.values())
+    hot = any(v is not None and v >= RELAXATION_SUSPECT and not _damps_nothing(f)
+              for f, v in factors.items())
     return ["NUM.OVER_RELAXATION"] if hot else []
 
 
@@ -992,9 +1149,7 @@ class SchemeToleranceChecker:
         # anything about it there is noise.
         # Steady by construction only: a local-time-stepping case has a pseudo time derivative
         # to damp it, and v2406's LTS tutorials ship `".*" 1` (TRD VER-19).
-        hot = ({f: v for f, v in c.relaxation_factors.items()
-                if v is not None and v >= RELAXATION_UNDAMPED}
-               if c.is_steady(ctx.checks) else {})
+        hot = undamped_relaxation(c.relaxation_factors) if c.is_steady(ctx.checks) else {}
         if hot:
             worst_f, worst_v = max(hot.items(), key=lambda kv: kv[1])
             out.append(Finding(
@@ -1020,7 +1175,12 @@ class SchemeToleranceChecker:
         # NUM.MISSING_ADJUSTABLE_DT, a cause those solvers cannot have.
         # Not on a local-time-stepping case under `next` (VER-19): its step is per cell, set from
         # maxCo, whatever `adjustTimeStep` says.
-        if (_adaptive_is_off(c, ctx.checks) and not c.marches_to_steady_state(ctx.checks)
+        # And only where the case switched adaptivity off (`adjustTimeStep no` written), the
+        # knowledge base's `fixed_dt_no_adaptivity`: an absent entry is v2406's default fixed step
+        # (VER-21), the step the case's author chose, as planarContraction's tutorial ships it;
+        # saying "without adjustTimeStep" there cites NUM.MISSING_ADJUSTABLE_DT on a run whose
+        # step was simply too large (0.7.0's release preparation: the catalogue's `cfl_blowup`).
+        if (c.adjust_timestep is False and not c.marches_to_steady_state(ctx.checks)
                 and c.delta_t is not None and _honours_adaptive_dt(c.solver, ctx.checks)):
             out.append(Finding(
                 id="scheme.fixed_dt", checker=self.name,
@@ -1119,19 +1279,31 @@ class PhysicsChecker:
         # read is not held against the limit: it decides nothing of the run, so it does not rule
         # the laminar model out either, and the finding says it was not judged.
         #
-        # Not changed, and open (H-LAMINAR-TRANSIENT, S): on a time-marching run "never reached
-        # tolerance" is the flat bar the gate's own convergence check does not apply to such a
-        # run (`residual.not_converged`'s transient exclusion, TRD VER-21), and a periodic laminar
+        # By default unchanged (H-LAMINAR-TRANSIENT, decided by S on 26 Oct 2026): on a
+        # time-marching run "never reached tolerance" is the flat bar the gate's own convergence
+        # check does not apply to such a run (`residual.not_converged`'s transient exclusion, TRD
+        # VER-21), and a periodic laminar
         # flow ends above it at a large enough step (the second look's cylinder at Re 100,
         # rejected on this finding alone). Excluding it as `residual.not_converged` does would
         # accept the certification corpus's hotRoom `laminar_on_turbulent` fault and 28
         # Courant-10K hotRoom twins this finding alone rejects, and no reading of the residual
         # history separates them from the cylinder (TRD VER-5a, the record of 25 Oct 2026).
-        oscillating = any(is_residual_climb(e) for e in ctx.events_of(EventKind.DIVERGENCE))
-        stalled_high = _finished_above_tolerance(ctx)
-        died = bool(ctx.events_of(EventKind.CRASH))
-        if (c.is_laminar(ctx.checks) and (oscillating or stalled_high or died)
-                and _courant_within(ctx)):
+        #
+        # **The case's own regime numbers, under `--checks next`** (VER-5b, S's decision on
+        # H-LAMINAR-TRANSIENT, 26 Oct 2026; `LAMINAR_REGIME`): on a time-marching run, where the
+        # flat bar is not the gate's convergence test (VER-21), the residual history is weighed
+        # against what the case's numbers say of its regime (`CheckContext.laminar`). Every
+        # number the case gives below its flow's laminar bound: the residual history is not
+        # evidence of turbulence, so the finding is not raised on it, and the verdict says why
+        # (`laminar_spared_sentence`). A number above its flow's turbulent bound: the finding
+        # cites it. Otherwise, or with no number, nothing changes. A crash keeps the finding.
+        # No number bounds a flow something else drives (the review of 26 Oct 2026): neither
+        # reading gives one with a moving mesh or a source, and the Rayleigh number has an upper
+        # bound only where buoyancy alone moves the fluid (`CheckContext.still`).
+        reading = ctx.laminar
+        if reading is not None and reading.raises:
+            died, stalled_high = reading.died, reading.stalled_high
+            cited = reading.cited
             out.append(Finding(
                 id="physics.laminar_unstable", checker=self.name,
                 title="Laminar model with unstable residuals",
@@ -1144,7 +1316,10 @@ class PhysicsChecker:
                        + ", and the solve "
                        + ("terminated abnormally" if died
                           else "never reached tolerance" if stalled_high
-                          else "oscillates/grows"),
+                          else "oscillates/grows")
+                       + "".join(f"; {_cited_words(n)}" for n in cited),
+                value=cited[0].lower if cited else None,
+                threshold=cited[0].turbulent if cited else None,
                 suggests=["PHYS.LAMINAR_TURBULENT"],
             ))
         # A laminar model on a case heated from below that its own numbers call turbulent, on a
@@ -1156,9 +1331,8 @@ class PhysicsChecker:
         # Behind `--checks next` until 0.6.0 (GATE-13).
         from courant.verify.checks import enabled
 
-        if (enabled("physics.laminar_regime", ctx.checks) and c.is_laminar(ctx.checks)
-                and solver_read_gravity(ctx.log_text)):
-            regime = buoyant_regime(c, ctx.mesh)
+        if enabled("physics.laminar_regime", ctx.checks):
+            regime = ctx.buoyant                # read once: VER-5b's Rayleigh number is this one
             if regime is not None and regime.turbulent and regime.unresolved:
                 t_cold, t_hot = regime.temperatures
                 out.append(Finding(
@@ -1177,6 +1351,40 @@ class PhysicsChecker:
                     suggests=["PHYS.LAMINAR_TURBULENT"],
                 ))
         return out
+
+
+def _bound(x: float) -> str:
+    return f"{x:g}"
+
+
+def _basis(n: RegimeNumber, on: str) -> str:
+    return f"{n.flow}, {on}" if on else n.flow
+
+
+def _cited_words(n: RegimeNumber) -> str:
+    """A regime number above its flow's turbulent bound, as `physics.laminar_unstable` cites it
+    (VER-5b): its lower bound, which is what the claim rests on."""
+    return (f"the case's {n.name} number is at least {n.lower:.3g} ({_basis(n, n.lower_on)}), "
+            f"above {_bound(n.turbulent)}, {n.turbulent_words}")
+
+
+def laminar_spared_sentence(reading: LaminarReading | None) -> str | None:
+    """What the verdict says when VER-5b set a transient laminar run's residual history aside
+    (`LaminarReading.spared`), so `physics.laminar_unstable` was not raised; None otherwise. The
+    numbers are upper bounds, each below its flow's laminar bound. Numbers and fixed words only:
+    no name the case wrote."""
+    spared = reading.spared if reading is not None else ()
+    if not spared:
+        return None
+    what = ("residuals that end above the flat 1e-3 bar" if reading.stalled_high
+            else "residuals that oscillate or grow")
+    numbers = "; ".join(f"its {n.name} number is at most {n.upper:.3g} "
+                        f"({_basis(n, n.upper_on)}), below {_bound(n.laminar)}, "
+                        f"{n.laminar_words}" for n in spared)
+    return (f"Laminar model with unstable residuals: not raised. The case's own numbers say its "
+            f"flow is laminar: {numbers}. So this time-marching run's {what} are not evidence "
+            "of turbulence, and it is judged on stability, as the convergence check judges a "
+            "time-marching run.")
 
 
 def _nu_value(v: Viscosity) -> float:
@@ -1224,8 +1432,8 @@ def _finished_above_tolerance(ctx: CheckContext) -> bool:
     The bar `residual.not_converged` uses (`judge_residuals`), read from the events directly
     because checkers do not see each other's findings, but without its transient exclusion: on a
     time-marching run this is the evidence the hotRoom `laminar_on_turbulent` fault is rejected
-    on, and whether it stays evidence there is S's decision (H-LAMINAR-TRANSIENT, the comment at
-    the call).
+    on. S decided it stays evidence by default (H-LAMINAR-TRANSIENT, 26 Oct 2026); under
+    `--checks next` the case's own regime numbers may set it aside (VER-5b, `LaminarReading`).
     """
     if ctx.events_of(EventKind.CRASH) or diverged(ctx.events):         # ADP-5: one definition
         return False
@@ -1292,14 +1500,24 @@ class CaseIntegrityChecker:
     name = "case"
 
     def run(self, ctx: CheckContext) -> list[Finding]:
+        from courant.case.config import region_place_path
+
         out: list[Finding] = []
+        # A region's dictionary is named by the region's place (`system/region2/fvSolution`,
+        # T-MULTI-REGION): a region's name is the case author's word, and a finding reaches the
+        # Evidence Bundle. No region, no change: every other path is as v0.6.0 named it.
+        regions = (getattr(ctx.config, "regions", None) or []) if ctx.config else []
+
+        def named(f: str) -> str:
+            return region_place_path(regions, f) if regions else f
+
         unreadable = getattr(ctx.config, "unreadable", None) if ctx.config else None
         if unreadable:
             out.append(Finding(
                 id="case.unreadable_dict", checker=self.name,
                 title="Case dictionary could not be parsed", severity=WARN,
                 value=float(len(unreadable)),
-                detail="; ".join(f"{f}: {why}" for f, why in sorted(unreadable.items()))
+                detail="; ".join(f"{named(f)}: {why}" for f, why in sorted(unreadable.items()))
                        + " — findings that depend on these files are unavailable, "
                          "not absent",
             ))
@@ -1317,7 +1535,7 @@ class CaseIntegrityChecker:
                 id="case.unread_value", checker=self.name,
                 title=UNREAD_VALUES_TITLE, severity=WARN,
                 value=float(len(unread)),
-                detail="; ".join(f"{f}: {keys.get(f) or 'a value'}" for f in sorted(unread))
+                detail="; ".join(f"{named(f)}: {keys.get(f) or 'a value'}" for f in sorted(unread))
                        + UNREAD_VALUES_TAIL,
             ))
         return out

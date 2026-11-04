@@ -1,0 +1,45 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  Courant test fixture: a heated plate under an air channel, chtMultiRegionSimpleFoam
+  (T-ENERGY-BALANCE)
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      controlDict;
+}
+
+application     chtMultiRegionSimpleFoam;
+startFrom       startTime;
+startTime       0;
+stopAt          endTime;
+endTime         3000;
+deltaT          1;
+writeControl    timeStep;
+writeInterval   3000;
+purgeWrite      0;
+writeFormat     ascii;
+writePrecision  10;
+writeCompression off;
+timeFormat      general;
+timePrecision   6;
+runTimeModifiable false;
+
+functions
+{
+    wallHeatFlux_plate
+    {
+        type            wallHeatFlux;
+        libs            (fieldFunctionObjects);
+        region          plate;
+        writeControl    writeTime;
+    }
+    wallHeatFlux_air
+    {
+        type            wallHeatFlux;
+        libs            (fieldFunctionObjects);
+        region          air;
+        writeControl    writeTime;
+    }
+}

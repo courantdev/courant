@@ -31,6 +31,7 @@ _KNOWN_PATH_WORDS = frozenset({
     "p_rgh", "k", "epsilon", "omega", "nut", "nuTilda", "T", "alpha.water", "courantMonitors",
     "force.dat", "moment.dat", "surfaceFieldValue.dat", "forceCoeffs.dat", "probes",
     "phi", "dynamicMeshDict", "fvModels", "fvOptions",   # read for the boundary flux (VER-18)
+    "regionProperties", "radiationProperties", "wallHeatFlux.dat",   # the heat balance (VER-22)
 })
 _KNOWN_PATH = re.compile(r"(?:\d+(?:\.\d+)?(?:e[+-]?\d+)?|log\.\w+|log\.\w+\.gz)", re.IGNORECASE)
 _COMMANDS = frozenset({"courant", "verify", "doctor", "convergence", "preflight", "audit", "watch",
@@ -66,7 +67,7 @@ def build(argv: list[str], verdict_path: str | Path | None = None, *,
 def _names(verdict: dict) -> dict[str, str]:
     """Every customer word the verdict carries, with its pseudonym, longest first."""
     mapping: dict[str, str] = {}
-    counters = {"patch": 0, "file": 0, "item": 0, "phase": 0}
+    counters = {"patch": 0, "file": 0, "item": 0, "phase": 0, "name": 0}
 
     def add(word: str | None, kind: str) -> None:
         if word and len(word) > 1 and word not in mapping:
@@ -79,6 +80,8 @@ def _names(verdict: dict) -> dict[str, str]:
     paths = [f.get("path", "") for f in run.get("inputs") or []]
     conf = verdict.get("conformance") or {}
     paths += [i.get("file", "") for i in conf.get("items") or []]
+    heat_paths, heat_names = _heat_cited(verdict)
+    paths += heat_paths
     for path in paths:
         for seg in path.replace("\\", "/").split("/"):
             if seg and seg.removesuffix(".gz") not in _KNOWN_PATH_WORDS \
@@ -102,6 +105,10 @@ def _names(verdict: dict) -> dict[str, str]:
         for m in _PHASES_SAID.finditer(said):
             for phase in m.group(1).split(", "):
                 add(phase.strip(), "phase")
+    for word in heat_names:                              # VER-22's regions and patches
+        add(word, "name")
+    for word in _keyed_regions(verdict):                 # VER-20's residual keys, `h@air`
+        add(word, "name")
     if conf.get("task"):
         mapping[conf["task"]] = "<task>"
     return dict(sorted(mapping.items(), key=lambda kv: -len(kv[0])))
@@ -115,8 +122,64 @@ _PHASES_SAID = re.compile(r"the nu of phases (.+?) in constant/transportProperti
 _SAID = ("not_assessed", "not_checked")
 
 
+def _keyed_regions(verdict: dict) -> list[str]:
+    """The regions a multi-region run's residual keys name wherever the verdict quotes one (TRD
+    VER-20, `log.regions`: `Residual of h@air diverged`), in the order the verdict first gives
+    them (T-REGION-KEYS-BUNDLE). A verdict on a log alone cites no path a region's directory
+    names, so these words are learnt here or not at all. A region's name is an OpenFOAM word and
+    may hold a dot (`h@zone.v2`, the review of T-REGION-KEYS-BUNDLE); a sentence's full stop
+    after it is not part of it. A key the case reader wrote by place (`rho@region1`) names no
+    region; a host after a user (`me@node.example.net`, the trust boundary's `_FQDN` shape) is
+    left to `redact_text`, which removes the pair."""
+    from courant.diagnosis.redact import _FQDN
+    from courant.watcher.parser import REGION_SEPARATOR
+
+    key = re.compile(rf"[\w.]{re.escape(REGION_SEPARATOR)}([A-Za-z0-9_][\w\-.]*)(?![\w\-.@])")
+    found: dict[str, None] = {}
+
+    def walk(v):
+        if isinstance(v, str):
+            for m in key.finditer(v):
+                name = m.group(1).rstrip(".")
+                if name and not re.fullmatch(r"region[1-9]\d*", name) \
+                        and not _FQDN.fullmatch(name):
+                    found.setdefault(name)
+        elif isinstance(v, dict):
+            for x in v.values():
+                walk(x)
+        elif isinstance(v, list):
+            for x in v:
+                walk(x)
+
+    walk(verdict)
+    return list(found)
+
+
 def _said(verdict: dict) -> list[str]:
     return [s for key in _SAID for s in verdict.get(key) or [] if isinstance(s, str)]
+
+
+def _heat_cited(verdict: dict) -> tuple[list[str], list[str]]:
+    """(the case paths, the region and patch names) the heat balance's sentences and reason cite
+    (TRD VER-22, `courant.verification._heat_reader`): each between backticks where the reader
+    wrote it (`_heat_reader.cited`), and the reason's input, its tables. Read from these words
+    whether or not a file of them is in the manifest: a region with no table read, a table that
+    could not be read, an interface's patch names."""
+    from courant.verification._heat_reader import cited
+    from courant.verification.checks import ENERGY
+
+    code, title = ENERGY
+    texts = [s for s in _said(verdict) if s.startswith(f"{title}: ")]
+    paths: list[str] = []
+    for reason in verdict.get("reasons") or []:
+        if reason.get("code") == code:
+            texts.append(reason.get("summary") or "")
+            paths += [p.strip() for p in (reason.get("input") or "").split(", ") if p.strip()]
+    names: list[str] = []
+    for text in texts:
+        for word in cited(text):
+            (paths if "/" in word else names).append(word)
+    return paths, names
 
 
 def _unquoted(verdict: dict) -> dict:

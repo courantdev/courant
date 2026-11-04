@@ -69,12 +69,14 @@ def test_a_case_with_a_top_level_nu_and_p_says_nothing_new_in_either_mode():
     assert setup_not_checked(cfg, "default") == setup_not_checked(cfg, "next") == []
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_mu_alone_is_named_by_default_and_read_under_next():
     cfg = CaseConfig(transport={"mu": 1.8e-05, "molWeight": 28.9}, equation_of_state="perfectGas")
     assert setup_not_checked(cfg, "default") == [MU]
     assert setup_not_checked(cfg, "next") == []
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_each_phase_is_named_by_default_in_the_order_the_case_lists_them():
     cfg = CaseConfig(phase_nu={"water": 1e-06, "air": 1.48e-05})
     assert setup_not_checked(cfg, "default") == [PHASES]
@@ -86,6 +88,7 @@ def test_no_viscosity_at_all_is_said_in_both_modes():
     assert setup_not_checked(cfg, "default") == setup_not_checked(cfg, "next") == [NONE]
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_a_p_rgh_case_is_named_by_default_and_read_under_next():
     cfg = CaseConfig(transport={"nu": 1e-06},
                      boundary={"atmosphere": {"p_rgh": "totalPressure", "U": "fixedValue"}})
@@ -110,6 +113,7 @@ def test_a_stray_p_rgh_on_a_solver_that_solves_p_is_not_called_its_pressure(solv
     assert cfg.overconstrained_patches("next") == []
 
 
+@pytest.mark.usefixtures("checks_as_060")
 @pytest.mark.parametrize("solver", ["interFoam", "compressibleInterFoam", "buoyantPimpleFoam",
                                     "buoyantSimpleFoam", "driftFluxFoam", None, "foamRun"])
 def test_p_rgh_is_the_solved_pressure_on_the_solvers_that_solve_it(solver):
@@ -135,6 +139,7 @@ def test_the_fixed_sentences_carry_a_cause_tag():
 
 
 # ---------------------------------------------------------------- preflight, end to end
+@pytest.mark.usefixtures("checks_as_060")
 @pytest.mark.parametrize("mu", ["1.8e-05", "1.8e-01"])
 def test_the_audits_hotroom_says_its_mu_was_not_read_by_default(tmp_path, mu):
     """hotRoom 044 has no 0/U or 0/p_rgh, so only its viscosity is named."""
@@ -147,6 +152,7 @@ def test_the_audits_hotroom_says_its_mu_was_not_read_by_default(tmp_path, mu):
     assert nxt.verdict == ("SETUP_FAULT" if mu == "1.8e-01" else "NO_SETUP_FAULT_FOUND")
 
 
+@pytest.mark.usefixtures("checks_as_060")
 @pytest.mark.parametrize("water_nu,fixed", [("1e-06", False), ("1", False), ("1e-06", True)])
 def test_the_audits_dambreaks_say_what_the_default_did_not_read(tmp_path, water_nu, fixed):
     case = _dambreak(tmp_path, water_nu=water_nu, fixed=fixed)
@@ -166,6 +172,7 @@ def test_a_pitzdaily_shaped_case_is_unchanged(tmp_path):
 
 
 # ---------------------------------------------------------------- verify, on the committed sidecars
+@pytest.mark.usefixtures("checks_as_060")
 @pytest.mark.parametrize("sid,default,nxt", [
     ("interFoam_damBreak__healthy", [NONE, P_RGH], [NONE]),
     ("buoyantPimpleFoam_hotRoom__healthy", [MU, P_RGH], []),

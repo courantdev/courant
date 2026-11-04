@@ -96,6 +96,7 @@ from __future__ import annotations
 
 import math
 import re
+import stat
 from dataclasses import dataclass, field, replace
 from functools import cached_property
 from pathlib import Path
@@ -103,7 +104,13 @@ from pathlib import Path
 from courant.case import reads
 from courant.spec import deck
 
-_CREATE_MESH = re.compile(r"^Create mesh for time = (\S+)", re.MULTILINE)
+#: The line a solver prints when it reads its mesh, at the time it starts from: `Create mesh for
+#: time = <t>` (createMesh.H), `Create mesh <region> for time = <t>` for a named region
+#: (createNamedMesh.H), and a multi-region solver's `Create fluid mesh for region <r> for time =
+#: <t>` / `Create solid mesh for region <r> ...` (v2406's chtMultiRegionFoam,
+#: createFluidMeshes.H, createSolidMeshes.H; T-MULTI-REGION). The first one in the log.
+_CREATE_MESH = re.compile(r"^Create (?:(?:fluid|solid) mesh for region \S+|mesh(?: (?!for )\S+)?)"
+                          r" for time = (\S+)", re.MULTILINE)
 _SELECTED = re.compile(r"^Selecting (RAS|LES) (?:turbulence |momentum transport )?model (\S+)",
                        re.MULTILINE)
 #: What a solver prints when it ends a run on a criterion of the case's own before `endTime`:
@@ -268,9 +275,12 @@ def _same_time(a: float, b: float) -> bool:
 class AsRun:
     """`deck.read`'s value for an item, checked against what ran. One per conformance check."""
 
-    def __init__(self, case_dir: str | Path, run: Run | None = None):
+    def __init__(self, case_dir: str | Path, run: Run | None = None, *, macros: bool = False):
         self.case = Path(case_dir)
         self.run = run
+        #: `deck.read`'s `macros` (`spec.directives`): a later start time's file read as the
+        #: deck reader reads `0/` in the same mode.
+        self.macros = macros
 
     # ---------------------------------------------------------------- dispatch
     def read(self, item, found: deck.Found, *, rel: float) -> deck.Found:
@@ -365,11 +375,18 @@ class AsRun:
         rest = item.file[2:]
         for root in self._roots():
             directory = next((d for d in _times(root) if _same_time(float(d), t)), None)
-            if directory is None or not (root / directory / rest).is_file():
+            if directory is None:
                 continue
-            rel = (root / directory / rest).relative_to(self.case).as_posix()
+            path = root / directory / rest
+            rel = path.relative_to(self.case).as_posix()
+            there = reads.kind(path, stat.S_ISREG)
+            if there is None:                           # the start time cannot be searched
+                return deck.Found(None, rel,
+                                  note=f"unreadable: {reads.reason(reads.unknown(path))}")
+            if not there:
+                continue
             try:
-                got = deck._read_one(self.case, rel, item)
+                got = deck._read_one(self.case, rel, item, self.macros)
             except Exception as exc:                    # noqa: BLE001 - a reader limit
                 return deck.Found(None, rel, note=f"unreadable: {reads.reason(exc)}")
             return self._applied(item, replace(got, basis=_join(
@@ -402,6 +419,8 @@ class AsRun:
         from courant.spec.check import BC_PARAMETERS
 
         key = item.key or "value"
+        if key == "type":
+            return found                                # the type itself: the solver reads it
         kind = (raw or "").strip().strip('"')
         if not _WORD.fullmatch(kind):
             return deck.Found(None, found.file,
@@ -553,14 +572,18 @@ class AsRun:
         if not found.dirs:
             return None
         for d in found.dirs:
-            if not (d / "owner").is_file():
-                packed = ", ".join(sorted(p.name for p in d.iterdir() if p.name.endswith(".gz")))
+            if not reads.is_file(d / "owner"):
+                try:
+                    listed = sorted(p.name for p in d.iterdir() if p.name.endswith(".gz"))
+                except OSError:                         # searched, not listable
+                    listed = ["owner.gz"]
+                packed = ", ".join(listed)
                 return SolvedMesh(found.where, note=f"{d.relative_to(self.case).as_posix()} is "
                                                     f"written compressed ({packed}), which the "
                                                     "reader does not read")
         # The cost bound is on all that would be read, every rank of it, before any is parsed.
         size = sum((d / n).stat().st_size for d in found.dirs for n in polymesh.FILES
-                   if (d / n).is_file())
+                   if reads.is_file(d / n))
         if size > POLYMESH_MAX_BYTES:
             over = f" over its {len(found.dirs)} ranks" if len(found.dirs) > 1 else ""
             return SolvedMesh(found.where, note=f"{found.where} is {size / 2**20:.0f} MiB{over}, "

@@ -1,0 +1,57 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  Courant test fixture: a closed heated box of air, buoyantSimpleFoam (T-ENERGY-BALANCE)
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      fvSolution;
+}
+
+solvers
+{
+    p_rgh
+    {
+        solver          GAMG;
+        smoother        GaussSeidel;
+        tolerance       1e-12;
+        relTol          0.01;
+    }
+    "(U|h)"
+    {
+        solver          smoothSolver;
+        smoother        symGaussSeidel;
+        tolerance       1e-12;
+        relTol          0.1;
+    }
+}
+
+SIMPLE
+{
+    momentumPredictor yes;
+    nNonOrthogonalCorrectors 0;
+    pRefCell        0;
+    pRefValue       100000;
+
+    residualControl
+    {
+        p_rgh           1e-6;
+        U               1e-6;
+        h               1e-6;
+    }
+}
+
+relaxationFactors
+{
+    fields
+    {
+        rho             1;
+        p_rgh           0.7;
+    }
+    equations
+    {
+        U               0.5;
+        h               0.5;
+    }
+}

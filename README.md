@@ -212,7 +212,7 @@ run, and fails the check unless every run is accepted. Its logic is `courant gat
 the same way on any CI system.
 
 ```yaml
-- uses: courantdev/courant/.github/actions/courant-gate@v0.6.0
+- uses: courantdev/courant/.github/actions/courant-gate@v0.7.0
   with:
     paths: runs/*.log.gz
     spec: task/spec.json

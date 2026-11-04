@@ -194,14 +194,14 @@ def _series_from_inputs(inputs) -> tuple[dict, dict, dict, int | None, str | Non
         from courant.converge.series import assess_case
 
         conv = assess_case(inputs.case_dir, log_text=inputs.log_text, events=events,
-                           exit_code=code)
+                           exit_code=code, checks=inputs.checks)
         binding = conv.data.get("binding_monitor")
         stop = conv.data.get("converged_at_step")
         rows = conv.data.get("monitors") or {}
         from courant.converge.series import discover
         from pathlib import Path
 
-        found = {m.id: m for m in discover(Path(inputs.case_dir)).monitors}
+        found = {m.id: m for m in discover(Path(inputs.case_dir), inputs.checks).monitors}
         chosen = [binding] if binding else [k for k, v in sorted(rows.items())
                                             if v.get("counts")][:1]
         for mid in chosen:

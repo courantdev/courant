@@ -128,11 +128,11 @@ _ENTRIES: list[TaxonomyEntry] = [
                   "property of the geometry rather than of anything the solver "
                   "prints. PHYS.LAMINAR_TURBULENT covers what the case and the "
                   "log can show: a laminar setup on a run that will not settle "
-                  "(physics.laminar_unstable), and, under --checks next, a "
-                  "buoyant laminar case whose own numbers make it turbulent "
-                  "(TRD VER-17). A laminar run of a turbulent flow that "
-                  "converges is not judged on its regime by default (the "
-                  "Reynolds-number check is not implemented, TRD VER-7c), and "
+                  "(physics.laminar_unstable), and a buoyant laminar case "
+                  "whose own numbers make it turbulent (TRD VER-17, on by "
+                  "default from 0.7.0). A laminar run of a turbulent flow that "
+                  "converges is not judged on its regime (the Reynolds-number "
+                  "check is not implemented, TRD VER-7c), and "
                   "this entry is what is left over."),
     TaxonomyEntry("PHYS.LAMINAR_TURBULENT", "Laminar/turbulent mismatch",
                   FailureClass.PHYSICS, EscalationTier.SCHEMES,

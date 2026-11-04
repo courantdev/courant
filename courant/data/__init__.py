@@ -6,7 +6,7 @@
 - `certified_codes.json` lists the failure modes named on real solver output (tier 1 of
   `docs/COVERAGE.md`).
 - `demo/` holds the runs `courant demo` verifies: two corpus logs, and one monitored steady
-  case as a deterministic tarball.
+  case as a deterministic tarball, with the mesh its solver read (`constant/polyMesh`).
 - `schemas/` holds the JSON Schemas (draft 2020-12) of what the gate writes and reads: the
   verdicts, the task specification, preflight, convergence, the audit, the batch cache, the
   record, the support bundle, the error rates and the release signature.

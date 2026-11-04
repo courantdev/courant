@@ -28,9 +28,10 @@ def init(
     out: str = typer.Option(None, "-o", "--out", help="Write the specification here (default: stdout)."),
     task: str = typer.Option(None, "--task", help="One line saying what the task asks for."),
     no_mesh: bool = typer.Option(False, "--no-mesh", help="Leave the mesh cell counts out (they are a modelling choice)."),
-    checks: str = typer.Option("default", "--checks", help="'default', or 'next': leave out "
-                               "blockMeshDict's cells or scale when the case's own mesh does "
-                               "not give them, as `--checks next` compares them with the mesh "
+    checks: str = typer.Option("default", "--checks", help="'default', or 'next': 'next' "
+                               "also reads a $macro as the solver reads it (TRD VER-3b). Either "
+                               "leaves out blockMeshDict's cells or scale when the case's own "
+                               "mesh does not give them, as the gate compares them with the mesh "
                                "the solver read (TRD SPEC-13)."),
 ) -> None:
     """Draft a specification from a reference case. Review it, then lock it with `courant spec hash`."""
@@ -79,10 +80,11 @@ def check(
     spec: str = typer.Option(..., "--spec", help="The task specification (courant.spec/1)."),
     spec_sha256: str = typer.Option(None, "--spec-sha256", help="The hash it was locked at."),
     as_json: bool = typer.Option(False, "--json", help="Print the conformance block as JSON."),
-    checks: str = typer.Option("default", "--checks", help="'default', or 'next': also compare "
-                               "the mesh items with the mesh the solver read, read stopAt and "
-                               "the turbulence switch, and read 0/ values at the time the run "
-                               "starts from (TRD SPEC-13). No log is read here."),
+    checks: str = typer.Option("default", "--checks", help="'default', or 'next': 'next' "
+                               "also reads a $macro as the solver reads it (TRD VER-3b). Either "
+                               "compares the mesh items with the mesh the solver read, reads "
+                               "stopAt and the turbulence switch, and reads 0/ values at the "
+                               "time the run starts from (TRD SPEC-13). No log is read here."),
 ) -> None:
     """Is this case the problem that was asked? Every named value, compared to the case."""
     from courant.spec import SpecError, check_conformance, load_spec

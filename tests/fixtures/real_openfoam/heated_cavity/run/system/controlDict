@@ -1,0 +1,26 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  Courant test fixture: a differentially heated cavity, run to its endTime (T-VER16C)
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      controlDict;
+}
+
+application     buoyantBoussinesqSimpleFoam;
+startFrom       startTime;
+startTime       0;
+stopAt          endTime;
+endTime         200;
+deltaT          1;
+writeControl    timeStep;
+writeInterval   200;
+purgeWrite      0;
+writeFormat     ascii;
+writePrecision  10;
+writeCompression off;
+timeFormat      general;
+timePrecision   6;
+runTimeModifiable false;

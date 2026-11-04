@@ -42,6 +42,32 @@ MULTI_REGION_KEYED = ("This is a multi-region log: each residual was read under 
 MULTI_REGION_KEYED_COURANT = ("This is a multi-region log: each residual was read under the "
                               "region the log names for it (field@region), and the Courant "
                               "number is the largest region's. " + _region_dicts)
+#: Under `--checks next` on a case directory whose regions the case reader read (`case.regions`,
+#: TRD VER-3d): what of the regions' own dictionaries was read, and what was not.
+_region_dicts_read = ("Each region's fvSchemes and fvSolution (system/<region>/) and the boundary "
+                      "conditions of its start fields (0/<region>/) were read, in place of the "
+                      "top level's; its constant/<region>/ dictionaries (the thermophysical model, "
+                      "turbulence) were not.")
+MULTI_REGION_KEYED_READ = ("This is a multi-region log: each residual was read under the region "
+                           "the log names for it (field@region). " + _region_dicts_read)
+MULTI_REGION_KEYED_COURANT_READ = ("This is a multi-region log: each residual was read under the "
+                                   "region the log names for it (field@region), and the Courant "
+                                   "number is the largest region's. " + _region_dicts_read)
+#: The same when a region's dictionary or `0/<region>/` was missing or could not be read (the
+#: review of T-MULTI-REGION, m2: the sentence above claimed every one): which, is said apart.
+_region_dicts_part = ("The regions' own fvSchemes, fvSolution (system/<region>/) and start fields "
+                      "(0/<region>/) were read in place of the top level's, except those named "
+                      "as not found or not read; their constant/<region>/ dictionaries were not.")
+MULTI_REGION_KEYED_PART = ("This is a multi-region log: each residual was read under the region "
+                           "the log names for it (field@region). " + _region_dicts_part)
+MULTI_REGION_KEYED_COURANT_PART = ("This is a multi-region log: each residual was read under the "
+                                   "region the log names for it (field@region), and the Courant "
+                                   "number is the largest region's. " + _region_dicts_part)
+#: Under `case.regions`: some regions have a checkMesh log (`log.checkMesh.<region>`) and not all,
+#: so the metrics are those logs' worst and the other regions' meshes were not checked. Names no
+#: region.
+MESH_REGIONS_PARTIAL = ("Mesh quality was read from the checkMesh logs of some regions only "
+                        "(log.checkMesh.<region>): the other regions' meshes were not checked.")
 MULTI_REGION_COUPLED = ("Residuals solved after 'Solving energy coupled regions' were not judged: "
                         "the log does not say which region each belongs to.")
 #: Under the default an OpenFOAM.org foamMultiRun log is read as v0.5.0 read it, which reads no
@@ -179,11 +205,24 @@ SKEW_ZERO_AREA = ("Mesh skewness was not assessed on {faces} of zero area on {wh
 #: VER-13a: a steady case's log printed a Courant number, which no check judges there.
 COURANT_STEADY = ("The Courant number the log prints (largest {co}) was not judged: the case is "
                   "steady ({why}), so its time step is a pseudo-step that enters no equation.")
+#: VER-5b, under `--checks next`: `regime.reynolds`' line where physics.laminar_unstable read the
+#: case's Reynolds number, which this check is not fed (VER-7c's "not implemented" gives as its
+#: reason that Courant derives no length scale from the case, which is then not so).
+REYNOLDS_NOT_FED = ("not implemented as a check: the Reynolds number Courant read from this case "
+                    "weighs only whether a time-marching laminar run's residual history is "
+                    "evidence of turbulence (physics.laminar_unstable), and does not feed it")
 #: VER-16b: a velocity component zero to machine precision was left out of the residual bar.
 ZERO_COMPONENT = ("{names} not held to the residual bar: in U at t = {time} {which} zero to "
                   "machine precision everywhere ({ratios} of the largest |U|) and the other "
                   "components are not, so {its} normalised residual divides round-off by "
                   "round-off.")
+#: VER-16c (`residual.control.floor`, behind --checks next): a `residualControl` tolerance below
+#: the residual target that a field's first solve did not reach. The field was judged against
+#: the target, at that first solve and at the solve the flat bar reads (`convergence._readings`);
+#: the tolerance's value decided nothing of the verdict.
+TOLERANCE_UNMET = ("{names} did not reach the residualControl tolerance set below the residual "
+                   "target {target} ({values}): a tolerance below the target is not held against "
+                   "the run, so {verb} judged against the target.")
 
 
 def skewness_zero_area(mesh) -> str | None:
@@ -208,6 +247,57 @@ def zero_components(components, time: str) -> str:
         time=time, which="it is" if one else "they are",
         ratios=", ".join(f"{c.name} at most {c.ratio:.2g}" for c in components),
         its="its" if one else "their")
+
+
+def _and(names) -> str:
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+def tolerances_unmet(unmet) -> str:
+    """VER-16c's note: `unmet` are `convergence.UnmetTolerance`s, in the fields' order. Each
+    names the field's first solve at the last step and the tolerance, the strictest it may have;
+    one only a keyword the reader does not evaluate may set is said so, as the residual reasons
+    say it (`ResidualJudgement.bar_words`)."""
+    from courant.verification.convergence import RESIDUAL_TARGET
+
+    def value(u) -> str:
+        said = f"{u.field} {u.residual:.3g} against {u.tolerance:g}"
+        return said if u.certain else (said + ", which a residualControl keyword the reader "
+                                       "does not evaluate may set")
+
+    names = [u.field for u in unmet]
+    return TOLERANCE_UNMET.format(names=_and(names), target=f"{RESIDUAL_TARGET:.0e}",
+                                  values="; ".join(value(u) for u in unmet),
+                                  verb="it was" if len(names) == 1 else "they were")
+
+
+#: TRD VER-3b, under `--checks next`: the residualControl and relaxation keywords the matcher did
+#: not evaluate (`convergence.ResidualJudgement.unevaluated`), counted per field, never quoted.
+KEYWORDS_NOT_EVALUATED = (
+    "Case keyword {patterns} not evaluated: {fields}. A quoted keyword the reader does not "
+    "evaluate (a lookaround, a backreference, or one past the matcher's bound) may be the entry "
+    "OpenFOAM applies, so {which} held to the strictest tolerance or relaxation it may give.")
+
+
+def keywords_not_evaluated(unevaluated) -> str:
+    """VER-3b's sentence for the keywords a residual judgement could not evaluate
+    (`ResidualJudgement.unevaluated`): per field, how many of each dictionary's. The keywords are
+    the case's own text, and a sentence under "not assessed" reaches the support bundle, so it
+    counts them and never quotes one (the review of the 0.6.0 follow-ups, 22 Oct 2026, the rule
+    `deck.not_evaluated` keeps)."""
+    def count(keywords, dictionary: str) -> str | None:
+        n = sum(1 for k in keywords if k.startswith(dictionary + " "))
+        return f"{n} {dictionary} keyword{'' if n == 1 else 's'}" if n else None
+
+    parts = []
+    for name, keywords in unevaluated:
+        said = [c for c in (count(keywords, "residualControl"),
+                            count(keywords, "relaxationFactors")) if c]
+        parts.append(f"{name}: {' and '.join(said)}")
+    total = sum(len(keywords) for _, keywords in unevaluated)
+    return KEYWORDS_NOT_EVALUATED.format(
+        patterns="pattern was" if total == 1 else "patterns were", fields="; ".join(parts),
+        which="the field was" if len(unevaluated) == 1 else "each field was")
 
 
 def not_found(names) -> str:
@@ -400,12 +490,21 @@ NOT_CHECKED_CAUSE: dict[str, str] = {
     # A multi-region log is the run's own output; only the prefix the default does not read is a
     # limitation of the fork's reading (RRD RM-22 counts `fork`).
     MULTI_REGION_MERGED: "run", MULTI_REGION_KEYED: "run", MULTI_REGION_KEYED_COURANT: "run",
+    MULTI_REGION_KEYED_READ: "run", MULTI_REGION_KEYED_COURANT_READ: "run",
+    MULTI_REGION_KEYED_PART: "run", MULTI_REGION_KEYED_COURANT_PART: "run",
+    MESH_REGIONS_PARTIAL: "run",
     MULTI_REGION_COUPLED: "run", MULTI_REGION_PREFIX_UNREAD: "fork",
     # What the gate does not sum, on a mesh that moves or a non-conformal interface: Courant's.
     SLIDING_INTERFACE: "courant", NONCONFORMAL_INTERFACE: "courant", MOVING_MESH: "courant",
     MESH_MOTION_UNREAD: "courant",
+    # VER-5b (under next): a reading of Courant's that no check is fed, as VER-7c's lines.
+    REYNOLDS_NOT_FED: "courant",
     # What the run's own mesh, regime and fields show, each set aside on that evidence.
     SKEW_ZERO_AREA: "run", COURANT_STEADY: "run", ZERO_COMPONENT: "run",
+    # The run's own stopping rule, which its residuals did not meet: the run's, not Courant's.
+    TOLERANCE_UNMET: "run",
+    # A keyword the reader's matcher does not evaluate (VER-3b, T-VER3B-ONE): Courant's.
+    KEYWORDS_NOT_EVALUATED: "courant",
 }
 
 _FIELD = re.compile(r"\{\w+\}")

@@ -61,6 +61,7 @@ def test_an_les_switch_is_read_from_the_les_block(tmp_path):
 
 
 # ------------------------------------------------------------------ is_laminar
+@pytest.mark.usefixtures("checks_as_060")
 def test_turbulence_off_is_laminar_under_next_only():
     cfg = CaseConfig(turbulence_type="RAS", turbulence_model="kEpsilon", turbulence_switch=False)
     assert cfg.is_laminar("next") and not cfg.is_laminar()
@@ -99,6 +100,7 @@ def test_a_model_switched_off_is_rejected_under_next_as_laminar_is(tmp_path):
     assert (laminar.verdict, laminar.rule) == (v.verdict, v.rule)
 
 
+@pytest.mark.usefixtures("checks_as_060")
 def test_the_default_accepts_it_as_v050_did(tmp_path):
     v = _verify(TWIN, tmp_path, "default", turbulence_type="RAS", turbulence_switch=False)
     assert (v.verdict, v.rule) == ("TRUSTWORTHY", "VER-5.6")

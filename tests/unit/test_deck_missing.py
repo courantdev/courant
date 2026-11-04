@@ -118,7 +118,29 @@ def test_form_5_two_blocks_on_one_line_are_both_read(tmp_path):
     assert _first(case, _patch_item("inlet", "type", "fixedValue"))[0] is True
 
 
-def test_a_missing_key_stays_a_gap_not_a_reject(tmp_path):
+def test_a_missing_key_stays_a_gap_not_a_reject(tmp_path, checks_as_060):
+    """0.6.0's default: the deck reader finds no `value` entry, so the item is a gap."""
     case = _case(tmp_path, STD)
     conforms, block = _first(case, _patch_item("outlet", "value", 0))
     assert conforms is None and block.nonconformant == 0
+
+
+def test_a_value_item_on_a_type_that_applies_none_is_a_nonconformance(tmp_path):
+    """0.7.0's default (SPEC-13, `conformance.as_run`): the patch is read through its type.
+    zeroGradient applies no value of its own, so the solver did not apply the value the item
+    names: certain, and a nonconformance (TRD SPEC-13; GATE-13, promoted from 0.6.0's next)."""
+    case = _case(tmp_path, STD)
+    conforms, block = _first(case, _patch_item("outlet", "value", 0))
+    assert conforms is False and block.nonconformant == 1
+    assert "applies no value of its own" in block.items[0].note
+
+
+def test_a_type_item_is_the_type_the_solver_read(tmp_path):
+    """SPEC-13 reads a patch's entries through its type; the `type` entry is the one every type
+    reads, so an item naming it is compared, never left unread (found by the 0.7.0 suite: under
+    `conformance.as_run` a type item on a zeroGradient or fixedValue patch was not checked)."""
+    case = _case(tmp_path, STD)
+    assert _first(case, _patch_item("outlet", "type", "zeroGradient"))[0] is True
+    assert _first(case, _patch_item("inlet", "type", "fixedValue"))[0] is True
+    conforms, block = _first(case, _patch_item("outlet", "type", "fixedValue"))
+    assert conforms is False and block.nonconformant == 1

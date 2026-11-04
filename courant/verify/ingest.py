@@ -78,6 +78,7 @@ def from_case_dir(case_dir: str | Path, *, checks: str = "default") -> RunInputs
     so the manifest is v0.5.0's."""
     from courant.case.mesh import read_mesh_quality
     from courant.case.reads import reading, recording
+    from courant.case.solvers import solver_exec
     from courant.cli.tail import find_log, utility_logs
     from courant.verify.checks import enabled
 
@@ -87,9 +88,9 @@ def from_case_dir(case_dir: str | Path, *, checks: str = "default") -> RunInputs
     if not case_dir.is_dir():
         raise InputError(f"no such case directory: {case_dir}")
     with recording(case_dir) as reads:
-        log = find_log(case_dir)                        # notes every log it ranked
+        log = find_log(case_dir, checks=checks)         # notes every log it ranked
         if log is None:
-            utilities = utility_logs(case_dir)
+            utilities = utility_logs(case_dir, checks=checks)
             only = (f"; only utility logs ({', '.join(utilities)}), which are not the run's "
                     f"output. Pass the solver's log file instead" if utilities else "")
             raise InputError(f"no solver log (log.<solver>) found in {case_dir}{only}")
@@ -105,12 +106,16 @@ def from_case_dir(case_dir: str | Path, *, checks: str = "default") -> RunInputs
                 str(case_dir), buoyancy=enabled("physics.laminar_regime", checks),
                 directives=enabled("case.directives", checks),
                 steady_ddt=enabled("cfl.steady", checks),           # VER-13a, behind next
+                zero_unlisted=enabled("case.zero_unlisted", checks),
+                regions=enabled("case.regions", checks),            # VER-3d, behind next
+                solver=ran.program if (ran := solver_exec(text)) is not None else None,
             ).model_dump(mode="json")
         except Exception:                               # noqa: BLE001
             config_view = None                          # recorded as not assessed
         # Notes the checkMesh log it parsed, or the polyMesh files it computed the aspect from.
         mesh = read_mesh_quality(str(case_dir), log_text=text,
-                                 polymesh=enabled("mesh.aspect_ratio.polymesh", checks))
+                                 polymesh=enabled("mesh.aspect_ratio.polymesh", checks),
+                                 regions=(config_view or {}).get("regions") or None)
 
     return RunInputs(
         run_id=case_dir.name, log_text=text, log_name=log.name,

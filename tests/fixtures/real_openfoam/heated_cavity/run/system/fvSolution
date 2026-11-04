@@ -1,0 +1,57 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  Courant test fixture: a differentially heated cavity, run to its endTime (T-VER16C)
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      fvSolution;
+}
+
+solvers
+{
+    p_rgh
+    {
+        solver          PCG;
+        preconditioner  DIC;
+        tolerance       1e-14;
+        relTol          0.01;
+    }
+    "(U|T)"
+    {
+        solver          PBiCGStab;
+        preconditioner  DILU;
+        tolerance       1e-14;
+        relTol          0.1;
+    }
+}
+
+SIMPLE
+{
+    momentumPredictor yes;
+    nNonOrthogonalCorrectors 0;
+    pRefCell        0;
+    pRefValue       0;
+
+    // Far below what 200 iterations reach: the run stops at its endTime.
+    residualControl
+    {
+        p_rgh           1e-9;
+        U               1e-10;
+        T               1e-10;
+    }
+}
+
+relaxationFactors
+{
+    fields
+    {
+        p_rgh           0.3;
+    }
+    equations
+    {
+        U               0.7;
+        T               0.9;
+    }
+}

@@ -375,20 +375,41 @@ def outcome_of(verdict, *, executed: bool | None, executed_source: ExecutedSourc
     return make("valid_conformant", "accepted against the locked specification", v2=v2)
 
 
-def executed_in_log(log_text: str) -> bool:
-    """Whether a solver log shows a run that executed to its end: it prints `End` on a line of
-    its own and carries no fatal error. The one reading of an agent's own log; for scoring, the
-    re-solve's process record replaces it (SB-18). Only the advisory paths pass its answer to
-    `outcome_of` (`executed_source: agent_log`).
+def executed_in_log(log_text: str, checks: str = "default", *,
+                    given: int | None = None) -> bool:
+    """Whether a solver log shows a run that executed to its end. The one reading of an agent's
+    own log; for scoring, the re-solve's process record replaces it (SB-18). Only the advisory
+    paths pass its answer to `outcome_of` (`executed_source: agent_log`): the MCP
+    `score_agent_output` and SilentBench's `grade` (whose answer is also the re-solver's
+    `log_disagreement`), each with the `checks` the verdict beside it ran.
 
-    This is not `courant.watcher.exitcode`'s reading of End, which the verdict uses: a line
-    `End` anywhere counts here, so a utility's End ahead of a cut solver is `executed` while
-    `--checks next` (VER-3a) calls the same log `truncated_log`. Routing it through
-    `exitcode.verdict_exit_code` is graph node T-EXECUTED-ONE (TRD VER-3), measured first,
-    since it feeds SilentBench's scoring."""
+    Under `--checks next` (`silentbench.executed.verdict_end`, 0.7.0; T-EXECUTED-ONE) it is the
+    verdict's own reading of the end: the exit code `courant.watcher.exitcode.verdict_exit_code`
+    gives under `checks` (`given`, the code the caller gave with the run, decides as read, VER-1)
+    is 0, and the log parser reads no crash in it (VER-5.2's CRASH events: a FOAM FATAL ERROR, a
+    fatal signal's frames, a nonzero code given). So a utility's `End` ahead of a cut solver is
+    not `executed` where the verdict calls the log `truncated_log`, and a utility's `End` ahead
+    of a solver killed by a signal is not `executed` where the verdict calls it crashed.
+
+    Under the default it is v0.6.0's, byte for byte (GATE-13: it decides `did_not_execute`, a
+    scoring outcome): a line `End` anywhere, and no "FOAM FATAL" in the log; `given` is not
+    read."""
     import re
 
-    return bool(re.search(r"^End\s*$", log_text, re.MULTILINE)) and "FOAM FATAL" not in log_text
+    from courant.verify.checks import enabled
+
+    if not enabled("silentbench.executed.verdict_end", checks):
+        return (bool(re.search(r"^End\s*$", log_text, re.MULTILINE))
+                and "FOAM FATAL" not in log_text)
+    from courant.events.core import EventKind
+    from courant.watcher.exitcode import verdict_exit_code
+    from courant.watcher.parser import LogParser
+
+    code = verdict_exit_code(log_text, given, checks)
+    if code != 0:
+        return False
+    events = LogParser(run_id="executed").parse_text(log_text, return_code=code)
+    return not any(e.kind is EventKind.CRASH for e in events)
 
 
 def canonical_json(obj) -> str:

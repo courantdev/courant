@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 
 from courant.case import wordre
-from courant.case.config import CaseConfig, LinearSolverSpec, phase_pseudonym
-from courant.case.reads import may_read, reading
+from courant.case.config import CaseConfig, LinearSolverSpec, phase_pseudonym, region_pseudonym
+from courant.case.reads import kind as path_kind
+from courant.case.reads import may_read, reading, reason, unknown
+from courant.spec.deck import INCLUDE_DIRECTIVES
 
 
 def _scalar(v):
@@ -77,8 +80,8 @@ def _switch(v) -> bool | None:
 #: read (its own rule, `deck.repeated_under_input_mode`); `#includeFunc` and `#includeModel` add
 #: a function object or a model.
 _INERT = frozenset({"#inputMode", "#includeFunc", "#includeModel"})
-#: The include directives `deck.expand` follows inside the case.
-_FOLLOWED_INCLUDES = ("#include", "#includeIfPresent", "#sinclude")
+#: The include directives `deck.expand` follows inside the case: the deck's one list.
+_FOLLOWED_INCLUDES = INCLUDE_DIRECTIVES
 
 
 def _unexpanded(v) -> str | None:
@@ -130,19 +133,21 @@ def _shown(name: str, value) -> str:
 
 
 def _names(keys, name: str) -> bool:
-    """Whether one of a dictionary's `keys` names `name` for certain: the name itself, or a
-    quoted keyword, a regular expression the case wrote, that matches it in full. Matched with
-    bounded work (`courant.case.wordre`): Python's `re` backtracks exponentially on `"(a+)+b"`
-    against a long name, holding the interpreter's lock, so `courant verify <case>` and
-    `courant preflight` hung on a `$name;` in a solver entry (final review, 21 Oct 2026). A
-    keyword the matcher does not evaluate is not taken to name it, so the `$name;` is noted as
-    not read."""
-    def pattern(key):
-        quoted = isinstance(key, str) and len(key) > 1 and key[0] == key[-1] == '"'
-        return key[1:-1] if quoted else None
+    """Whether one of a dictionary's `keys` names `name` for certain: the lookup v2406 makes,
+    `dictionary::csearch` (`wordre.csearch`, the one `deck.block` and the relaxation make; a
+    third, `first_match` in declaration order, was here: T-FOLLOWUP-MINORS (5)). A quoted
+    keyword is a regular expression the case wrote, matched with bounded work: Python's `re`
+    backtracks exponentially on `"(a+)+b"` against a long name, holding the interpreter's lock,
+    so `courant verify <case>` and `courant preflight` hung on a `$name;` in a solver entry
+    (final review, 21 Oct 2026). A keyword the matcher does not evaluate is not taken to name
+    it, so with none certain the `$name;` is noted as not read."""
+    def key(k) -> tuple[str, bool]:
+        text = str(k)
+        quoted = len(text) > 1 and text[0] == text[-1] == '"'
+        return (text[1:-1], True) if quoted else (text, False)
 
-    hit, _ = wordre.first_match([str(k) for k in keys], name, pattern=pattern)
-    return hit is not None
+    hits, _ = wordre.csearch([key(k) for k in keys], name)
+    return bool(hits)
 
 
 class _Dictionary:
@@ -181,7 +186,10 @@ class _Dictionary:
 
             from courant.spec import deck
 
-            self._text, _ = deck._read_text(Path(self.case_dir), self.rel)
+            try:
+                self._text, _ = deck._read_text(Path(self.case_dir), self.rel)
+            except OSError:             # a directory on the way cannot be searched (`Path.is_file`
+                self._text = None       # raises): not read, as `_readable` already recorded
         return self._text
 
     def as_written(self) -> str | None:
@@ -406,6 +414,65 @@ def _get_quiet(src, *keys):
 #: regionProperties/regionProperties.C reads `constant/regionProperties`), and each region reads
 #: its own `system/<region>/fvSchemes`.
 REGION_PROPERTIES = os.path.join("constant", "regionProperties")
+#: A region's name as this reader accepts it: a word that names a directory under `constant/`,
+#: never `.` or `..` or a path.
+_REGION_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.+-]{0,127}")
+#: One group of `regions`: its kind (`fluid`, `solid`, ...) and the list of its region names.
+_REGION_GROUP = re.compile(r"\s*(\w{1,64})\s*\(([^()]*)\)\s*")
+
+
+def multi_region(case_dir: str | os.PathLike[str], solver: str | None) -> bool:
+    """Whether a case is read as regions: the solver that ran is one that reads its case as
+    regions (`courant.case.solvers.is_multi_region`: chtMultiRegionFoam,
+    chtMultiRegionSimpleFoam, chtMultiRegionTwoPhaseEulerFoam, foamMultiRun) and the case holds
+    `constant/regionProperties`. The one predicate of which case is read as regions
+    (T-MULTI-REGION): the case reader and the heat reader ask it. A single-region solver beside
+    a stray `regionProperties` never read it, so its case is read as one region. `solver` is the
+    log's (`solvers.solver_exec`), else `controlDict`'s `application`. (`mesh.solver_mesh` names
+    no mesh beside any `regionProperties`, the conservative side, as the committed tests hold.)"""
+    from courant.case.solvers import is_multi_region
+
+    return is_multi_region(solver) and os.path.lexists(
+        os.path.join(os.fspath(case_dir), REGION_PROPERTIES))
+
+
+def read_region_properties(case_dir: str) -> dict[str, tuple[str, ...]] | None:
+    """`constant/regionProperties` as v2406 reads it (regionProperties.C: the `regions` list of
+    kinds, each followed by its regions' names), as `{"fluid": ("air",), "solid": ("plate",)}`
+    in the file's order; None when the case has no such file (one region). Noted for the
+    manifest once read (VER-14), confined (MCP-3).
+
+    Raises `OSError` when it cannot be read, and `ValueError` when it is not read whole: a
+    directive or a macro in it, no `regions` entry, a list that is not kinds and lists of names,
+    a name that is not one directory's, or one region named twice. The caller says so (TRD
+    VER-22). The one reader of the file's contents; T-MULTI-REGION is to fill
+    `CaseConfig.regions` from it."""
+    from courant.spec import deck
+
+    path = os.path.join(case_dir, REGION_PROPERTIES)
+    if not os.path.lexists(path):
+        return None
+    with reading(path), open(path, encoding="utf-8", errors="replace") as fh:
+        text = deck.strip_comments(fh.read())
+    if "#" in text or "$" in text:
+        raise ValueError("a directive or a macro is written in it")
+    raw = deck.entry(text, "regions")
+    if raw is None or not (raw.startswith("(") and raw.endswith(")")):
+        raise ValueError("no `regions` list")
+    body, at, out = raw[1:-1], 0, {}
+    seen: set[str] = set()
+    while at < len(body.rstrip()):
+        m = _REGION_GROUP.match(body, at)
+        if m is None:
+            raise ValueError("`regions` is not a list of kinds and lists of names")
+        names = tuple(m.group(2).split())
+        if not all(_REGION_NAME.fullmatch(n) for n in names) or seen & set(names) \
+                or len(set(names)) != len(names):
+            raise ValueError("a region's name is not a directory's, or is written twice")
+        seen.update(names)
+        out[m.group(1)] = out.get(m.group(1), ()) + names
+        at = m.end()
+    return out
 
 
 def _ddt_read_whole(fs: _Dictionary, case_dir: str) -> bool:
@@ -483,7 +550,8 @@ def _ddt_read_whole(fs: _Dictionary, case_dir: str) -> bool:
 REQUIRED = ("system/controlDict", "system/fvSchemes", "system/fvSolution")
 
 
-def _readable(f, path: str, rel: str, unreadable: dict[str, str], missing: list[str]) -> bool:
+def _readable(f, path: str, rel: str, unreadable: dict[str, str], missing: list[str], *,
+              required: bool | None = None) -> bool:
     """Whether this file parses at all, recording the reason if not: absent (`missing`, for a
     dictionary in `REQUIRED`) or unreadable, two facts.
 
@@ -510,7 +578,7 @@ def _readable(f, path: str, rel: str, unreadable: dict[str, str], missing: list[
     try:
         _parse(f, path)
     except (FileNotFoundError, NotADirectoryError):
-        if rel in REQUIRED:
+        if (rel in REQUIRED) if required is None else required:
             missing.append(rel)
         return False
     except OSError as exc:
@@ -575,9 +643,88 @@ def _residual_control(fv) -> dict[str, dict[str, float]]:
     return out
 
 
+def _fv_solution(fv) -> dict:
+    """What `system/fvSolution` (or a region's) sets that the checks read: relaxation,
+    the SIMPLE and PIMPLE correctors, `residualControl` and the linear solvers, each key set
+    only when the file writes it. One reading, for the top level and for each region
+    (T-MULTI-REGION)."""
+    data: dict = {}
+    relax: dict[str, float] = {}
+    scopes: dict[str, str] = {}
+    # What `solution::read` relaxes equations from (`CaseConfig.relaxation_equations`):
+    # `equations`, or with neither sub-dictionary the flat entries. Read from the same values
+    # as the flattened map, so nothing more is read and nothing more is noted.
+    equations: dict[str, float | None] = {}
+    rf = fv.scope("relaxationFactors")
+    if rf is not None:
+        # flatten nested fields/equations, or a flat mapping
+        try:
+            items = list(rf.items())
+        except Exception:  # noqa: BLE001
+            items = []
+        nested = any(k in ("fields", "equations") and hasattr(v, "items") for k, v in items)
+        for k, v in items:
+            if k in ("fields", "equations"):
+                try:
+                    for kk, _vv in fv.scope("relaxationFactors", k).items():
+                        s = _scalar(_get(fv, "relaxationFactors", k, kk))
+                        if k == "equations":
+                            equations[str(kk)] = s
+                        if s is not None:
+                            relax[kk] = s
+                            scopes[kk] = k
+                except Exception:  # noqa: BLE001
+                    pass
+            else:
+                s = _scalar(_get(fv, "relaxationFactors", k))
+                if not nested:
+                    equations[str(k)] = s
+                if s is not None:
+                    relax[k] = s
+                    scopes[k] = ""
+    if relax:
+        data["relaxation_factors"] = relax
+        data["relaxation_scopes"] = scopes
+        data["relaxation_equations"] = equations
+    for loop in ("SIMPLE", "PIMPLE"):
+        nno = _scalar(_get(fv, loop, "nNonOrthogonalCorrectors"))
+        if nno is not None:
+            data["n_non_orthogonal_correctors"] = int(nno)
+        ncorr = _scalar(_get(fv, loop, "nCorrectors"))
+        if ncorr is not None:
+            data["n_correctors"] = int(ncorr)
+    nouter = _scalar(_get(fv, "PIMPLE", "nOuterCorrectors"))
+    if nouter is not None:
+        data["n_outer_correctors"] = int(nouter)
+    control = _residual_control(fv)
+    if control:
+        data["residual_control"] = control
+    solvers: dict[str, LinearSolverSpec] = {}
+    for field, spec in _subdict_items(fv, "solvers"):
+        if not hasattr(spec, "get"):
+            continue
+        try:
+            solvers[field] = LinearSolverSpec(
+                field=field, solver=_tokens(_get(fv, "solvers", field, "solver")),
+                tolerance=_scalar(_get(fv, "solvers", field, "tolerance")),
+                rel_tol=_scalar(_get(fv, "solvers", field, "relTol")),
+                log=_solver_log(_get(fv, "solvers", field, "log")))
+        except Exception:  # noqa: BLE001
+            pass
+    if solvers:
+        data["linear_solvers"] = solvers
+    return data
+
+
+#: How `CaseConfig.unreadable` names the start-time directory when it cannot be listed or
+#: searched (T-ZERO-UNLISTABLE): a directory, so with its slash, beside the files it names.
+ZERO_DIR = "0/"
+
+
 @wordre.bounded                                     # the case's keyword patterns (SPEC-2)
 def read_case_config(case_dir: str, *, buoyancy: bool = True, directives: bool = False,
-                     steady_ddt: bool = False) -> CaseConfig:
+                     steady_ddt: bool = False, zero_unlisted: bool = False,
+                     regions: bool = False, solver: str | None = None) -> CaseConfig:
     """The case's settings as the checks need them. A value its dictionary writes through a
     directive the reader did not follow is reported in `unread_values` (TRD VER-3b); with
     `directives` (`--checks next`) the dictionary is read as the solver reads it, its includes
@@ -585,7 +732,26 @@ def read_case_config(case_dir: str, *, buoyancy: bool = True, directives: bool =
     `steady_ddt` (`--checks next`, `cfl.steady`, TRD VER-13a): `ddtSchemes`' other entries are
     read beside its `default` (`CaseConfig.ddt_terms`), and whether foamlib read it as the
     solver does (`CaseConfig.ddt_read_whole`); without it neither is read, so the default reads
-    of `fvSchemes` what v0.5.0 read."""
+    of `fvSchemes` what v0.5.0 read. `zero_unlisted` (`--checks next`, `case.zero_unlisted`, TRD
+    VER-3): a `0/` that cannot be listed or searched is recorded in `unreadable` as `0/` and the
+    rest of the configuration is kept; without it, a `0/` that cannot be listed raises, as in
+    v0.6.0, and the caller has no configuration.
+
+    `regions` (`--checks next`, `case.regions`, T-MULTI-REGION, TRD VER-3d): a multi-region case
+    (`multi_region`, the one predicate: the solver that ran, `solver` from the log or else
+    `controlDict`'s `application`, reads regions, and `constant/regionProperties` exists) is read
+    as that solver reads it. `CaseConfig.regions` is the file's regions (`read_region_properties`,
+    the one reader). The top level's `fvSchemes`, turbulence, transport and thermophysical
+    dictionaries and `0/` are not read (the solver builds no default region, so a copy there is
+    not what ran); of its `fvSolution` only what the solver reads there for the whole run that a
+    check reads, `PIMPLE/nOuterCorrectors` (readPIMPLEControls.H, v2406). Each region's
+    `system/<region>/fvSchemes` (divergence schemes) and `fvSolution` (`_fv_solution`) and the
+    boundary conditions of `0/<region>/` are read, keyed `<name>@<region>` by the region's place
+    (`config.region_pseudonym`). A region's `fvSchemes`, `fvSolution` or `0/<region>/` the case
+    does not hold is `missing`; a `0/<region>/` that cannot be listed or searched is
+    `unreadable` under `zero_unlisted`. A `regionProperties` that cannot be read whole, or names
+    no region, is `unreadable`, and the case is read as one region. Without `regions` the case is
+    read as v0.6.0 read it, `regionProperties` unopened."""
     from foamlib import FoamFile
 
     data: dict = {}
@@ -593,14 +759,16 @@ def read_case_config(case_dir: str, *, buoyancy: bool = True, directives: bool =
     missing: list[str] = []
     opened: list[_Dictionary] = []
     ddt_read_whole = False                       # TRD VER-13a, `_ddt_read_whole`
+    region_names: list[str] = []
+    multi = False
 
-    def open_file(rel):
+    def open_file(rel, *, required: bool | None = None):
         p = os.path.join(case_dir, rel)
         if not may_read(p):             # MCP-3: asked before it is looked for
             return None
         f = FoamFile(p)                 # lazy: `_readable` reads it, and notes it (VER-14)
         failed: dict[str, str] = {}
-        parsed = _readable(f, p, rel, failed, missing)
+        parsed = _readable(f, p, rel, failed, missing, required=required)
         d = _Dictionary(f if parsed else None, p, rel, case_dir, directives)
         if not parsed and not (directives and d.expand()):     # `${name}` stops foamlib
             unreadable.update(failed)
@@ -621,8 +789,26 @@ def read_case_config(case_dir: str, *, buoyancy: bool = True, directives: bool =
         data["write_control"] = str(wc) if wc is not None else None
         data["write_interval"] = _scalar(_get(cd, "writeInterval"))
 
-    # --- fvSchemes ---
-    fs = open_file("system/fvSchemes")
+    # --- the regions (T-MULTI-REGION, `regions`, under --checks next): only for a solver that
+    # reads them (`multi_region`), and only when the file names one; a file that cannot be read
+    # whole, or names none, is said, and the case is read as one region, nothing skipped ---
+    if regions and multi_region(case_dir, solver or data.get("solver")):
+        rel = REGION_PROPERTIES.replace(os.sep, "/")
+        try:
+            kinds = read_region_properties(case_dir)
+            region_names = [r for listed in (kinds or {}).values() for r in listed]
+            if not region_names:
+                unreadable[rel] = "ValueError: it names no region"
+        except OSError as exc:
+            unreadable[rel] = reason(exc)
+        except ValueError as exc:
+            unreadable[rel] = f"ValueError: {exc}"
+        multi = bool(region_names)
+        if multi:
+            data["regions"] = region_names
+
+    # --- fvSchemes --- (a multi-region case's are its regions', `_read_region`)
+    fs = open_file("system/fvSchemes") if not multi else None
     if fs is not None:
         ddt = _get(fs, "ddtSchemes", "default")
         data["ddt_scheme"] = _tokens(ddt)
@@ -645,74 +831,27 @@ def read_case_config(case_dir: str, *, buoyancy: bool = True, directives: bool =
 
     # --- fvSolution ---
     fv = open_file("system/fvSolution")
-    if fv is not None:
-        relax: dict[str, float] = {}
-        scopes: dict[str, str] = {}
-        # What `solution::read` relaxes equations from (`CaseConfig.relaxation_equations`):
-        # `equations`, or with neither sub-dictionary the flat entries. Read from the same values
-        # as the flattened map, so nothing more is read and nothing more is noted.
-        equations: dict[str, float | None] = {}
-        rf = fv.scope("relaxationFactors")
-        if rf is not None:
-            # flatten nested fields/equations, or a flat mapping
-            try:
-                items = list(rf.items())
-            except Exception:  # noqa: BLE001
-                items = []
-            nested = any(k in ("fields", "equations") and hasattr(v, "items") for k, v in items)
-            for k, v in items:
-                if k in ("fields", "equations"):
-                    try:
-                        for kk, _vv in fv.scope("relaxationFactors", k).items():
-                            s = _scalar(_get(fv, "relaxationFactors", k, kk))
-                            if k == "equations":
-                                equations[str(kk)] = s
-                            if s is not None:
-                                relax[kk] = s
-                                scopes[kk] = k
-                    except Exception:  # noqa: BLE001
-                        pass
-                else:
-                    s = _scalar(_get(fv, "relaxationFactors", k))
-                    if not nested:
-                        equations[str(k)] = s
-                    if s is not None:
-                        relax[k] = s
-                        scopes[k] = ""
-        if relax:
-            data["relaxation_factors"] = relax
-            data["relaxation_scopes"] = scopes
-            data["relaxation_equations"] = equations
-        for loop in ("SIMPLE", "PIMPLE"):
-            nno = _scalar(_get(fv, loop, "nNonOrthogonalCorrectors"))
-            if nno is not None:
-                data["n_non_orthogonal_correctors"] = int(nno)
-            ncorr = _scalar(_get(fv, loop, "nCorrectors"))
-            if ncorr is not None:
-                data["n_correctors"] = int(ncorr)
+    if fv is not None and not multi:
+        data.update(_fv_solution(fv))
+    elif fv is not None:
+        # A multi-region solver reads the top level's fvSolution for what is the whole run's
+        # (v2406, read in the pinned image): chtMultiRegionFoam's and
+        # chtMultiRegionTwoPhaseEulerFoam's outer loop (readPIMPLEControls.H: `fvSolution
+        # solutionDict(runTime)`, `PIMPLE/nOuterCorrectors`, default 1), the coupled energy field
+        # and the energy-coupling loops (createCoupledRegions.H, loopControl). Of these the checks
+        # read the outer correctors (VER-13: the Courant limit), so that alone is read here.
         nouter = _scalar(_get(fv, "PIMPLE", "nOuterCorrectors"))
         if nouter is not None:
             data["n_outer_correctors"] = int(nouter)
-        control = _residual_control(fv)
-        if control:
-            data["residual_control"] = control
-        solvers: dict[str, LinearSolverSpec] = {}
-        for field, spec in _subdict_items(fv, "solvers"):
-            if not hasattr(spec, "get"):
-                continue
-            try:
-                solvers[field] = LinearSolverSpec(
-                    field=field, solver=_tokens(_get(fv, "solvers", field, "solver")),
-                    tolerance=_scalar(_get(fv, "solvers", field, "tolerance")),
-                    rel_tol=_scalar(_get(fv, "solvers", field, "relTol")),
-                    log=_solver_log(_get(fv, "solvers", field, "log")))
-            except Exception:  # noqa: BLE001
-                pass
-        if solvers:
-            data["linear_solvers"] = solvers
 
-    # --- turbulence ---
-    for rel in ("constant/momentumTransport", "constant/turbulenceProperties"):
+    # --- each region's own (T-MULTI-REGION, `regions`, under --checks next) ---
+    for region in region_names:
+        _read_region(data, region, region_pseudonym(region_names, region), open_file,
+                     case_dir, unreadable=unreadable, missing=missing,
+                     zero_unlisted=zero_unlisted)
+
+    # --- turbulence --- (none at the top level of a multi-region case)
+    for rel in (() if multi else ("constant/momentumTransport", "constant/turbulenceProperties")):
         tf = open_file(rel)
         if tf is not None:
             sim = _get(tf, "simulationType")
@@ -739,8 +878,8 @@ def read_case_config(case_dir: str, *, buoyancy: bool = True, directives: bool =
                 data["turbulence_switch"] = switch
             break
 
-    # --- transport ---
-    tp = open_file("constant/transportProperties")
+    # --- transport --- (none at the top level of a multi-region case)
+    tp = open_file("constant/transportProperties") if not multi else None
     if tp is not None:
         transport = {}
         for name in ("nu", "rho", "Pr", "Prt", "beta", "TRef"):
@@ -771,20 +910,27 @@ def read_case_config(case_dir: str, *, buoyancy: bool = True, directives: bool =
     # --- boundary conditions (0/ field files) ---
     boundary: dict[str, dict[str, str]] = {}
     zero = os.path.join(case_dir, "0")
-    if os.path.isdir(zero) and may_read(zero):      # MCP-3: listed, so confined like a read
-        for fname in os.listdir(zero):
+    # A multi-region case's `0/` holds its regions' directories (`_read_region`); fields left at
+    # its top level are not what the solver read.
+    if not multi and os.path.isdir(zero) and may_read(zero):    # MCP-3: listed, so confined
+        try:
+            names = os.listdir(zero)
+        except OSError as exc:
+            # 0.6.0 (the default, GATE-13): the exception ends the reading, and the whole
+            # configuration is lost. `zero_unlisted` (`case.zero_unlisted`, --checks next):
+            # `0/` is a directory the reader could not read, said as one, and the rest stands.
+            if not zero_unlisted:
+                raise
+            unreadable[ZERO_DIR] = reason(exc)
+            names = []
+        for fname in names:
             fpath = os.path.join(zero, fname)
             if not os.path.isfile(fpath):
+                # Listed, not searchable (mode 644): no file in it can be opened.
+                if zero_unlisted and (why := unknown(fpath)) is not None:
+                    unreadable.setdefault(ZERO_DIR, reason(why))
                 continue
-            try:
-                ff = FoamFile(fpath)
-                _parse(ff, fpath)       # VER-14: noted once read, parsed or not
-                for patch, spec in _subdict_items(ff, "boundaryField"):
-                    t = _tokens(spec.get("type")) if hasattr(spec, "get") else None
-                    if t:
-                        boundary.setdefault(patch, {})[fname] = t
-            except Exception:  # noqa: BLE001
-                continue
+            _boundary_types(fpath, fname, boundary)
     if boundary:
         data["boundary"] = boundary
 
@@ -809,7 +955,7 @@ def read_case_config(case_dir: str, *, buoyancy: bool = True, directives: bool =
     # density of the case's equation of state since TRD PRE-6, behind
     # `--checks next` until 0.6.0 (`courant.case.viscosity`); `rho` is read for
     # `rhoConst` for that.
-    thermo = open_file("constant/thermophysicalProperties")
+    thermo = open_file("constant/thermophysicalProperties") if not multi else None
     if thermo is not None:
         properties: dict[str, float] = dict(data.get("transport") or {})
         for group, keys in (("transport", ("mu", "Pr")),
@@ -838,10 +984,10 @@ def read_case_config(case_dir: str, *, buoyancy: bool = True, directives: bool =
         if g is not None:
             data["gravity"] = g
     # `0/` files as the boundary loop above reads them: one that cannot be read is absent.
-    tf = _field_file(case_dir, "0/T")
+    tf = _field_file(case_dir, "0/T") if not multi else None
     if tf is not None:
         data.update(_held_walls(case_dir, _fixed_values(tf), data.get("gravity")))
-    pf = _field_file(case_dir, "0/p")
+    pf = _field_file(case_dir, "0/p") if not multi else None
     if pf is not None:
         p = _uniform(_get(pf, "internalField"))
         if p is not None:
@@ -868,6 +1014,90 @@ def read_case_config(case_dir: str, *, buoyancy: bool = True, directives: bool =
     config = CaseConfig.from_dict({k: v for k, v in data.items() if v is not None})
     # Set here and nowhere else: `from_dict` never takes it from a dictionary (TRD VER-13a).
     return config.model_copy(update={"ddt_read_whole": True}) if ddt_read_whole else config
+
+
+def _boundary_types(fpath: str, fname: str, boundary: dict[str, dict[str, str]]) -> None:
+    """Each patch's boundary condition type in one field file into `boundary` (patch -> field ->
+    type): the one reading of a `0/` field file's types, for the top level and for a region. A
+    file that cannot be read or parsed adds nothing (noted once read, VER-14)."""
+    from foamlib import FoamFile
+
+    try:
+        ff = FoamFile(fpath)
+        _parse(ff, fpath)               # VER-14: noted once read, parsed or not
+        for patch, spec in _subdict_items(ff, "boundaryField"):
+            t = _tokens(spec.get("type")) if hasattr(spec, "get") else None
+            if t:
+                boundary.setdefault(patch, {})[fname] = t
+    except Exception:  # noqa: BLE001
+        return
+
+
+def _read_region(data: dict, region: str, tag: str, open_file, case_dir: str, *,
+                 unreadable: dict[str, str], missing: list[str],
+                 zero_unlisted: bool = False) -> None:
+    """One region of a multi-region case into `data` (T-MULTI-REGION, `regions`): its
+    `system/<region>/fvSchemes` divergence schemes and `system/<region>/fvSolution`
+    (`_fv_solution`), each required (`missing` when absent), and the boundary condition types of
+    the field files in `0/<region>/`. Every key gets `@<tag>`, the region's place
+    (`config.region_pseudonym`), so a key names no region: `U@region1`, `inlet@region1`.
+
+    Only what the setup rules read is merged: the relaxation factors and their scopes, the
+    linear solvers, the divergence schemes and the boundary types. A region's correctors and
+    `residualControl` are not (one value of each per case is what the checks read), nor its
+    `constant/<region>/` dictionaries (the thermophysical model, a fluid's turbulence)."""
+    def keyed(entries: dict) -> dict:
+        return {f"{k}@{tag}": v for k, v in entries.items()}
+
+    fs = open_file(f"system/{region}/fvSchemes", required=True)
+    if fs is not None:
+        div = {k: v for k, v in ((k, _tokens(v)) for k, v in _subdict_items(fs, "divSchemes"))
+               if v}
+        if div:
+            data.setdefault("div_schemes", {}).update(keyed(div))
+    fv = open_file(f"system/{region}/fvSolution", required=True)
+    if fv is not None:
+        part = _fv_solution(fv)
+        for key in ("relaxation_factors", "relaxation_scopes", "relaxation_equations"):
+            if key in part:
+                data.setdefault(key, {}).update(keyed(part[key]))
+        solvers = part.get("linear_solvers") or {}
+        if solvers:
+            data.setdefault("linear_solvers", {}).update(
+                {f"{k}@{tag}": s.model_copy(update={"field": f"{k}@{tag}"})
+                 for k, s in solvers.items()})
+    # `0/<region>/` (the review of T-MULTI-REGION, M1): one that is not there is `missing`; one
+    # that cannot be searched or listed, or whose files cannot be reached, is `unreadable` under
+    # `zero_unlisted` (`case.zero_unlisted`, T-ZERO-UNLISTABLE's rule), never passed over in
+    # silence. Recorded by its path; a finding names the region by its place.
+    zero = os.path.join(case_dir, "0", region)
+    rel = f"0/{region}/"
+    there = path_kind(zero)
+    if there is None:
+        if zero_unlisted:
+            unreadable.setdefault(rel, reason(unknown(zero)))
+        return
+    if not there:
+        missing.append(rel)
+        return
+    if not may_read(zero):                              # MCP-3: listed, so confined like a read
+        return
+    try:
+        listed = sorted(os.listdir(zero))
+    except OSError as exc:
+        if zero_unlisted:
+            unreadable.setdefault(rel, reason(exc))
+        return
+    found: dict[str, dict[str, str]] = {}
+    for fname in listed:
+        fpath = os.path.join(zero, fname)
+        is_regular = path_kind(fpath, stat.S_ISREG)
+        if is_regular is None and zero_unlisted:        # listed, not searchable
+            unreadable.setdefault(rel, reason(unknown(fpath)))
+        if is_regular:
+            _boundary_types(fpath, fname, found)
+    if found:
+        data.setdefault("boundary", {}).update(keyed(found))
 
 
 def _field_file(case_dir: str, rel: str):

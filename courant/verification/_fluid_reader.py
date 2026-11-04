@@ -74,7 +74,7 @@ import sys
 
 import numpy as np
 
-from courant.case.reads import may_read, reading
+from courant.case.reads import may_read, plain_or_gz, reading
 from courant.verification.fields import FieldData, FluxSource
 
 #: Scalar fields the field-based checks look for.
@@ -113,7 +113,11 @@ def _numeric_time_dirs(root: str) -> list[str]:
     out: list[str] = []
     if not may_read(root) or not os.path.isdir(root):   # MCP-3: listed, so confined like a read
         return out
-    for name in os.listdir(root):
+    try:
+        names = os.listdir(root)
+    except OSError:                     # a directory that cannot be listed holds no time read
+        return out                      # (T-ZERO-UNLISTABLE: never a traceback)
+    for name in names:
         if not os.path.isdir(os.path.join(root, name)):
             continue
         try:
@@ -157,10 +161,7 @@ def processor_dirs(case_dir: str) -> list[str]:
 
 def _field_file(case: str, time: str, name: str) -> str:
     """The file a field is read from at `time`: the plain file, else its `.gz`."""
-    path = os.path.join(case, time, name)
-    if not os.path.exists(path) and os.path.exists(path + ".gz"):
-        return path + ".gz"
-    return path
+    return plain_or_gz(os.path.join(case, time, name))
 
 
 def _binary_as_read(arch) -> None:
@@ -324,6 +325,8 @@ def _boundary_flux(case: str, time: str) -> tuple[dict[str, float], FluxSource]:
     path = _field_file(case, time, "phi")
     shown = os.path.relpath(path, case).replace(os.sep, "/")
     if not os.path.isfile(path):
+        if os.path.lexists(path):       # there, and not a regular file (a FIFO): never opened
+            raise _NotRead(f"{shown} is not a regular file, so the face flux was not read")
         raise _NotRead(f"no {time}/phi (the face flux at the latest time) was found")
     try:
         with reading(path):
@@ -475,17 +478,11 @@ def read_fields(case_dir: str, time: str | None = None, *, fluxes: bool = False,
     if latest is None or float(latest) <= 0.0:
         return FieldData(time=0.0, internal={}, nu=None, inlet_speed=None, after_log=after_log)
 
+    # nu is not read here: it is the case reader's (`CaseConfig.transport`, `fields.case_nu`),
+    # which the caller that holds the configuration sets (`courant.verify.pipeline._fields`,
+    # `FieldData.from_case`). A second reader of it, `FoamFile(...)["nu"]`, read a nu written as
+    # `$nuVal` as None where the case reader read 0.5 under --checks next (T-VER3B-ONE).
     nu = None
-    try:
-        from foamlib import FoamFile
-
-        from courant.case._foam_reader import _scalar
-
-        transport = os.path.join(case_dir, "constant/transportProperties")
-        with reading(transport):                # VER-14: read for nu, whether or not it has one
-            nu = _scalar(FoamFile(transport)["nu"])
-    except Exception:  # noqa: BLE001
-        pass
 
     inlet_speed = None
     if "U" in internal:

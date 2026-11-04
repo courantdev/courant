@@ -164,7 +164,9 @@ def test_a_refusal_under_a_linked_directory_is_the_same_whether_or_not_the_file_
         present = {"deep/nu": "nu 1;\n"}
     elif via == "constant":               # the case reader's own files
         link = case / "constant"
-        present = {p.name: p.read_text() for p in link.iterdir()}
+        # every file under it, the mesh the demo ships from 0.7.0 among them
+        present = {p.relative_to(link).as_posix(): p.read_text() for p in link.rglob("*")
+                   if p.is_file()}
         shutil.rmtree(link)
     else:                                 # a decomposed run's results: listed, then read
         link = case / "processor0"
@@ -435,6 +437,61 @@ def test_no_tool_opens_a_file_outside_the_roots(tmp_path, fixture, linked_out):
     assert out["opened"] == []
     assert out["said"] == {"verify_run": "refused", "score_agent_output": "refused",
                            "check_convergence": "refused"}
+
+
+#: In a fresh interpreter: `time_dirs` on a rank directory linked out of the roots, and
+#: `solver_mesh` on a case with no mesh of its own and that rank, inside the confinement.
+#: Prints what was listed or opened outside, and what each returned.
+_RANK_LISTED = r"""
+import json, os, sys
+from pathlib import Path
+root, case, outside = sys.argv[1:4]
+outside = os.path.realpath(outside)
+seen = set()
+
+def hook(event, args):
+    if (event in ("open", "os.listdir", "os.scandir", "glob.glob") and args
+            and isinstance(args[0], (str, bytes, os.PathLike))):
+        p = os.path.realpath(os.fsdecode(args[0]) or ".")
+        if p == outside or p.startswith(outside + os.sep):
+            seen.add(f"{event} {p}")
+
+sys.addaudithook(hook)
+from courant.case import mesh, reads
+from courant.mcp import tools
+times, said = None, "answered"
+try:
+    with reads.confined(tools.Confinement([root])):
+        times = mesh.time_dirs(Path(case) / "processor0")
+        mesh.solver_mesh(case, "nProcs : 2\n")
+except tools.OutsideRoot:
+    said = "refused"
+print(json.dumps({"listed": sorted(seen), "times": times, "said": said}, default=str))
+"""
+
+
+def test_a_rank_directory_linked_out_of_the_roots_is_never_listed(tmp_path):
+    """MCP-3 (`courant.case.mesh.time_dirs`): a rank directory linked outside the roots was
+    listed for its time directories when `solver_mesh` looked through the ranks for the mesh the
+    solver read, before any tool refused (found once the demo shipped its mesh; reachable by
+    default since VER-7a and SPEC-13 were promoted). On a case with no mesh of its own, the rank
+    linked out holds time directories: nothing outside is listed, and `time_dirs` returns none."""
+    import json
+    import subprocess
+    import sys
+
+    root, outside = tmp_path / "root", tmp_path / "outside"
+    case = root / "case"
+    (case / "system").mkdir(parents=True)
+    (case / "system" / "controlDict").write_text("application icoFoam;\n")
+    (outside / "processor0" / "0.1" / "polyMesh").mkdir(parents=True)
+    (outside / "processor0" / "constant").mkdir()
+    (case / "processor0").symlink_to(outside / "processor0", target_is_directory=True)
+    got = subprocess.run([sys.executable, "-c", _RANK_LISTED, str(root), str(case), str(outside)],
+                         capture_output=True, text=True, cwd=str(ROOT), timeout=120, check=False)
+    assert got.returncode == 0, got.stderr
+    out = json.loads(got.stdout.strip().splitlines()[-1])
+    assert out["listed"] == [] and out["times"] == [] and out["said"] == "refused"
 
 
 def test_the_server_will_not_default_its_root_to_the_disk_or_the_home_directory(tmp_path,
