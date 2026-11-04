@@ -624,7 +624,9 @@ def test_a_value_the_case_writes_is_read_in_linear_time():
 def test_a_field_written_with_macros_to_hold_the_reader_gives_no_number_at_once(tmp_path, field):
     """The review of b1fea1c: each `$` the reader resolves cost a pass over the whole file, so an
     internalField of 100,000 `$a` held `courant verify --checks next` for hours. More `$` than
-    `_MAX_MACROS` in the files one reading reads gives no number, before any is resolved."""
+    `_MAX_MACROS` in the files one reading reads gives no number, before any is resolved.
+    The time bound is a hang guard (hours before the fix), not a speed claim: 1.0 s (U) and
+    1.9 s (p) on the laptop, about twice that on GitHub's runners (4 Nov 2026)."""
     import time
 
     case, cfg, run = _external(tmp_path, nu=2e-3)
@@ -636,7 +638,7 @@ def test_a_field_written_with_macros_to_hold_the_reader_gives_no_number_at_once(
                     + text[text.index(";", start):])
     t = time.perf_counter()
     assert reynolds_number(case, CaseConfig.from_foam(str(case)), run) is None
-    assert time.perf_counter() - t < 5.0
+    assert time.perf_counter() - t < 60.0
 
 
 def _macro_p(case: Path) -> None:

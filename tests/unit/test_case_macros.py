@@ -672,7 +672,10 @@ def test_a_macro_in_every_one_of_many_patches_is_read_in_linear_time(tmp_path, m
 def test_the_expansion_is_bounded_however_merges_nest():
     """M1's bound: `$name;` merges that double at each level (`a1 { $a0; $a0; }` ...) grow the
     text as 2^levels. Past `deck.MAX_EXPANDED` characters the expansion stops and the text is
-    left as written, so what it would set is read as unread, never guessed, and it returns."""
+    left as written, so what it would set is read as unread, never guessed, and it returns.
+    The work before the stop is linear in `MAX_EXPANDED` (about 2^20 entries): 2.9 s on the
+    laptop, 6.1 to 6.3 s on GitHub's runners (the v0.7.0 tag run, 4 Nov 2026). Unbounded, the
+    2^40 doubling never returns, so the time bound is a hang guard, not a speed claim."""
     import time
 
     from courant.spec import deck
@@ -681,7 +684,7 @@ def test_the_expansion_is_bounded_however_merges_nest():
     text += "top { $a39; }\ny $x;\n"
     t = time.perf_counter()
     out = deck.expand(text, Path("/nowhere/system/x"), Path("/nowhere"))
-    assert time.perf_counter() - t < 5.0
+    assert time.perf_counter() - t < 60.0
     assert len(out) <= deck.MAX_EXPANDED and "$a39;" in out
     assert deck.MAX_EXPANDED <= 16 * 2**20
 
