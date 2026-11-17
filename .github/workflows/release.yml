@@ -92,7 +92,7 @@ jobs:
       matrix:
         include:
           - target: darwin-arm64
-            runner: macos-14
+            runner: macos-15
           - target: darwin-x86_64
             runner: macos-15-intel   # macos-13 was retired Dec 2025; the last Intel image
           # Built inside a RHEL 8 container (glibc 2.28): a PyInstaller binary links the glibc of
