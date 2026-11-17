@@ -19,10 +19,14 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, cast
 
 from courant.events.core import EventKind
 from courant.events.diverged import is_divergence
 from courant.watcher.parser import LogParser
+
+if TYPE_CHECKING:
+    from courant.verify.schema import Verdict
 
 WAITING, RUNNING, FAILING, CONVERGED, FINISHED = "WAITING", "RUNNING", "FAILING", "CONVERGED", "FINISHED"
 
@@ -58,7 +62,7 @@ class LiveState:
     clock_s: float | None
     alarm: Alarm | None = None
     convergence: dict | None = None
-    verdict: object | None = None    # the full Verdict, once FINISHED
+    verdict: Verdict | None = None   # the full Verdict, once FINISHED
 
     def as_dict(self) -> dict:
         v = self.verdict
@@ -124,7 +128,7 @@ class LiveEngine:
         if self._best is None or worst < self._best:
             self._best = worst
         if self.alarm is None and worst > GROWTH_FLOOR and \
-                worst >= self._best * 10.0 ** GROWTH_ORDERS:
+                worst >= cast(float, self._best) * 10.0 ** GROWTH_ORDERS:   # set just above
             self._raise("live.residual_growth",
                         f"the worst residual rose {GROWTH_ORDERS} orders of magnitude above its "
                         f"best ({self._best:.3g} to {worst:.3g})", log_offset)

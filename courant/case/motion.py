@@ -61,8 +61,11 @@ def read_mesh_motion(case_dir: str | os.PathLike[str] | None) -> MeshMotion | No
         return None
     from foamlib import FoamFile
 
+    from courant.case import foamguard
+
     try:
         with reading(path):
+            foamguard.check_path(path)
             d = FoamFile(path)
             kind = d.get("dynamicFvMesh")
             org = [k for k in ORG_KEYS if k in d]

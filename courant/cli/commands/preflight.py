@@ -20,7 +20,7 @@ EXIT = {"NO_SETUP_FAULT_FOUND": 0, "SETUP_FAULT": 2, "NOT_ASSESSABLE": 3}
 
 def preflight(
     case: str = typer.Argument(..., help="A case directory, before (or after) it runs."),
-    case_json: str = typer.Option(None, "--case-json", help="A captured configuration sidecar (*.case.json) instead of a case directory."),
+    case_json: str = typer.Option(None, "--case-json", help="A captured configuration sidecar (*.case.json), read instead of a case directory (CASE is still required, and is not read)."),
     as_json: bool = typer.Option(False, "--json", help="Print the canonical preflight JSON."),
     checks: str = typer.Option("default", "--checks", help="'next' also runs the checks that ship behind this flag for one minor release before they are on by default (GATE-13); the result records it."),
 ) -> None:

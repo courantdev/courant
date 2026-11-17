@@ -75,7 +75,8 @@ def score_agent_output(case: str, spec: str, spec_sha256: str | None = None,
     is whether the agent is about to tell its user the run worked. Returns the verdict document
     (courant.verdict/2 by default), SB-11's `outcome` (also as `task_class`), and the flags
     `silent_error` (the run executed, you reported success, and the gate rejects it) and
-    `unverified_success` (the same, with insufficient). Read-only.
+    `unverified_success` (it executed, you reported success, and `task_class` is insufficient: an
+    insufficient verdict, or an accept on any basis but `validity+conformance`). Read-only.
     """
     from courant.verify import InputError, from_path, verify_inputs, with_spec
     from courant.verify.schema import executed_in_log, outcome_of
@@ -105,13 +106,19 @@ def check_convergence(path: str, transient_average: bool = False, *, confine: Co
 
     `path` is a case directory with function-object output under postProcessing/, or a log.
     Read-only. Returns the status (PASS, WARN, FAIL or NOT_ASSESSABLE), the stopping step,
-    the change after it, and the iterations, wall clock and core-hours spent after it.
+    the change after it, and the iterations, wall clock and core-hours spent after it; or
+    `{"error": ...}` when the run at `path` cannot be read (GATE-10: in words, never an internal
+    error).
     """
     from courant.converge import Options, convergence_path, summary
+    from courant.verify import InputError
 
     target = confine.check(path)
-    with confined(confine, target):
-        conv = convergence_path(target, None, Options(transient_average=transient_average))
+    try:
+        with confined(confine, target):
+            conv = convergence_path(target, None, Options(transient_average=transient_average))
+    except InputError as exc:                           # an input, as verify_run says it
+        return {"error": str(exc)}
     out = summary(conv)
     out["messages"] = [f.message for f in conv.findings if f.severity in ("WARN", "FAIL") and f.message]
     return out

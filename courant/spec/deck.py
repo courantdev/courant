@@ -23,6 +23,7 @@ import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from courant.case import reads
 
@@ -153,6 +154,8 @@ class KeywordNotEvaluated(ValueError):
     backreference, a lookaround, or larger than its bound): the block cannot be told (VER-5.9).
     Its message quotes nothing the case wrote: the keyword is the case's text, and the note made
     from it reaches the verdict and the support bundle (`not_evaluated`)."""
+
+    keywords: tuple[str, ...]           # set where raised (`block`); an annotation only
 
 
 def not_evaluated(rel: str, included_by: str | None = None) -> str:
@@ -321,12 +324,29 @@ def numbers(raw: str) -> list[float]:
 
 
 # ---------------------------------------------------------------- value parsing
+#: The name lookups one value's `$name`s stand for. A bound on a hang, not on a value: 0.7.0 made
+#: each of them, at 33 microseconds on 1 KB of dictionary (a 1,048,576-lookup fan-out read in
+#: 34.6 s), so this many held it for 37 minutes. No value of any length reaches it by being long:
+#: one `$list` is one lookup (security review 0.7.0, SEC070-17). Past it the value is unread.
+MAX_MACRO_LOOKUPS = 2**26
+
+
 def _resolve_macros(raw: str, text: str, path: Path, case_root: Path, depth: int = 0) -> str | None:
-    """Substitute `$name` from the same file, or from a file it `#include`s. None if not found."""
+    """Substitute `$name` from the same file, or from a file it `#include`s. None if not found,
+    or past `MAX_MACRO_LOOKUPS` or `MAX_REPEATED_CHARS`."""
+    return _resolved(raw, text, path, case_root, depth, {}, [0])[0]
+
+
+def _resolved(raw: str, text: str, path: Path, case_root: Path, depth: int, memo: dict,
+              repeated: list[int]) -> tuple[str | None, int]:
+    """(`_resolve_macros`' value, the lookups it stands for). Each name is looked up once per
+    level (`memo`; pure in the name and the level, so the value is the one looking it up each
+    time gives), and the lookups are still counted, so the bound does not move with the memo.
+    `repeated`: the characters substituted for a name already substituted at its level."""
     if "$" not in raw:
-        return raw
+        return raw, 0
     if depth > 4:
-        return None
+        return None, 0
 
     def lookup(name: str) -> str | None:
         defined = _entries(text, name)
@@ -345,19 +365,27 @@ def _resolve_macros(raw: str, text: str, path: Path, case_root: Path, depth: int
                     return v
         return None
 
-    out = raw
+    out, lookups = raw, 0
     names = _MACRO.findall(raw)
     if not names:
-        return None                                     # a scoped `$:a.b` or `$..x` reference
+        return None, 0                                  # a scoped `$:a.b` or `$..x` reference
     for name in names:
-        v = lookup(name)
+        first = (name, depth) not in memo
+        if first:
+            v = lookup(name)
+            found, below = (None, 0) if v is None else _resolved(v, text, path, case_root,
+                                                                 depth + 1, memo, repeated)
+            memo[name, depth] = (found, below + 1)
+        v, cost = memo[name, depth]
+        lookups += cost
         if v is None:
-            return None
-        v = _resolve_macros(v, text, path, case_root, depth + 1)
-        if v is None:
-            return None
+            return None, lookups
+        if not first:
+            repeated[0] += len(v)
+        if lookups > MAX_MACRO_LOOKUPS or repeated[0] > MAX_REPEATED_CHARS:
+            return None, lookups
         out = re.sub(rf"\$\{{?{re.escape(name)}\}}?", lambda _m, v=v: v, out, count=1)
-    return None if "$" in out else out
+    return (None if "$" in out else out), lookups
 
 
 # ---------------------------------------------------------------- the dictionary as the solver reads it
@@ -389,6 +417,8 @@ def include_target(path: Path, inc: str, case_root: Path) -> tuple[Path | None, 
     try:
         target.resolve().relative_to(case_root.resolve())
         is_file = target.resolve().is_file()
+    except RuntimeError:                                # a link loop (`Path.resolve`, 3.11)
+        return None, _LINK_LOOP
     except (ValueError, OSError):                       # outside the case, or no path at all
         return None, "the file is outside the case"     # (a NUL byte: TST-14's fuzzer)
     return (target, None) if is_file else (None, _NOT_IN_CASE)
@@ -396,6 +426,8 @@ def include_target(path: Path, inc: str, case_root: Path) -> tuple[Path | None, 
 
 #: `include_target`'s reason for a target inside the case that is not a file there.
 _NOT_IN_CASE = "no such file in the case"
+#: Its reason for a path with a link that resolves to itself: never a traceback, and not "outside".
+_LINK_LOOP = "a link on its path loops"
 
 
 def _include_text(path: Path, inc: str, case_root: Path) -> str | None:
@@ -426,24 +458,142 @@ def expand(text: str, path: Path, case_root: Path) -> str:
     is missing or outside the case, `#includeEtc`, a macro with no definition before it, a scoped
     one (`$a.b`, `$:a`, `$..a`), and every evaluated directive (`#calc`, `#eval`, `#codeStream`).
     Under an `#inputMode` other than merge (`protect`, `warn`, `error`) a name written more than
-    once is not expanded: which writing stands is the mode's. Linear in the dictionary, and
-    bounded: past `MAX_EXPANDED` characters the macros stay as written.
+    once is not expanded: which writing stands is the mode's. Bounded: past `_Includes`' bounds,
+    which only files included again and again reach (a cycle, a fan-out), the includes stay as
+    written, and past `MAX_EXPANDED` characters expanded the macros do. Linear in what the bounds
+    let through, the first reading of each file and the repeats up to the bounds, with two
+    exceptions not bounded here and open under T-FOAMGUARD-2 (TRD VER-23): foamlib's parse of a
+    long plain list, quadratic in its items (review 0.7.0, R2-1), and `$name;` merges, bounded
+    only by `MAX_EXPANDED` (R2-2).
 
     Deterministic, read-only, no subprocess (INV-5)."""
-    inlined = _inline(text, path, case_root)
+    try:
+        inlined = _inline(text, path, case_root, (_where(path),), _Includes(_where(path)))
+    except _TooLarge:                                   # SEC070-16: the includes stay as written
+        return text
     try:
         return _macros(inlined, strict=_INPUT_STRICT.search(inlined) is not None)
     except _TooLarge:
         return inlined
 
 
-def _inline(text: str, path: Path, case_root: Path, depth: int = 0) -> str:
+def _where(path: Path) -> str:
+    """A file's identity among the includes: its resolved path, or the path when it has none."""
+    try:
+        return str(path.resolve())
+    except (OSError, ValueError):
+        return str(path)
+
+
+#: Five bounds on one expansion's includes, each on a hang and none on what a case holds: the
+#: first reading of a file is never charged, so distinct files of any size are read. They bound
+#: the includes, not the parse: foamlib parses a long plain list in time quadratic in its items
+#: (1.7.10, review 0.7.0, R2-1), and `_macros`' `$name;` merges are bounded only by `MAX_EXPANDED`
+#: (R2-2). Both are on 0.7.0 too, and open under T-FOAMGUARD-2 (TRD VER-23). Measured on 0.7.0's
+#: code under `courant verify` on this repository's laptop under load (security review 0.7.0,
+#: SEC070-16; a cost bound, no physics):
+#:
+#: - the inclusions repeated once the includes form a cycle. A cycle the solver itself cannot end,
+#:   and what it leaves at the depth limit makes the case reader quadratic: a file including
+#:   itself four times took 7 s, five times 100 s (3,905 repeats), six times (9,330) did not
+#:   finish in 120 s, and twelve never returned. Up to this bound a cycle reads as 0.7.0 read it;
+MAX_CYCLIC_REPEATS = 2**12
+#: - the inclusions repeated, cycle or not: 180 microseconds each to inline (111,110 in 19.9 s), so
+#:   over three minutes before the first is parsed, and reading 20,000 took 22.7 s and is
+#:   quadratic in them;
+MAX_REPEATED_INCLUDES = 2**20
+#: - the characters of those repeats, set at 2 GiB by SEC070-16 from a run of 64 MiB (8 MiB, eight
+#:   times) that did not finish in 240 s. The review of 0.7.0 (A13-R1) measured the same input at
+#:   11 s, 0.17 microseconds a character, so 2 GiB costs some six minutes, not hours. Kept for
+#:   `_resolve_macros`, the spec reader's default lookup, byte for byte as 0.7.0 (GATE-13);
+MAX_REPEATED_CHARS = 2**31
+#: - and, for the includes alone, a lower bound on the same characters. A string of 8 MiB
+#:   included eight times (56 MiB repeated) reads in 11 s on 0.7.0's code (f5aaebb), sixteen times
+#:   (120 MiB) in 21.5 s, and the same on this one (the rate above). At 64 MiB the gate reads to the
+#:   bound in some 12 s; a file of 17 MiB read twice is charged 17 MiB and reads. Only `_Includes`
+#:   uses it: `_resolve_macros`, the spec reader's default lookup, keeps 0.7.0's bound (GATE-13);
+MAX_REPEATED_INCLUDE_CHARS = 2**26
+#: - the words and the punctuation (`;`, `{`, `}`, `(`, `)`) of those repeats, each something the
+#:   parser reads (`_words`). A fan-out of files under 1 KB names its last file thousands of
+#:   times, and what that file holds is parsed each time: entries, or the includes it leaves as
+#:   written (review 0.7.0, A1-3 and A13-R1). Measured under `courant verify`, `nu` before the
+#:   includes, on 0.7.0's code (f5aaebb) and on this one:
+#:   - seven files each including the next k times leave k^6 includes at the depth limit. 0.7.0
+#:     took 79 s at k=5 and did not finish k=6 in 30 s (its reader was quadratic in them). k=7
+#:     (274,428 words repeated) now reads in 2.1 s; k=8 (599,088) is past the bound, in 0.4 s;
+#:   - six files each including the next k times, the last of 120 entries: k=4 (370,968 repeated)
+#:     reads in 3.1 s, as on 0.7.0 (3.3 s); k=5 (1,132,400) took 9.4 s on 0.7.0, k=6 21.3 s, and
+#:     k=8 would take minutes; past the bound they read in 0.3 s;
+#:   - one file of 175,000 entries included twice (525,000 repeated) did not finish in 120 s on
+#:     0.7.0. Inside a block (`junk { ... }`), which 0.7.0 read in linear time, it took 8.5 s;
+#:     174,000 of them (522,005, below the bound) read in 8.1 s now, as before.
+#:   Below the bound an expansion reads as 0.7.0 read it, in linear time but for R2-1 and R2-2
+#:   above: at the bound the gate has parsed some 175,000 repeated entries, eight seconds. The
+#:   cost of repeated entries is linear on 0.7.0 too, so past the bound some inputs 0.7.0 read in
+#:   eight seconds or more, a block or a 120-entry file repeated as above, now stay as written,
+#:   noted as not followed: no bound below a hang spares them all.
+MAX_REPEATED_TOKENS = 2**19
+
+
+def _words(text: str) -> int:
+    """The words and punctuation of `text` the parser reads (`MAX_REPEATED_TOKENS`)."""
+    return len(text.split()) + sum(text.count(c) for c in ";{}()")
+
+
+class _Includes:
+    """What one expansion has inlined, against the bounds above, and each include it has met,
+    resolved and read once (`found`): a fan-out names the same few files thousands of times, and
+    resolving and reading each again was most of `_inline`'s cost (review 0.7.0, A1-3)."""
+
+    __slots__ = ("chars", "cyclic", "found", "read", "repeats", "tokens", "words")
+
+    def __init__(self, root: str) -> None:
+        self.read = {root}
+        self.repeats = self.chars = self.tokens = 0
+        self.cyclic = False
+        self.found: dict[tuple[str, str], tuple[Path | None, str | None, str | None, str]] = {}
+        self.words: dict[str, int] = {}                 # `_words` of each file repeated, once
+
+    def include(self, path: Path, inc: str, case_root: Path
+                ) -> tuple[Path | None, str | None, str | None, str]:
+        """(target, why, its text, its identity) of `#include "inc"` in the file at `path`, as
+        `include_target`, `_include_text` and `_where` give them, each asked once per expansion."""
+        key = (str(path.parent), inc)
+        if key not in self.found:
+            target, why = include_target(path, inc, case_root)
+            text = None if target is None else _include_text(path, inc, case_root)
+            self.found[key] = (target, why, text, "" if target is None else _where(target))
+        return self.found[key]
+
+    def charge(self, where: str, stack: tuple[str, ...], text: str) -> None:
+        """Count one inclusion of the file `where`, whose text is `text`; `_TooLarge` past a
+        bound."""
+        if where not in self.read:
+            self.read.add(where)
+            return
+        self.repeats += 1
+        self.chars += len(text)
+        self.cyclic = self.cyclic or where in stack
+        if (self.repeats > (MAX_CYCLIC_REPEATS if self.cyclic else MAX_REPEATED_INCLUDES)
+                or self.chars > min(MAX_REPEATED_CHARS, MAX_REPEATED_INCLUDE_CHARS)):
+            raise _TooLarge
+        if where not in self.words:
+            self.words[where] = _words(text)
+        self.tokens += self.words[where]
+        if self.tokens > MAX_REPEATED_TOKENS:
+            raise _TooLarge
+
+
+def _inline(text: str, path: Path, case_root: Path, stack: tuple[str, ...], spent: _Includes,
+            depth: int = 0) -> str:
+    """`text` with its includes inlined, four deep, `stack` the files being inlined. `_TooLarge`
+    past `spent`'s bounds."""
     if depth > 4 or "#" not in text:
         return text
 
     def one(m: re.Match) -> str:
         kind, inc = m.group(1), m.group(2)
-        target, why = include_target(path, inc, case_root)
+        target, why, included, where = spent.include(path, inc, case_root)
         if target is None:
             # An optional include is dropped only when its file is absent from the case, as the
             # solver drops it. One outside the case stays, to be reported: the solver read it if
@@ -451,10 +601,11 @@ def _inline(text: str, path: Path, case_root: Path, depth: int = 0) -> str:
             # resolution, tags included (`$FOAM_CASE/../x` is outside the case).
             optional_absent = kind != "include" and why == _NOT_IN_CASE
             return "" if optional_absent else m.group(0)
-        included = _include_text(path, inc, case_root)
         if included is None:
             return m.group(0)
-        return "\n" + _inline(_without_header(included), target, case_root, depth + 1) + "\n"
+        spent.charge(where, stack, included)
+        return "\n" + _inline(_without_header(included), target, case_root, (*stack, where),
+                              spent, depth + 1) + "\n"
 
     return _INCLUDES.sub(one, text)
 
@@ -542,7 +693,7 @@ _INPUT_STRICT = re.compile(r"#inputMode\s+(?:protect|warn|error)\b")
 
 
 class _TooLarge(Exception):
-    """The expansion passed `MAX_EXPANDED`."""
+    """The expansion passed `MAX_EXPANDED`, or `_Includes`' bounds."""
 
 
 class _Scope:
@@ -684,26 +835,115 @@ def nonuniform_values(raw: str) -> list | None:
     return keys
 
 
-def parse_value(raw: str, *, text: bool = False) -> tuple[Value | None, tuple[float, ...] | None, str | None]:
-    """(value, dimensions, note) from a raw entry value."""
+#: The SI base units in OpenFOAM's order of a dimension set (kg m s K mol A cd), and the derived
+#: units of v2406's default `DimensionSets` (etc/controlDict, factor 1), as exponents of those.
+_UNITS: dict[str, tuple[int, ...]] = {
+    "kg": (1, 0, 0, 0, 0, 0, 0), "m": (0, 1, 0, 0, 0, 0, 0), "s": (0, 0, 1, 0, 0, 0, 0),
+    "K": (0, 0, 0, 1, 0, 0, 0), "mol": (0, 0, 0, 0, 1, 0, 0), "A": (0, 0, 0, 0, 0, 1, 0),
+    "cd": (0, 0, 0, 0, 0, 0, 1), "Cd": (0, 0, 0, 0, 0, 0, 1),
+    "N": (1, 1, -2, 0, 0, 0, 0), "Pa": (1, -1, -2, 0, 0, 0, 0), "J": (1, 2, -2, 0, 0, 0, 0),
+    "W": (1, 2, -3, 0, 0, 0, 0),
+}
+#: One factor of a dimension set in unit names: an operator, or a unit with its power.
+_UNIT_TOKEN = re.compile(r"\s*(?:([*/])|([A-Za-z]+)(?:\^([-+]?\d+(?:\.\d+)?))?)")
+
+
+def _dimension_set(inner: str) -> tuple[float, ...] | None:
+    """The exponents a dimension set's contents give, as v2406's `dimensionSet` reads them
+    (`spec.read_as_solver`, VPA-SPEC-4): 5 or 7 numbers are the exponents; otherwise unit names
+    (`m^2/s`, `kg m^-1 s^-2`, `kg*m/s^2`), multiplied by a blank or `*`, the factor after a `/`
+    divided, are the 7 SI base exponents. None when it is neither (an unknown unit, another count
+    of numbers, an expression the reader does not parse): the set is then not stated."""
+    tokens = inner.split()
+    if not tokens:
+        return ()
+    if all(_NUM.fullmatch(t) for t in tokens):
+        return tuple(float(t) for t in tokens) if len(tokens) in (5, 7) else None
+    total = [0.0] * 7
+    pos, sign, factors = 0, 1.0, 0
+    text = inner.strip()
+    while pos < len(text):
+        m = _UNIT_TOKEN.match(text, pos)
+        if m is None or m.end() == pos:
+            return None
+        pos = m.end()
+        if m.group(1):
+            if sign < 0 or (m.group(1) == "/" and not factors):
+                return None                     # `//`, `/*`, or a leading `/`
+            if m.group(1) == "/":
+                sign = -1.0
+            continue
+        unit = _UNITS.get(m.group(2))
+        if unit is None:
+            return None
+        power = float(m.group(3)) if m.group(3) else 1.0
+        total = [t + sign * power * u for t, u in zip(total, unit)]
+        sign, factors = 1.0, factors + 1
+    return tuple(total) if factors and sign > 0 else None
+
+
+#: v2406's Function1 types (`Function1::New`'s run-time table), the words a note may name.
+_FUNCTION1 = frozenset({
+    "uniform", "zero", "one", "polynomial", "sine", "cosine", "square", "squarePulse", "table",
+    "tableFile", "csvFile", "scale", "coded", "linearRamp", "quadraticRamp", "halfCosineRamp",
+    "quarterSineRamp", "quarterCosineRamp", "reverseRamp", "stepRamp", "expression",
+    "functionObjectValue", "functionObjectTrigger", "inputValueMapper", "sample", "Function1",
+    "limitRange", "lookup"})
+#: The characters OpenFOAM's `word::valid` refuses.
+_NOT_WORD = re.compile(r"[\s\"'/;{}]")
+
+
+def word(raw: str) -> str:
+    """`raw` with the quotes off when it is one quoted token whose content is a valid word: as
+    OpenFOAM's word reader converts a string token (`spec.read_as_solver`, VPA-SPEC-6). Anything
+    else is returned as it is."""
+    if len(raw) > 2 and raw[0] == raw[-1] == '"' and not _NOT_WORD.search(raw[1:-1]):
+        return raw[1:-1]
+    return raw
+
+
+def parse_value(raw: str, *, text: bool = False, solver: bool = False,
+                whole: bool = False) -> tuple[Value | None, tuple[float, ...] | None, str | None]:
+    """(value, dimensions, note) from a raw entry value. `solver` (`spec.read_as_solver`, `--checks
+    next`): read as the solver reads it, a dimension set in unit names in SI exponents
+    (VPA-SPEC-4), an inline Function1 left unread (VPA-SPEC-3), a quoted word the word
+    (VPA-SPEC-6); without it, 0.7.0's reading. A `text` value is its last word, as 0.7.0 reads it;
+    with `whole` (`spec.read_whole`, `--checks next`) it is every word, as the solver reads it:
+    `default CrankNicolson 0.9;` is "CrankNicolson 0.9", not "0.9", and `div(phi,U) Gauss linear;`
+    is "Gauss linear" (deck-oracle DO-3)."""
     dims = None
     m = _DIMS.match(raw)
     if m:
-        dims = tuple(numbers(m.group(1)))
+        dims = _dimension_set(m.group(1)) if solver else tuple(numbers(m.group(1)))
         raw = raw[m.end():].strip()
     else:
         # The pre-v1.7 form repeats the name before the dimension set: `nu nu [..] 1e-05`.
         m2 = re.match(r"^[A-Za-z_]\w*\s+(\[[^\]]*\])", raw)
         if m2:
-            dims = tuple(numbers(m2.group(1)[1:-1]))
+            inner = m2.group(1)[1:-1]
+            dims = _dimension_set(inner) if solver else tuple(numbers(inner))
             raw = raw[m2.end():].strip()
     if raw.startswith("nonuniform"):
         return None, dims, "a per-face list (nonuniform), not a single value"
     if raw.startswith("uniform"):
         raw = raw[len("uniform"):].strip()
     if text:
-        token = raw.split()[-1] if raw.split() else ""
+        token = (" ".join(raw.split()) if whole else raw.split()[-1]) if raw.split() else ""
+        if solver:
+            token = word(token)
         return (token or None), dims, (None if token else "empty entry")
+    if solver:
+        # A Function1 (v2406's `Function1::New`): a word first is its type. `constant` is a
+        # value; any other (`table`, `polynomial`, `sine`, `tableFile`, ...) is a function of time,
+        # whose last number is not the value the solver applied.
+        first = re.match(r"[A-Za-z_]\w*", raw)
+        if first and first.group(0) != "constant":
+            # Named only when it is one of OpenFOAM's own types: any other word is the case's
+            # text, never quoted in a note (`_read_one`).
+            kind = f" ({first.group(0)})" if first.group(0) in _FUNCTION1 else ""
+            return None, dims, f"a function of time{kind} the reader does not evaluate"
+        if first:
+            raw = raw[first.end():].strip()
     nums = numbers(raw)
     if not nums:
         return None, dims, "no number in the entry"           # never quoted (`_read_one`)
@@ -713,7 +953,10 @@ def parse_value(raw: str, *, text: bool = False) -> tuple[Value | None, tuple[fl
 
 
 # ---------------------------------------------------------------- the reader
-def _read_text(case: Path, rel: str) -> tuple[str | None, str | None]:
+def _read_text(case: Path, rel: str, gunzip: bool = False) -> tuple[str | None, str | None]:
+    """`rel`'s text, its comments stripped, or (None, why not). With `gunzip`
+    (`case.zero_compressed`, `--checks next`, VER-3f) a `.gz` is decompressed as OpenFOAM reads it
+    (`_gunzip`); without it the bytes are read as text, as 0.7.0 read them."""
     p = case / rel
     if not reads.may_read(p):            # MCP-3: asked before it is looked for, so a path outside
         return None, f"{rel} could not be read: outside the allowed roots"  # is refused alike
@@ -721,10 +964,30 @@ def _read_text(case: Path, rel: str) -> tuple[str | None, str | None]:
         return None, f"{rel} does not exist"
     try:
         with reads.reading(p):                           # VER-14; MCP-3
-            text = p.read_text(errors="replace")
+            text = _gunzip(p) if gunzip and rel.endswith(".gz") else p.read_text(errors="replace")
     except OSError as exc:
         return None, f"{rel} could not be read: {reads.reason(exc)}"
+    except ValueError as exc:                            # cut short, corrupt, past the bound
+        return None, f"{rel} could not be read: {exc}"
     return strip_comments(text), None
+
+
+def _gunzip(p: Path) -> str:
+    """A compressed file's text, as OpenFOAM reads a `.gz` (IFstream), through the mesh reader's
+    bounded decompression (`polymesh._raw`, the one implementation: a small file can decompress to
+    gigabytes). Raises `OSError` on a file that is not gzip, `ValueError` on one cut short or
+    corrupt or past the bound; never `EOFError` or `zlib.error`."""
+    from courant.case import polymesh
+
+    text = polymesh._raw(p).decode(errors="replace")
+    return text.replace("\r\n", "\n").replace("\r", "\n")       # as `read_text` reads a newline
+
+
+def opened(case: Path, rel: str) -> str:
+    """`rel`, or its `.gz` where that is the file OpenFOAM opens (`reads.plain_or_gz`, the one
+    rule), asked only inside the allowed roots (MCP-3)."""
+    p = case / rel
+    return rel + ".gz" if reads.may_read(p) and reads.plain_or_gz(str(p)) != str(p) else rel
 
 
 def _complete(text: str) -> bool:
@@ -745,16 +1008,108 @@ def _patch_absent(case: Path, rel: str, text: str, patch: str) -> bool:
     return re.search(rf"(?<![\w.]){re.escape(patch)}(?![\w.])", boundary) is None
 
 
+#: The mesh's patch list, whose `inGroups` and types say which group entries name a patch.
+_BOUNDARY = "constant/polyMesh/boundary"
+#: Patch types whose patch v2406 puts in the group of the type's name whatever its `inGroups`:
+#: a wall (wallPolyPatch.C) and every constraint type (polyPatch.C, `constraintType`).
+_TYPE_GROUPS = frozenset({"wall", "cyclic", "cyclicAMI", "cyclicACMI", "cyclicSlip",
+                          "nonuniformTransformCyclic", "processor", "processorCyclic"})
+
+
+def _groups_of(case: Path, patch: str, *, regions: bool = False
+               ) -> tuple[frozenset[str] | None, str | None]:
+    """(the groups `patch` is in, None), from the mesh's `constant/polyMesh/boundary`, in either
+    format (its entries are text in both, FLD-7): its `inGroups` words
+    (`courant.case.reynolds._patch_groups`, the one reader of them), and its type where the type
+    is a group (`_TYPE_GROUPS`, `reynolds._CONSTRAINT`). (None, None) when there is no such file
+    (no mesh yet: the solver has read no groups either); (None, why) when it is there and its
+    groups cannot be read. `regions`: the case may have been solved as regions
+    (`_foam_reader.regions_not_ruled_out`, decided by the caller)."""
+    from courant.case import polymesh, reynolds
+
+    path = Path(reads.plain_or_gz(str(case / _BOUNDARY)))
+    why = f"the groups of patch '{patch}' in {_BOUNDARY} could not be read, and a group's entry " \
+          "is applied before a pattern's"
+    # The verdict-path audit's review: a decomposed run read each rank's own
+    # `processor*/constant/polyMesh/boundary` (a mesh snappyHexMesh wrote in parallel, which the
+    # case's own `constant/polyMesh` does not hold), and a region's field the region's
+    # `constant/<region>/polyMesh/boundary`. This reader reads neither, so it does not tell.
+    if regions or any(
+            (proc / _BOUNDARY).is_file() or (proc / (_BOUNDARY + ".gz")).is_file()
+            for proc in case.glob("processor*")):
+        return None, (f"the groups of patch '{patch}' are those of a decomposed or multi-region "
+                      "mesh, which this reader does not read, and a group's entry is applied "
+                      "before a pattern's")
+    if not reads.may_read(path):
+        return None, why
+    if not path.is_file():
+        return None, None
+    try:
+        groups = polymesh._read(path, lambda p: reynolds._patch_groups(p, binary=True))
+        types = {p.name: p.type for p in polymesh.read_boundary(path, binary=True)}
+    except Exception:                                   # noqa: BLE001 - a reader limit
+        return None, why
+    if groups is None:
+        return None, why
+    for name, words in groups:
+        if name == patch:
+            # `_patch_groups` keeps every word of the entry; a list's size and `List<word>` are
+            # not group names.
+            named = {w for w in words if not w.isdigit() and w != "List<word>"}
+            kind = types.get(name, "patch")
+            if kind in _TYPE_GROUPS or kind in reynolds._CONSTRAINT:
+                named.add(kind)
+            return frozenset(named), None
+    return frozenset(), None                            # not a patch of the mesh: in no group
+
+
+def patch_entry(case: Path, bf: str, patch: str, *, regions: bool = False
+                ) -> tuple[str | None, str, str | None]:
+    """(the body of the boundaryField entry the solver applies to `patch`, the key it is written
+    under, None), or (None, patch, why it cannot be told), as v2406's
+    `GeometricBoundaryField::readField` finds it (`spec.read_as_solver`, VPA-SPEC-1):
+
+    1. an entry whose unquoted key is the patch's name;
+    2. else an entry whose unquoted key is one of the patch's groups (`_groups_of`), the last
+       written of them (readField walks the dictionary in reverse; a key written again is merged
+       into its first writing and keeps its place, `dictionary::add`);
+    3. else `block`'s lookup: a quoted key whose text is the name, then the patterns.
+
+    A boundary file that is there and whose groups cannot be read leaves a patch not found under
+    its own name not told, when an unquoted key that might be a group is written: a group's entry
+    would come before any pattern. `block`'s `KeywordNotEvaluated` propagates, as there."""
+    found = _quoted_blocks(bf)
+    literal = [body for key, quoted, body in found if not quoted and key == patch]
+    if literal:
+        return "\n".join(literal), patch, None
+    keys = list(dict.fromkeys(key for key, quoted, _ in found if not quoted))
+    groups, why = _groups_of(case, patch, regions=regions)
+    if groups is None:
+        if why is not None and keys:
+            return None, patch, why
+        groups = frozenset()
+    hit = next((key for key in reversed(keys) if key in groups), None)
+    if hit is not None:
+        return "\n".join(body for key, quoted, body in found if not quoted and key == hit), hit, None
+    return block(bf, patch, found), patch, None
+
+
 #: Keys OpenFOAM reads as the same setting, with the value it uses when neither is written.
 _ALIASES = {"scale": ("convertToMeters", "1"), "convertToMeters": ("scale", "1")}
 
 
-def _read_one(case: Path, rel: str, item, macros: bool = False) -> Found:
-    """The value `item` names in the case file `rel`. `macros` (`spec.directives`, `--checks
+def _read_one(case: Path, rel: str, item, macros: bool = False, *, solver: bool = False,
+              regions: bool = False, whole: bool = False, gunzip: bool = False) -> Found:
+    """The value `item` names in the case file `rel`. `gunzip` (`case.zero_compressed`): a `.gz`
+    decompressed (`_read_text`). `macros` (`spec.directives`, `--checks
     next`): the file is read as the solver reads it, through `expand`, the case reader's own
     expansion under `case.directives`, so a `$name` is the definition nearest the entry, an
     `#includeIfPresent` is followed and a merged `$name;` is read; without it, 0.6.0's lookup
-    (`_resolve_macros`: the file's top level, then its `#include`s)."""
+    (`_resolve_macros`: the file's top level, then its `#include`s). `solver`
+    (`spec.read_as_solver`, `--checks next`): a patch is found as the solver finds it
+    (`patch_entry`, told `regions`) and its value parsed as the solver parses it
+    (`parse_value`). `whole` (`spec.read_whole`, `--checks next`): a word value is every word of
+    the entry (`parse_value`, deck-oracle DO-3)."""
     if item.sha256 is not None:
         p = case / rel
         if not reads.may_read(p):        # MCP-3: asked before it is looked for, as `_read_text`
@@ -768,7 +1123,7 @@ def _read_one(case: Path, rel: str, item, macros: bool = False) -> Found:
             return Found(None, rel, f"{rel} could not be read: {reads.reason(exc)}")
         return Found(hashlib.sha256(data).hexdigest(), rel)
 
-    text, why = _read_text(case, rel)
+    text, why = _read_text(case, rel, gunzip=gunzip)
     if text is None:
         return Found(None, rel, why)
     as_written = text
@@ -787,7 +1142,7 @@ def _read_one(case: Path, rel: str, item, macros: bool = False) -> Found:
         return Found([float(x) for m in matched for x in m.groups()], rel)
 
     try:
-        located = _locate(case, rel, text, item)
+        located = _locate(case, rel, text, item, solver=solver, regions=regions)
     except KeywordNotEvaluated as exc:
         holder = _holder(case, rel, as_written, exc) if text is not as_written else rel
         if holder == rel:
@@ -819,16 +1174,20 @@ def _read_one(case: Path, rel: str, item, macros: bool = False) -> Found:
         faces = nonuniform_values(resolved)
         if faces is None:
             return Found(None, rel, "a per-face list (nonuniform) that could not be read")
-        value, count, total = nonuniform_mode(resolved)
+        # not None: nonuniform_values read the same text above
+        value, count, total = cast("tuple[Value, int, int]", nonuniform_mode(resolved))
         return Found(value, rel, basis=f"most common of {total} face values ({count})",
                      faces=tuple(list(f) if isinstance(f, tuple) else f for f in faces))
-    value, dims, note = parse_value(resolved, text=isinstance(item.value, str))
+    value, dims, note = parse_value(resolved, text=isinstance(item.value, str), solver=solver,
+                                    whole=whole)
     return Found(value, rel, note, dims)
 
 
-def _locate(case: Path, rel: str, text: str, item) -> tuple[str, str] | Found:
+def _locate(case: Path, rel: str, text: str, item, *,
+            solver: bool = False, regions: bool = False) -> tuple[str, str] | Found:
     """(the raw value of the entry `item` names in `text`, the key it is written under), or the
-    `Found` that says why there is none."""
+    `Found` that says why there is none. `solver` (`spec.read_as_solver`): a patch's entry is the
+    one the solver applies to it (`patch_entry`), its groups' before any pattern."""
     scope = text
     #: (scope, name) of every lookup on the way to the value, for the repeated-key rules.
     steps: list[tuple[str, str]] = []
@@ -837,8 +1196,13 @@ def _locate(case: Path, rel: str, text: str, item) -> tuple[str, str] | Found:
         bf = block(text, "boundaryField")
         if bf is None:
             return Found(None, rel, "no boundaryField")
-        steps.append((bf, item.patch))
-        scope = block(bf, item.patch)
+        if solver:
+            scope, named, why = patch_entry(case, bf, item.patch, regions=regions)
+            if why is not None:
+                return Found(None, rel, why)
+        else:
+            scope, named = block(bf, item.patch), item.patch
+        steps.append((bf, named))
         if scope is None:
             return Found(None, rel, f"no patch '{item.patch}' in boundaryField",
                          missing=_patch_absent(case, rel, text, item.patch))
@@ -899,7 +1263,8 @@ def _holder(case: Path, rel: str, text: str, exc: KeywordNotEvaluated) -> str | 
     return None
 
 
-def read(case_dir: str | Path, item, *, macros: bool = False) -> Found:
+def read(case_dir: str | Path, item, *, macros: bool = False, solver: bool = False,
+         regions: bool = False, whole: bool = False, compressed: bool = False) -> Found:
     """The value `item` names, read from the case the way the solver read it. Never raises.
 
     `macros` (`spec.directives` in `courant.verify.checks.NEXT`, `--checks next`, GATE-13): the
@@ -907,6 +1272,16 @@ def read(case_dir: str | Path, item, *, macros: bool = False) -> Found:
     `$name` is the definition nearest the entry, looked up outwards, and every include the
     solver follows is followed. Without it, 0.6.0's lookup: the file's top level, then its
     `#include`s.
+
+    `solver` (`spec.read_as_solver` in `NEXT`, `--checks next`, GATE-13): a patch reached by one
+    of its groups is read from the group's entry before any pattern (`patch_entry`), an inline
+    Function1 is not read, a dimension set in unit names is read in SI exponents and a quoted word
+    is the word (`parse_value`). Without it, 0.7.0's reading. `regions`, with `solver`: the case
+    may have been solved as regions (`AsRun.regions` decides, once per case), so the groups of its
+    `constant/polyMesh/boundary` do not tell a patch's.
+
+    `whole` (`spec.read_whole` in `NEXT`, `--checks next`, GATE-13): a word value is every word of
+    the entry, not its last (`parse_value`, deck-oracle DO-3). Without it, 0.7.0's reading.
 
     For a file under `0/`:
     - the solver reads `0/`, so `0/` decides. A value the run rewrote into a per-face list
@@ -916,16 +1291,28 @@ def read(case_dir: str | Path, item, *, macros: bool = False) -> Found:
     Two wrong versions came before this one, both found by measurement (RRD RM-18 v2): reading
     `0.orig/` whenever `0/` held a per-face list masked an edit the run had used; requiring
     `0.orig/` to agree as well rejected a correct answer that left `0.orig/` stale.
+
+    `compressed` (`case.zero_compressed`, `--checks next`, TRD VER-3f): a file that is not there
+    is read from its `.gz` when that is (`opened`), as OpenFOAM opens it, before any `0.orig/`: a
+    run written with `writeCompression on` leaves `setFields`' `0/T.gz` and no `0/T`, and
+    `0.orig/T` is the field before `setFields` (the field-oracle sweep, FO-1); and a `.gz` the
+    item names is decompressed. Not for a `sha256` item, whose hash is of the bytes named. Without
+    it, 0.7.0's reading: `0/T` falls back to `0.orig/T`, and a `0/T.gz` the item names is not read.
     """
     case = Path(case_dir)
     rel = item.file                                     # the file being read
     try:
-        found = _read_one(case, rel, item, macros)
-        if found.value is None and item.file.startswith("0/") and not (case / item.file).is_file():
+        if compressed and item.sha256 is None:
+            rel = opened(case, rel)                     # what OpenFOAM opened
+        found = _read_one(case, rel, item, macros, solver=solver, regions=regions, whole=whole,
+                          gunzip=compressed)
+        if found.value is None and rel == item.file and item.file.startswith("0/") \
+                and not (case / item.file).is_file():
             orig = "0.orig/" + item.file[2:]
             if (case / orig).is_file():
                 rel = orig
-                alt = _read_one(case, orig, item, macros)
+                alt = _read_one(case, orig, item, macros, solver=solver, regions=regions,
+                                whole=whole, gunzip=compressed)
                 if alt.value is not None:
                     return alt
         return found

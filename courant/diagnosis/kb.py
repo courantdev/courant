@@ -113,6 +113,26 @@ CONFIG_PREDICATES: dict[str, Callable[..., bool]] = {
 }
 
 
+#: A log pattern that is only plain words, alternatives at the top level: letters, digits, space,
+#: `_`, `-`, `:`, `,` and the escaped dot `\\.`. None of these is a regex metacharacter there.
+_PLAIN_WORDS = re.compile(r"(?:[A-Za-z0-9 _\-:,]|\\\.)+(?:\|(?:[A-Za-z0-9 _\-:,]|\\\.)+)*")
+
+
+def plain_words(pattern: str) -> tuple[str, ...] | None:
+    """The lowercased words a plain-words log pattern is an alternation of, or None.
+
+    For such a pattern and an ASCII log, `re.search(pattern, log, re.IGNORECASE)` finds a match
+    exactly when one word is a substring of `log.lower()`: a search for an alternation matches
+    where one of its branches does; every branch is a literal of ASCII characters; and on ASCII
+    text IGNORECASE compares two ASCII characters by their ASCII lower case, which is what
+    `str.lower` gives (the Unicode-only equivalences, such as the Kelvin sign with `k`, need a
+    non-ASCII character in the log). tests/unit/test_perf070.py holds the two equal on every
+    committed log."""
+    if not _PLAIN_WORDS.fullmatch(pattern):
+        return None
+    return tuple(w.replace("\\.", ".").lower() for w in pattern.split("|"))
+
+
 class KnowledgeBase:
     """Deterministic signature-match retrieval over hand-authored entries."""
 
@@ -152,6 +172,20 @@ class KnowledgeBase:
             e.code: [re.compile(p, re.I) for p in e.signature.log_patterns]
             for e in entries
         }
+        self._words = {
+            e.code: [plain_words(p) for p in e.signature.log_patterns]
+            for e in entries
+        }
+
+    def _log_hit(self, code: str, i: int, log_text: str, lowered: str | None) -> bool:
+        """Whether log pattern `i` of `code` matches `log_text` anywhere, as `re.search` with
+        IGNORECASE says. A pattern of plain words on an ASCII log is asked as a substring of the
+        lowercased log instead, which gives the same answer (`plain_words`) at a fraction of the
+        cost on a 10 MB log (perf-070); anything else is the regex."""
+        words = self._words[code][i]
+        if words is not None and lowered is not None:
+            return any(w in lowered for w in words)
+        return self._compiled[code][i].search(log_text) is not None
 
     def query(self, findings: FindingSet | None = None, log_text: str = "",
               config: CaseConfig | None = None, top_k: int = 5,
@@ -160,6 +194,7 @@ class KnowledgeBase:
         for the configuration predicates."""
         finding_ids = findings.ids if findings else set()
         suggested = set((findings.suggested_codes() if findings else []))
+        lowered = log_text.lower() if log_text and log_text.isascii() else None
 
         matches: list[KBMatch] = []
         for code, entry in self.entries.items():
@@ -178,8 +213,8 @@ class KnowledgeBase:
                     detail.append(f"{fid}({severity[:4]}×{weight:g})")
                 why.append("findings " + ", ".join(detail))
 
-            for i, rx in enumerate(self._compiled[code]):
-                if log_text and rx.search(log_text):
+            for i in range(len(self._compiled[code])):
+                if log_text and self._log_hit(code, i, log_text, lowered):
                     score += self.W_LOG
                     why.append(f"log~/{sig.log_patterns[i]}/")
 

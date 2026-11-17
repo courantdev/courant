@@ -312,6 +312,33 @@ def is_file(path: str | os.PathLike[str]) -> bool:
     return bool(kind(path, stat.S_ISREG))
 
 
+def unreadable_dir(path: str | os.PathLike[str]) -> str | None:
+    """Why a directory's entries cannot be read, as words ready to follow its name: "could not
+    be listed: <reason>" when it cannot be listed (mode 000), "could not be searched: <reason>"
+    when it can be listed and its first entry by sorted name cannot be looked at (`os.lstat`
+    fails: read, no search, mode 0644). None otherwise, an empty directory included. One
+    `listdir` and one `lstat`; opens no file and never raises (GATE-14, T-PRECHECK-2). `reason`
+    never names the path, so the words are the same wherever the directory lives."""
+    try:
+        names = sorted(os.listdir(path))
+    except OSError as exc:
+        return f"could not be listed: {reason(exc)}"
+    except ValueError:                  # a path the system cannot take (an embedded NUL)
+        return None
+    if not names:
+        return None
+    # `os.lstat`, not `kind`: whether this directory can be searched is asked of its entry
+    # itself, never of where a link points, so a link into a place this user may not search
+    # does not make a readable directory unreadable (T-PRECHECK-2 round 3).
+    try:
+        os.lstat(os.path.join(path, names[0]))
+    except OSError as exc:
+        return None if exc.errno in _ABSENT else f"could not be searched: {reason(exc)}"
+    except ValueError:
+        return None
+    return None
+
+
 class Reads:
     """The regular files read under one root, as root-relative POSIX paths.
 

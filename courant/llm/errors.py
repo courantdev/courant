@@ -47,25 +47,30 @@ REJECTION_REASONS = {
 #: The status classes, in words, of a rejection with no recognised reason.
 _STATUS_CLASS = {400: "the request is invalid", 401: "the key was rejected",
                  402: "the account has no credit for this request",
-                 403: "the key may not make this request", 404: "the model is not served"}
+                 403: "the key may not make this request", 404: "the model is not served",
+                 408: "the provider timed the request out on every retry",
+                 425: "the provider refused the request as too early on every retry"}
 
 
 class Rejected(Refused):
     """The provider rejected the request with a 4xx that is not a rate limit (400, 401, 402,
-    403 and the like): no model was asked, so it is not the model's answer, nor its
-    abstention. A batch stops on it, resumably, and nothing is checkpointed for the item
-    (ARC-19). ``status`` is the HTTP status, ``error_type`` the provider's error type when it
-    named one (Anthropic's ``invalid_request_error``), ``reason`` a key of
-    ``REJECTION_REASONS`` or None. ``line`` says all of it in one line, naming no request
-    content and no key."""
+    403 and the like, and a 408 or 425 once it outlasts its retries, ARC-22): no model was
+    asked, so it is not the model's answer, nor its abstention. A batch stops on it, resumably,
+    and nothing is checkpointed for the item (ARC-19). ``status`` is the HTTP status,
+    ``error_type`` the provider's error type when it named one (Anthropic's
+    ``invalid_request_error``), ``reason`` a key of ``REJECTION_REASONS`` or None. ``line``
+    says all of it in one line, naming no request content and no key. ``transient`` is True
+    when the door retried the status (a 408 or 425): the next run need not stop the same way.
+    """
 
     def __init__(self, message: str = "", *, provider: str = "", status: int | None = None,
                  error_type: str | None = None, reason: str | None = None,
-                 records=()) -> None:
+                 records=(), transient: bool = False) -> None:
         super().__init__(message or rejection_line(provider, status, error_type, reason),
                          records=records)
         self.provider, self.status = provider, status
         self.error_type, self.reason = error_type, reason
+        self.transient = transient
 
     @property
     def line(self) -> str:

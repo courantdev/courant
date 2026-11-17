@@ -949,3 +949,215 @@ def test_a_root_that_is_a_link_loop_is_refused_without_a_traceback(tmp_path):
     r = CliRunner().invoke(_app(), ["verify", "--check-pack", str(pack), "--root", str(loop)])
     assert r.exit_code == 5 and r.output.startswith("MISMATCH "), (r.exit_code, r.output)
 
+
+
+# ------------------------------------------------------------------ T-MANIFEST-3 (VER-14 amended)
+# The run's own log and its sidecar are read under the same rule as every other input: one that
+# is there and cannot be read is an `InputError` naming it (exit 4), never an internal error, so a
+# batch and an audit report that run beside the others instead of stopping.
+
+
+def _cli_unreadable(args: list[str], name: str):
+    r = CliRunner().invoke(_app(), args)
+    assert r.exit_code == 4, (r.exit_code, r.output)
+    assert "internal error" not in r.output and name in r.output, r.output
+    assert r.exception is None or isinstance(r.exception, SystemExit), r.exception
+
+
+@_root_reads_everything
+def test_an_unreadable_solver_log_is_an_input_error_naming_it(tmp_path):
+    from courant.verify import InputError
+
+    case = _case(tmp_path)
+    log = case / "log.icoFoam"
+    with _unreadable(log):
+        with pytest.raises(InputError, match=r"^log\.icoFoam could not be read: PermissionError"):
+            verify_path(case)
+        with pytest.raises(InputError, match=r"^log\.icoFoam could not be read"):
+            verify_path(log)
+        _cli_unreadable(["verify", str(case), "--json"], "log.icoFoam")
+        _cli_unreadable(["verify", str(log), "--json"], "log.icoFoam")
+        _cli_unreadable(["convergence", str(case), "--json"], "log.icoFoam")
+
+
+@pytest.mark.parametrize("how", ["truncated", "not_gzip", "corrupt_middle"])
+def test_a_corrupt_gzip_log_is_an_input_error_naming_it(tmp_path, how):
+    """TST-9: no input makes `verify_path` raise anything but `InputError`. Root too."""
+    from courant.verify import InputError
+
+    good = (CORPUS / "icoFoam_cavity__cfl_blowup.log.gz").read_bytes()
+    log = tmp_path / "run.log.gz"
+    if how == "corrupt_middle":                         # zlib.error, mid-stream
+        mid = len(good) // 2
+        bad = good[:mid] + bytes(b ^ 0xFF for b in good[mid:mid + 64]) + good[mid + 64:]
+    log.write_bytes({"truncated": good[: len(good) // 2], "not_gzip": b"not a gzip stream\n",
+                     "corrupt_middle": bad if how == "corrupt_middle" else b""}[how])
+    with pytest.raises(InputError, match=r"^run\.log\.gz could not be read: "):
+        verify_path(log)
+    _cli_unreadable(["verify", str(log), "--json"], "run.log.gz")
+
+
+@_root_reads_everything
+def test_a_batch_and_an_audit_with_one_unreadable_log_report_every_run(tmp_path):
+    from courant.verify.audit import audit
+
+    root = tmp_path / "runs"
+    root.mkdir()
+    for name in ("a", "b", "c"):
+        (tmp_path / name).mkdir()
+        shutil.copytree(_case(tmp_path / name), root / name)
+    with _unreadable(root / "b" / "log.icoFoam"):
+        results = verify_all(root)
+        rows = audit(root)["runs"]
+    assert [(t.name, v is not None) for t, v, _ in results] == [("a", True), ("b", False),
+                                                                 ("c", True)]
+    assert results[1][2].startswith("log.icoFoam could not be read"), results[1][2]
+    line, _ = summarise(results)
+    assert line.startswith("3 runs:"), line
+    assert [r["run"] for r in rows] == ["a", "b", "c"]
+    assert "verdict" in rows[0] and "verdict" in rows[2], rows
+    assert rows[1]["error"].startswith("log.icoFoam could not be read"), rows[1]
+
+
+@_root_reads_everything
+def test_an_unreadable_sidecar_is_an_input_error_naming_it(tmp_path):
+    from courant.verify import InputError
+
+    log, cj = _copy(tmp_path, "icoFoam_cavity__cfl_blowup")
+    with _unreadable(cj), pytest.raises(
+            InputError, match=rf"^{cj.name} could not be read: PermissionError"):
+        verify_path(log, cj)
+    with _unreadable(cj):
+        _cli_unreadable(["verify", str(log), "--case-json", str(cj), "--json"], cj.name)
+
+
+# Review of T-MANIFEST-3 (4 Nov 2026): the findings each reviewer confirmed, failing first.
+
+
+@_root_reads_everything
+def test_an_unreadable_log_is_not_noted_as_read(tmp_path):
+    """`reading` notes a file whose read raised anything but `OSError`; the `InputError` is made
+    outside it, so a log that could not be opened is never in a recording (T-MANIFEST-2's rule)."""
+    from courant.case.reads import recording
+    from courant.verify import InputError
+    from courant.verify.ingest import from_case_dir
+
+    case = _case(tmp_path)
+    with _unreadable(case / "log.icoFoam"), recording(case) as outer, \
+            pytest.raises(InputError):
+        from_case_dir(case)
+    assert "log.icoFoam" not in outer.paths(), outer.paths()
+
+
+def test_a_log_gone_between_finding_and_reading_is_an_input_error(tmp_path, monkeypatch):
+    """An Allrun that removes `log.*` while a batch runs: the log `find_log` chose is gone when it
+    is read. An input error naming it, never `internal error (FileNotFoundError)`."""
+    from courant.cli import tail
+    from courant.verify import InputError
+
+    case = _case(tmp_path)
+    monkeypatch.setattr(tail, "find_log", lambda d, **kw: Path(d) / "log.gone")
+    with pytest.raises(InputError, match=r"^log\.gone could not be read: FileNotFoundError"):
+        verify_path(case)
+
+
+@_root_reads_everything
+def test_an_unreadable_utility_log_is_a_utility_s_log(tmp_path):
+    """`find_log` goes by the name of a log it cannot read: `log.checkMesh` is a utility's, as
+    `utility_logs` says, so a case with no solver log says so; and an unreadable newer
+    `log.reconstructPar` does not take the place of a readable solver log that crashed before
+    its time loop (both rank 1 otherwise, and the newer wins)."""
+    from courant.verify import InputError
+
+    case = _case(tmp_path)
+    (case / "log.icoFoam").unlink()
+    (case / "log.blockMesh").write_text("Exec : blockMesh\nEnd\n")
+    with _unreadable(case / "log.checkMesh"), pytest.raises(
+            InputError, match=r"no solver log .*only utility logs \(log\.blockMesh, log\.checkMesh\)"):
+        verify_path(case)
+
+    (case / "log.icoFoam").write_text("Exec : icoFoam\n--> FOAM FATAL ERROR: cannot find file\n")
+    recon = case / "log.reconstructPar"
+    recon.write_text("Exec : reconstructPar\nTime = 0.5\nEnd\n")
+    os.utime(recon, (2e9, 2e9))                              # newer than the solver's log
+    with _unreadable(recon):
+        verdict = verify_path(case)
+    listed = {f.path for f in verdict.run.inputs}
+    assert "log.icoFoam" in listed and "log.reconstructPar" not in listed, sorted(listed)
+
+
+@_root_reads_everything
+def test_a_log_in_a_directory_that_cannot_be_searched_is_an_input_error(tmp_path):
+    """`Path.is_file` raises `PermissionError` there on Python 3.11 (`reads.kind`)."""
+    from courant.verify import InputError
+    from courant.verify.ingest import read_sidecar
+
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    log, cj = _copy(locked, "icoFoam_cavity__cfl_blowup")
+    locked.chmod(0o600)                                  # listable, not searchable
+    try:
+        with pytest.raises(InputError, match=rf"^{log.name} could not be read: PermissionError"):
+            verify_path(log)
+        with pytest.raises(InputError, match=rf"^{cj.name} could not be read: PermissionError"):
+            read_sidecar(cj)
+    finally:
+        locked.chmod(0o755)
+
+
+@pytest.mark.parametrize("body", [b"\xff\xfe{", b"[]", b"7"], ids=["not_utf8", "list", "number"])
+def test_a_sidecar_that_is_not_a_json_object_is_an_input_error(tmp_path, body):
+    """TST-9: before, `\\xff` was `internal error (UnicodeDecodeError)` and `[]`
+    `internal error (AttributeError)`, and either stopped a batch."""
+    from courant.verify import InputError
+
+    log, cj = _copy(tmp_path, "icoFoam_cavity__cfl_blowup")
+    cj.write_bytes(body)
+    with pytest.raises(InputError, match=rf"^{cj.name} is not "):
+        verify_path(log, cj)
+    results = verify_all(tmp_path)
+    assert [err is not None for _, _, err in results] == [True], results
+
+
+@_root_reads_everything
+def test_a_pack_is_not_checked_under_a_case_directory_whose_log_cannot_be_read(tmp_path):
+    """`_case_reads` took an unreadable solver log for "no solver log here", so a log pack under
+    a case directory skipped the guard that a case directory is judged as one."""
+    root = tmp_path / "root"
+    root.mkdir()
+    log, _ = _copy(root, "icoFoam_cavity__cfl_blowup")
+    (root / "icoFoam_cavity__cfl_blowup.case.json").unlink()
+    shutil.copytree(MINI, root, dirs_exist_ok=True)
+    with gzip.open(CORPUS / "icoFoam_cavity__healthy.log.gz", "rt") as fh:
+        (root / "log.icoFoam").write_text(fh.read())
+    pack = write_pack(verify_path(log), tmp_path / "pack", log.name)
+    with _unreadable(root / "log.icoFoam"):
+        ok, msg = check_pack(pack, root)
+    assert not ok and "case directory" in msg and "log.icoFoam could not be read" in msg, msg
+
+
+@_root_reads_everything
+def test_the_mcp_convergence_tool_says_an_unreadable_log_as_data(tmp_path):
+    from courant.mcp import tools
+
+    case = _case(tmp_path)
+    with _unreadable(case / "log.icoFoam"):
+        out = tools.check_convergence(str(case), confine=tools.Confinement([tmp_path]))
+    assert out == {"error": "log.icoFoam could not be read: PermissionError: Permission denied"}
+
+
+def test_a_batch_and_an_audit_with_one_corrupt_log_report_every_run(tmp_path):
+    """C3 as root: a truncated `.log.gz` beside two good runs. Three results, three audit rows."""
+    from courant.verify.audit import audit
+
+    for sid in ("icoFoam_cavity__cfl_blowup", "icoFoam_cavity__healthy"):
+        _copy(tmp_path, sid)
+    good = (CORPUS / "icoFoam_cavity__healthy.log.gz").read_bytes()
+    (tmp_path / "m_cut.log.gz").write_bytes(good[: len(good) // 2])
+    results = verify_all(tmp_path)
+    assert [(t.name, err is None) for t, _, err in results] == [
+        ("icoFoam_cavity__cfl_blowup.log.gz", True), ("icoFoam_cavity__healthy.log.gz", True),
+        ("m_cut.log.gz", False)], results
+    assert results[2][2].startswith("m_cut.log.gz could not be read: EOFError"), results[2][2]
+    rows = audit(tmp_path)["runs"]
+    assert len(rows) == 3 and "error" in rows[2] and "verdict" in rows[0], rows

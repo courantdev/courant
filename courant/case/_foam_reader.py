@@ -7,9 +7,12 @@ what makes the live DockerRunner path work end to end (config_view over real fil
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import stat
+from collections import Counter
+from typing import Any, cast
 
 from courant.case import wordre
 from courant.case.config import CaseConfig, LinearSolverSpec, phase_pseudonym, region_pseudonym
@@ -35,6 +38,15 @@ def _scalar(v):
     return None
 
 
+def _count(v) -> int | None:
+    """A loop count (`nCorrectors` and the like) as an int, or None when the entry is not a finite
+    number: `int()` of `inf` or `nan` raises, and the solver cannot read such a count as a label
+    either, so the reader leaves it unread rather than ending in a traceback (the invariants test,
+    `tests/invariants/test_inv6_readers.py`, mutant `fvSolution+huge`)."""
+    s = _scalar(v)
+    return int(s) if s is not None and math.isfinite(s) else None
+
+
 def _tokens(v) -> str | None:
     """Render a scheme value (tuple of tokens or string) as a string."""
     if isinstance(v, (tuple, list)):
@@ -48,7 +60,8 @@ def _get(f, *key):
     if isinstance(f, _Dictionary):
         return f.need(*(key[0] if len(key) == 1 and isinstance(key[0], tuple) else key))
     try:
-        return f[key if len(key) > 1 else key[0]]
+        # no key: IndexError, caught below
+        return f[key if len(key) > 1 else key[0]]  # pyright: ignore[reportGeneralTypeIssues]
     except Exception:  # noqa: BLE001 — missing key, or an unreadable file
         return None
 
@@ -100,19 +113,28 @@ def _unexpanded(v) -> str | None:
 def _entries_of(scope) -> list[tuple[str, object]]:
     """(key, value) of each entry of one dictionary level, in order, a repeated directive key
     (two `#include`s) once per occurrence. By `keys()`: a `FoamFile`'s own `items()` walks every
-    level at once."""
+    level at once. Linear in the keys: one `getall` per repeated key, not one per occurrence
+    (review 0.7.0, A1-3: 7,776 `#include`s left past the depth bound took minutes)."""
     if not hasattr(scope, "keys"):
         return []
     try:
         keys = [k for k in scope.keys() if k is not None]
     except Exception:  # noqa: BLE001
         return []
+    counts = Counter(keys)
+    every: dict[Any, list | None] = {}                  # a repeated key's values, read once
     out, seen = [], {}
     for k in keys:
         i = seen[k] = seen.get(k, -1) + 1
         try:
-            v = list(scope.getall(k))[i] if keys.count(k) > 1 and hasattr(scope, "getall") \
-                else scope[k]
+            if counts[k] > 1 and hasattr(scope, "getall"):
+                if k not in every:
+                    every[k] = None                     # stays None when `getall` raises
+                    every[k] = list(scope.getall(k))
+                values = every[k]
+                v = values[i] if values is not None else None
+            else:
+                v = scope[k]
         except Exception:  # noqa: BLE001
             v = None
         out.append((str(k), v))
@@ -169,8 +191,10 @@ class _Dictionary:
     values the checks read on that entry, so the merge is not noted.
     """
 
-    def __init__(self, raw, path: str, rel: str, case_dir: str, follow: bool):
+    def __init__(self, raw, path: str, rel: str, case_dir: str, follow: bool,
+                 merge_values: bool = False):
         self.raw, self.path, self.rel, self.case_dir, self.follow = raw, path, rel, case_dir, follow
+        self.merge_values = merge_values                    # `case.merge_with_value`, `_inherited`
         self.expanded = None
         self._tried = False
         self._text: str | None = None
@@ -222,8 +246,11 @@ class _Dictionary:
                 try:
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore")     # foamlib on a merged repeated key
-                        self.expanded = FoamFile.loads(
-                            deck.expand(text, Path(self.path), Path(self.case_dir)))
+                        from courant.case import foamguard
+
+                        expanded = deck.expand(text, Path(self.path), Path(self.case_dir))
+                        foamguard.check_text(expanded, Path(self.path).name)
+                        self.expanded = FoamFile.loads(expanded)
                 except Exception:  # noqa: BLE001 — what stays unread is noted as such
                     self.expanded = None
         return self.expanded is not None
@@ -250,8 +277,9 @@ class _Dictionary:
                 self.hidden.append(("/".join(keys), "directive", _shown(name, v)))
         return found
 
-    def _look(self, keys) -> tuple[object, tuple[str, str, str] | None]:
-        scope, value = self.source, None
+    def _look(self, keys) -> tuple[Any, tuple[str, str, str] | None]:
+        scope: Any = self.source
+        value = None
         for depth, key in enumerate(keys):
             entries = _entries_of(scope)
             names = [k for k, _ in entries]
@@ -284,9 +312,20 @@ class _Dictionary:
         return value, None
 
     def _inherited(self, name: str, scope_keys) -> bool:
-        """A `$name;` in a solver entry naming another solver entry of the same `solvers`."""
+        """A `$name;` in a solver entry naming another solver entry of the same `solvers`.
+
+        With `merge_values` (`case.merge_with_value`, `--checks next`), only a merge that stands
+        alone, which foamlib reads with no value: OpenFOAM's `$p` takes no `;`, so
+        `{ $p tolerance 0.02; }` merges `p` and then reads `tolerance 0.02`, where foamlib reads one
+        keyword `$p` whose value is `tolerance 0.02`, and the entry's own tolerance is gone. Such a
+        merge is noted (deck-oracle DO-2, v2406's pimpleFoam movingCone). Without it, 0.7.0's: any
+        merge naming a sibling is taken as read, so nothing says so."""
         if not name.startswith("$") or len(scope_keys) != 2 or scope_keys[0] != "solvers":
             return False
+        if self.merge_values:
+            entry = dict(_entries_of(_get_quiet(self.source, *scope_keys)))
+            if entry.get(name) is not None:
+                return False
         return _names([k for k, _ in _entries_of(_get_quiet(self.source, "solvers"))], name[1:])
 
     def report(self) -> str | None:
@@ -353,6 +392,16 @@ class _Dictionary:
 
 #: The most of what a case wrote the local sentence quotes.
 _QUOTED = 60
+
+
+def _phase_name(p) -> str:
+    """One phase of `phases` as its name. multiphaseInterFoam writes each phase's dictionary in
+    the list, `phases (water { nu 1e-06; ... } air { ... });`, which foamlib returns as
+    (name, dictionary) pairs: the name is the pair's first. (Its `nu` there is not read:
+    deck-oracle DO-1b.)"""
+    if isinstance(p, tuple) and len(p) == 2 and isinstance(p[0], str) and hasattr(p[1], "keys"):
+        return p[0]
+    return str(p)
 
 
 def _pseudonymous(where: str, phases) -> str:
@@ -436,6 +485,46 @@ def multi_region(case_dir: str | os.PathLike[str], solver: str | None) -> bool:
         os.path.join(os.fspath(case_dir), REGION_PROPERTIES))
 
 
+def application(case_dir: str | os.PathLike[str]) -> str | None:
+    """`system/controlDict`'s `application`, as the case reader reads it (`read_case_config`),
+    or None when the file is not there or cannot be read. Noted when read (VER-14); asked only
+    under `case.regions.whole`, by `mesh.solver_mesh`, when no log names the solver."""
+    from foamlib import FoamFile
+
+    path = os.path.join(os.fspath(case_dir), "system", "controlDict")
+    if not may_read(path) or not path_kind(path, stat.S_ISREG):
+        return None
+    try:
+        f = FoamFile(path)
+        _parse(f, path)
+    except Exception:  # noqa: BLE001 - unreadable: no application read
+        return None
+    value = _get(f, "application")
+    return str(value) if value is not None else None
+
+
+def single_region_solver(case_dir: str | os.PathLike[str], solver: str | None) -> bool:
+    """Whether a case beside a `regionProperties` was solved as one region
+    (T-MULTI-REGION-2, `case.regions.whole`): the solver (the log's, else `application`) is one
+    the gate knows (`solvers.is_known`, v2406's list) and does not read regions
+    (`multi_region`). An unknown or in-house solver is not taken to be single-region."""
+    from courant.case.solvers import is_known
+
+    ran = solver or application(case_dir)
+    return is_known(ran, "next") and not multi_region(case_dir, ran)
+
+
+def regions_not_ruled_out(case_dir: str | os.PathLike[str], solver: str | None) -> bool:
+    """Whether a case may have been solved as regions: it holds a `regionProperties` and its
+    solver (the log's, else `application`) is not a known single-region one
+    (`single_region_solver`). A multi-region solver is; so, on the conservative side, is an
+    unknown or in-house solver; a stray file beside simpleFoam is not. Asked once per case by the
+    specification reader under `--checks next` (`spec.as_run.AsRun.regions`), which passes the
+    answer down: nothing else there tests for the file."""
+    return os.path.lexists(os.path.join(os.fspath(case_dir), REGION_PROPERTIES)) and (
+        not single_region_solver(case_dir, solver))
+
+
 def read_region_properties(case_dir: str) -> dict[str, tuple[str, ...]] | None:
     """`constant/regionProperties` as v2406 reads it (regionProperties.C: the `regions` list of
     kinds, each followed by its regions' names), as `{"fluid": ("air",), "solid": ("plate",)}`
@@ -473,6 +562,46 @@ def read_region_properties(case_dir: str) -> dict[str, tuple[str, ...]] | None:
         out[m.group(1)] = out.get(m.group(1), ()) + names
         at = m.end()
     return out
+
+
+#: The file a phase system reads its phases from: v2406's twoPhaseEulerFoam and
+#: multiphaseEulerFoam (`phaseSystem`, the `phases` word list), OpenFOAM.org's multiphaseEuler
+#: alike. Each phase then reads its own `turbulenceProperties.<phase>` (`momentumTransport.<phase>`,
+#: `IOobject::groupName`), and logs its own `Selecting` lines.
+PHASE_PROPERTIES = os.path.join("constant", "phaseProperties")
+#: One phase's name as this reader accepts it: a word, nothing a list or a dictionary is made of.
+_PHASE_NAME = re.compile(r'[^\s(){}";$#]{1,128}')
+
+
+def read_phase_properties(case_dir: str | os.PathLike[str]) -> tuple[str, ...] | None:
+    """`constant/phaseProperties`' `phases` list as a phase system reads it (`phases (air
+    particles);`), in the file's order; None when the case has no such file (no Euler phase
+    system ran; DPMFoam and its kin name their continuous phase in transportProperties).
+    Noted for the manifest once read (VER-14), confined (MCP-3). A phase's name is the case
+    author's word: the caller compares it and never quotes it (`config.phase_pseudonym`).
+
+    Raises `OSError` when it cannot be read, and `ValueError` when the list is not read whole: a
+    directive or a macro at the file's top level (either may write `phases`), no `phases` entry,
+    or one that is not a list of words. Unlike `read_region_properties`, which refuses a `#` or
+    `$` anywhere, it refuses them at the top level only: a nested one cannot write `phases`. Asked only by the
+    specification reader under `spec.turbulence_block` (`spec.as_run.AsRun._per_phase`)."""
+    from courant.spec import deck
+
+    path = os.path.join(os.fspath(case_dir), PHASE_PROPERTIES)
+    if not os.path.lexists(path):
+        return None
+    with reading(path), open(path, encoding="utf-8", errors="replace") as fh:
+        text = deck.strip_comments(fh.read())
+    top = deck._top_level(text)
+    if "#" in top or "$" in top:
+        raise ValueError("a directive or a macro is written at its top level")
+    raw = deck.entry(text, "phases")
+    if raw is None or not (raw.startswith("(") and raw.endswith(")")):
+        raise ValueError("no `phases` list")
+    names = tuple(raw[1:-1].split())
+    if not names or not all(_PHASE_NAME.fullmatch(n) for n in names):
+        raise ValueError("`phases` is not a list of words")
+    return names
 
 
 def _ddt_read_whole(fs: _Dictionary, case_dir: str) -> bool:
@@ -598,7 +727,10 @@ def _parse(f, path: str) -> None:
     read can be seen to succeed. A file that cannot be opened (`OSError`) is not noted; a file
     that was read and does not parse is noted, then the error propagates.
     """
+    from courant.case import foamguard
+
     with reading(path):
+        foamguard.check_path(path)      # never a list foamlib would backtrack on for ever
         try:
             list(f.items())
         except KeyError:
@@ -687,15 +819,15 @@ def _fv_solution(fv) -> dict:
         data["relaxation_scopes"] = scopes
         data["relaxation_equations"] = equations
     for loop in ("SIMPLE", "PIMPLE"):
-        nno = _scalar(_get(fv, loop, "nNonOrthogonalCorrectors"))
+        nno = _count(_get(fv, loop, "nNonOrthogonalCorrectors"))
         if nno is not None:
-            data["n_non_orthogonal_correctors"] = int(nno)
-        ncorr = _scalar(_get(fv, loop, "nCorrectors"))
+            data["n_non_orthogonal_correctors"] = nno
+        ncorr = _count(_get(fv, loop, "nCorrectors"))
         if ncorr is not None:
-            data["n_correctors"] = int(ncorr)
-    nouter = _scalar(_get(fv, "PIMPLE", "nOuterCorrectors"))
+            data["n_correctors"] = ncorr
+    nouter = _count(_get(fv, "PIMPLE", "nOuterCorrectors"))
     if nouter is not None:
-        data["n_outer_correctors"] = int(nouter)
+        data["n_outer_correctors"] = nouter
     control = _residual_control(fv)
     if control:
         data["residual_control"] = control
@@ -724,7 +856,9 @@ ZERO_DIR = "0/"
 @wordre.bounded                                     # the case's keyword patterns (SPEC-2)
 def read_case_config(case_dir: str, *, buoyancy: bool = True, directives: bool = False,
                      steady_ddt: bool = False, zero_unlisted: bool = False,
-                     regions: bool = False, solver: str | None = None) -> CaseConfig:
+                     regions: bool = False, regions_whole: bool = False,
+                     solver: str | None = None, merge_values: bool = False,
+                     compressed: bool = False, patches: bool = False) -> CaseConfig:
     """The case's settings as the checks need them. A value its dictionary writes through a
     directive the reader did not follow is reported in `unread_values` (TRD VER-3b); with
     `directives` (`--checks next`) the dictionary is read as the solver reads it, its includes
@@ -751,7 +885,33 @@ def read_case_config(case_dir: str, *, buoyancy: bool = True, directives: bool =
     does not hold is `missing`; a `0/<region>/` that cannot be listed or searched is
     `unreadable` under `zero_unlisted`. A `regionProperties` that cannot be read whole, or names
     no region, is `unreadable`, and the case is read as one region. Without `regions` the case is
-    read as v0.6.0 read it, `regionProperties` unopened."""
+    read as v0.6.0 read it, `regionProperties` unopened.
+
+    `regions_whole` (`--checks next`, `case.regions.whole`, T-MULTI-REGION-2, TRD VER-3e), with
+    `regions`: the rest of each region as its solver reads it (`_read_region`): its
+    `constant/<region>/thermophysicalProperties` (`CaseConfig.region_thermo`,
+    `region_equation_of_state`), its correctors (`region_correctors`), the fields its solver
+    must read (`REGION_FIELDS`; one absent is `missing`), and a `0/<region>/` that cannot be
+    listed or searched as `unreadable` without `zero_unlisted`. No region's `residualControl` is
+    read: no ESI CHT solver reads one.
+
+    `merge_values` (`--checks next`, `case.merge_with_value`, deck-oracle DO-2): a solver entry's
+    `$name` merge written with a value (`{ $p tolerance 0.02; }`, which foamlib reads as one
+    keyword) is noted as not read (`_Dictionary._inherited`).
+
+    `compressed` (`--checks next`, `case.zero_compressed`, TRD VER-3f): a `0/` field file is read
+    as OpenFOAM opens it (`reads.plain_or_gz`): `0/T`, else `0/T.gz`, named `T` either way, so a
+    run written with `writeCompression on`, whose `setFields` left `0/T.gz` alone, keeps its
+    boundary types under `T` and its held temperatures and `0/p` pressure. Without it a `.gz` is
+    keyed by its file name (`T.gz`) and `0/T` and `0/p` are read plain only, as v0.7.0 read
+    them (the field-oracle sweep, research/notes/field-oracle/FINDINGS.md, FO-1).
+
+    `patches` (`--checks next`, `case.boundary_patches`, TRD VER-3g): `CaseConfig.boundary` is
+    keyed by the mesh's patches, each given the type v2406 gives it (`_by_patch`): a pattern
+    (`".*"`), a patch group (`wall`) and `#includeEtc "caseDicts/setConstraintTypes"` resolved,
+    an `empty` patch the file does not name typed `empty`, and a key naming no patch dropped.
+    Without it the keys of `boundaryField` are taken for patch names, as v0.7.0 took them (the
+    field-oracle sweep, FO-2)."""
     from foamlib import FoamFile
 
     data: dict = {}
@@ -760,6 +920,7 @@ def read_case_config(case_dir: str, *, buoyancy: bool = True, directives: bool =
     opened: list[_Dictionary] = []
     ddt_read_whole = False                       # TRD VER-13a, `_ddt_read_whole`
     region_names: list[str] = []
+    region_kinds: dict[str, str] = {}
     multi = False
 
     def open_file(rel, *, required: bool | None = None):
@@ -769,7 +930,7 @@ def read_case_config(case_dir: str, *, buoyancy: bool = True, directives: bool =
         f = FoamFile(p)                 # lazy: `_readable` reads it, and notes it (VER-14)
         failed: dict[str, str] = {}
         parsed = _readable(f, p, rel, failed, missing, required=required)
-        d = _Dictionary(f if parsed else None, p, rel, case_dir, directives)
+        d = _Dictionary(f if parsed else None, p, rel, case_dir, directives, merge_values)
         if not parsed and not (directives and d.expand()):     # `${name}` stops foamlib
             unreadable.update(failed)
             return None
@@ -797,6 +958,7 @@ def read_case_config(case_dir: str, *, buoyancy: bool = True, directives: bool =
         try:
             kinds = read_region_properties(case_dir)
             region_names = [r for listed in (kinds or {}).values() for r in listed]
+            region_kinds = {r: kind for kind, listed in (kinds or {}).items() for r in listed}
             if not region_names:
                 unreadable[rel] = "ValueError: it names no region"
         except OSError as exc:
@@ -840,15 +1002,18 @@ def read_case_config(case_dir: str, *, buoyancy: bool = True, directives: bool =
         # solutionDict(runTime)`, `PIMPLE/nOuterCorrectors`, default 1), the coupled energy field
         # and the energy-coupling loops (createCoupledRegions.H, loopControl). Of these the checks
         # read the outer correctors (VER-13: the Courant limit), so that alone is read here.
-        nouter = _scalar(_get(fv, "PIMPLE", "nOuterCorrectors"))
+        nouter = _count(_get(fv, "PIMPLE", "nOuterCorrectors"))
         if nouter is not None:
-            data["n_outer_correctors"] = int(nouter)
+            data["n_outer_correctors"] = nouter
 
     # --- each region's own (T-MULTI-REGION, `regions`, under --checks next) ---
+    ran = solver or data.get("solver")
     for region in region_names:
         _read_region(data, region, region_pseudonym(region_names, region), open_file,
                      case_dir, unreadable=unreadable, missing=missing,
-                     zero_unlisted=zero_unlisted)
+                     zero_unlisted=zero_unlisted,
+                     whole=(region_kinds.get(region), ran) if regions_whole else None,
+                     compressed=compressed, patches=patches)
 
     # --- turbulence --- (none at the top level of a multi-region case)
     for rel in (() if multi else ("constant/momentumTransport", "constant/turbulenceProperties")):
@@ -893,11 +1058,15 @@ def read_case_config(case_dir: str, *, buoyancy: bool = True, directives: bool =
         # Newtonian phase's (`transportModel Newtonian`, or none written): another model reads
         # its own coefficients, and a `nu` beside them is not its viscosity.
         phases = _get(tp, "phases")
-        listed = [str(p) for p in phases] if isinstance(phases, (list, tuple)) else []
+        listed = [_phase_name(p) for p in phases] if isinstance(phases, (list, tuple)) else []
         if listed:                      # local; a finding names a phase by its place in it
             data["phases"] = listed
         per_phase: dict[str, float] = {}
-        for phase in listed:
+        # A phase written with its dictionary in the list (`phases (water { ... });`) is read
+        # from there by its solver, never from a block of its name beside the list: its `nu` is
+        # not read here (deck-oracle DO-1b), so a stray `water { nu 1; }` is not taken for it.
+        plain = [_phase_name(p) for p in phases if _phase_name(p) == str(p)] if listed else []
+        for phase in plain:
             model = _get(tp, phase, "transportModel")
             if model is not None and str(model) != "Newtonian":
                 continue
@@ -909,6 +1078,7 @@ def read_case_config(case_dir: str, *, buoyancy: bool = True, directives: bool =
 
     # --- boundary conditions (0/ field files) ---
     boundary: dict[str, dict[str, str]] = {}
+    written: dict[str, list] | None = {} if patches else None   # each field's boundaryField
     zero = os.path.join(case_dir, "0")
     # A multi-region case's `0/` holds its regions' directories (`_read_region`); fields left at
     # its top level are not what the solver read.
@@ -923,14 +1093,16 @@ def read_case_config(case_dir: str, *, buoyancy: bool = True, directives: bool =
                 raise
             unreadable[ZERO_DIR] = reason(exc)
             names = []
-        for fname in names:
+        for fname, field in _zero_files(names, compressed):
             fpath = os.path.join(zero, fname)
             if not os.path.isfile(fpath):
                 # Listed, not searchable (mode 644): no file in it can be opened.
                 if zero_unlisted and (why := unknown(fpath)) is not None:
                     unreadable.setdefault(ZERO_DIR, reason(why))
                 continue
-            _boundary_types(fpath, fname, boundary)
+            _boundary_types(fpath, field, boundary, written)
+    if written:
+        boundary = _by_patch(case_dir, None, boundary, written)
     if boundary:
         data["boundary"] = boundary
 
@@ -958,19 +1130,13 @@ def read_case_config(case_dir: str, *, buoyancy: bool = True, directives: bool =
     thermo = open_file("constant/thermophysicalProperties") if not multi else None
     if thermo is not None:
         properties: dict[str, float] = dict(data.get("transport") or {})
-        for group, keys in (("transport", ("mu", "Pr")),
-                            ("thermodynamics", ("Cp", "Hf")),
-                            ("specie", ("molWeight",)),
-                            ("equationOfState", ("rho",))):
-            for key in keys:
-                value = _scalar(_get(thermo, "mixture", group, key))
-                if value is not None:
-                    properties.setdefault(key, value)
+        values, eos = _thermo_values(thermo)
+        for key, value in values.items():
+            properties.setdefault(key, value)
         if properties:
             data["transport"] = properties
-        eos = _get(thermo, "thermoType", "equationOfState")
         if eos is not None:
-            data["equation_of_state"] = str(eos)
+            data["equation_of_state"] = eos
         p_ref = _scalar(_get(thermo, "pRef"))
         if p_ref is not None:
             data["pressure"] = p_ref
@@ -984,14 +1150,12 @@ def read_case_config(case_dir: str, *, buoyancy: bool = True, directives: bool =
         if g is not None:
             data["gravity"] = g
     # `0/` files as the boundary loop above reads them: one that cannot be read is absent.
-    tf = _field_file(case_dir, "0/T") if not multi else None
+    tf = _field_file(case_dir, "0/T", compressed) if not multi else None
     if tf is not None:
         data.update(_held_walls(case_dir, _fixed_values(tf), data.get("gravity")))
-    pf = _field_file(case_dir, "0/p") if not multi else None
-    if pf is not None:
-        p = _uniform(_get(pf, "internalField"))
-        if p is not None:
-            data["pressure"] = p                     # the field the solver read wins over pRef
+    p = _uniform_field(case_dir, "0/p", compressed) if not multi else None
+    if p is not None:
+        data["pressure"] = p                         # the field the solver read wins over pRef
 
     # --- mesh motion (TRD VER-5a): whether constant/dynamicMeshDict moves the mesh. Read in both
     # modes for a line of reporting, never a verdict; a file that cannot be read is said so in
@@ -1016,10 +1180,25 @@ def read_case_config(case_dir: str, *, buoyancy: bool = True, directives: bool =
     return config.model_copy(update={"ddt_read_whole": True}) if ddt_read_whole else config
 
 
-def _boundary_types(fpath: str, fname: str, boundary: dict[str, dict[str, str]]) -> None:
+def _zero_files(names, compressed: bool) -> list[tuple[str, str]]:
+    """(file name, field name) of each listed `0/` file, in the listing's order. With
+    `compressed` (`case.zero_compressed`, VER-3f) a field is named as OpenFOAM names it: `T.gz`
+    is the field `T`, read only when there is no plain `T` beside it, which OpenFOAM opens
+    first (`reads.plain_or_gz`). Without it each file is its own field, `T.gz` included (v0.7.0)."""
+    if not compressed:
+        return [(n, n) for n in names]
+    listed = set(names)
+    return [(n, n.removesuffix(".gz")) for n in names
+            if not (n.endswith(".gz") and n.removesuffix(".gz") in listed)]
+
+
+def _boundary_types(fpath: str, fname: str, boundary: dict[str, dict[str, str]],
+                    written: dict[str, list] | None = None) -> None:
     """Each patch's boundary condition type in one field file into `boundary` (patch -> field ->
     type): the one reading of a `0/` field file's types, for the top level and for a region. A
-    file that cannot be read or parsed adds nothing (noted once read, VER-14)."""
+    file that cannot be read or parsed adds nothing (noted once read, VER-14). With `written`
+    (`case.boundary_patches`), the file's `boundaryField` entries as written, in order, go into
+    `written[fname]` for `_by_patch`."""
     from foamlib import FoamFile
 
     try:
@@ -1029,13 +1208,266 @@ def _boundary_types(fpath: str, fname: str, boundary: dict[str, dict[str, str]])
             t = _tokens(spec.get("type")) if hasattr(spec, "get") else None
             if t:
                 boundary.setdefault(patch, {})[fname] = t
+        field = _get_quiet(ff, "boundaryField") if written is not None else None
+        if field is not None:                           # no boundaryField: not a field (`_by_patch`)
+            written[fname] = None if _written_twice(fpath) else _entries_of(field)
     except Exception:  # noqa: BLE001
         return
 
 
+#: The fields a region's solver must read at its start time (`MUST_READ`), by the solver and the
+#: region's kind in `regionProperties` (T-MULTI-REGION-2, TRD VER-3e; read in ESI v2412's
+#: sources, a third-party copy, 4 Nov 2026): a fluid's `U` and `p_rgh` (`createFluidFields.H`)
+#: and its thermo's `p` and `T` (`basicThermo::lookupOrConstruct`, MUST_READ), a solid's thermo's
+#: `p` and `T` (`solidThermo::New`). chtMultiRegionTwoPhaseEulerFoam's fluids solve per phase
+#: (`U.air`), so only its solids are listed. A solver or kind not listed: nothing is required.
+REGION_FIELDS: dict[tuple[str, str], tuple[str, ...]] = {
+    **{(s, "fluid"): ("U", "p_rgh", "p", "T")
+       for s in ("chtMultiRegionFoam", "chtMultiRegionSimpleFoam")},
+    **{(s, "solid"): ("p", "T")
+       for s in ("chtMultiRegionFoam", "chtMultiRegionSimpleFoam",
+                 "chtMultiRegionTwoPhaseEulerFoam")},
+}
+
+
+def region_fields(solver: str | None, kind: str | None) -> tuple[str, ...]:
+    """The fields `REGION_FIELDS` says a region of `kind` must hold for `solver` (its base name,
+    `solvers._base`), or () when it says nothing."""
+    from courant.case.solvers import _base
+
+    if not solver or not kind:
+        return ()
+    return REGION_FIELDS.get((_base(solver), kind), ())
+
+
+#: What a thermophysicalProperties sets that the checks read: `mixture/<group>/<key>`.
+_THERMO_KEYS = (("transport", ("mu", "Pr")), ("thermodynamics", ("Cp", "Hf")),
+                ("specie", ("molWeight",)), ("equationOfState", ("rho",)))
+
+
+def _thermo_values(thermo) -> tuple[dict[str, float], str | None]:
+    """A thermophysicalProperties' values the checks read (`_THERMO_KEYS`) and its
+    `thermoType/equationOfState`: the one reading, for the case's own file and each region's
+    (T-MULTI-REGION-2, the review, B1)."""
+    values: dict[str, float] = {}
+    for group, keys in _THERMO_KEYS:
+        for key in keys:
+            value = _scalar(_get(thermo, "mixture", group, key))
+            if value is not None:
+                values[key] = value
+    eos = _get(thermo, "thermoType", "equationOfState")
+    return values, (str(eos) if eos is not None else None)
+
+
+def _uniform_field(case_dir: str, rel: str, compressed: bool = False) -> float | None:
+    """A start field's uniform internal value (`0/p`, `0/<region>/p`), or None. With `compressed`
+    (`case.zero_compressed`, VER-3f) from the file OpenFOAM opens (`_field_file`)."""
+    pf = _field_file(case_dir, rel, compressed)
+    return _uniform(_get(pf, "internalField")) if pf is not None else None
+
+
+#: The dictionary each ESI CHT solver reads a region's correctors from, and the correctors with
+#: their defaults (`readFluidMultiRegionSIMPLEControls.H`, `readSolidMultiRegionSIMPLEControls.H`,
+#: `readFluidMultiRegionPIMPLEControls.H`, `readSolidMultiRegionPIMPLEControls.H`, v2412).
+_REGION_LOOP = {"chtMultiRegionSimpleFoam": "SIMPLE", "chtMultiRegionFoam": "PIMPLE"}
+
+
+def _region_correctors(fv, kind: str | None, solver: str | None) -> dict[str, int]:
+    """A region's correctors as its solver reads them (T-MULTI-REGION-2, the review, M4): from
+    the solver's loop dictionary alone, an unwritten one at its default (`nNonOrthogonalCorrectors`
+    0; a PIMPLE fluid's `nCorrectors` 1). {} for a solver `_REGION_LOOP` does not list."""
+    from courant.case.solvers import _base
+
+    loop = _REGION_LOOP.get(_base(solver)) if solver else None
+    if loop is None or kind not in ("fluid", "solid"):
+        return {}
+    names = {"n_non_orthogonal_correctors": ("nNonOrthogonalCorrectors", 0)}
+    if loop == "PIMPLE" and kind == "fluid":
+        names["n_correctors"] = ("nCorrectors", 1)
+    out = {}
+    for key, (name, default) in names.items():
+        v = _get(fv, loop, name)
+        if _scalar(v) is None:
+            out[key] = default                  # unwritten: the solver's default
+        elif (n := _count(v)) is None:
+            return {}                           # written, and not a finite count: not read
+        else:
+            out[key] = n
+    return out
+
+
+def _read_region_thermo(data: dict, region: str, tag: str, open_file, case_dir: str,
+                        required: bool, compressed: bool = False) -> None:
+    """A region's `constant/<region>/thermophysicalProperties`, as the viscosity check reads it
+    (`courant.case.viscosity`), into `region_thermo[tag]` and `region_equation_of_state[tag]`
+    (`_thermo_values`, the case's own reading), with the region's pressure `p`, its
+    `0/<region>/p` uniform internal field: an ESI CHT solver's thermo reads that field, and no
+    reference pressure from this file (`createFluidFields.H`). `required`: the region's solver
+    reads the file (`missing` when absent); a region in OpenFOAM.org's layout
+    (`constant/<region>/physicalProperties`) is not required to hold this one."""
+    # OpenFOAM.org's layout: the region's thermo is its `physicalProperties`, so a
+    # thermophysicalProperties beside it is not what the solver read and is not opened (the
+    # re-review of T-MULTI-REGION-2). Not read for a viscosity either: the region is said in
+    # 0.7.0's words. (An ESI solver beside a stray physicalProperties and no
+    # thermophysicalProperties could not have started; that `missing` is not said: open.)
+    if path_kind(os.path.join(case_dir, "constant", region, "physicalProperties"),
+                 stat.S_ISREG):
+        return
+    thermo = open_file(f"constant/{region}/thermophysicalProperties", required=required)
+    if thermo is None:
+        return
+    values, eos = _thermo_values(thermo)
+    p = _uniform_field(case_dir, f"0/{region}/p", compressed)
+    if p is not None:
+        values["p"] = p
+    if values:
+        data.setdefault("region_thermo", {})[tag] = values
+    if eos is not None:
+        data.setdefault("region_equation_of_state", {})[tag] = eos
+
+
+def _written_twice(fpath: str) -> bool:
+    """Whether a key of the file's `boundaryField` is written more than once, or the file cannot
+    be scanned for it. foamlib keeps the last writing at its own place, where v2406 merges it into
+    the first, which keeps its place (`#inputMode merge`; `wordre.csearch`), so the order its
+    entries give is not the solver's: such a field is not resolved (`_resolved`)."""
+    from pathlib import Path
+
+    from courant.spec import deck
+
+    try:
+        with reading(fpath):
+            if fpath.endswith(".gz"):
+                raw = deck._gunzip(Path(fpath))         # bounded, the one decompression
+            else:
+                with open(fpath, encoding="utf-8", errors="replace") as fh:
+                    raw = fh.read()
+        bf = deck.block(deck.strip_comments(raw), "boundaryField")
+        keys = [k for k, _, _ in deck._quoted_blocks(bf)] if bf is not None else []
+    except Exception:  # noqa: BLE001 — not scanned: not resolved
+        return True
+    return len(keys) != len(set(keys))
+
+
+#: The entries `#includeEtc "caseDicts/setConstraintTypes"` writes, in its order (v2406's
+#: etc/caseDicts/setConstraintTypes, read in the pinned image): each a literal key naming a
+#: constraint type, which is the group every patch of that type is in (polyPatch.C `addGroup`),
+#: holding that type.
+SET_CONSTRAINT_TYPES = ("cyclic", "cyclicAMI", "cyclicACMI", "cyclicSlip", "empty",
+                        "nonuniformTransformCyclic", "processor", "processorCyclic",
+                        "symmetryPlane", "symmetry", "wedge", "overset")
+
+
+def _mesh_patches(case_dir: str, region: str | None) -> list[tuple[str, str, frozenset]] | None:
+    """(name, type, groups) of each patch of `constant[/<region>]/polyMesh/boundary`, in order:
+    its groups are its `inGroups` (`reynolds._patch_groups`, the one reading of them) and the
+    group v2406 adds by its type, `wall` for a wall (wallPolyPatch.C) and its own type for a
+    constraint patch (polyPatch.C `addGroup`), not a `patch`'s. (`reynolds._roots_and_meshes`
+    adds every patch's type, over-approximating on purpose: it refuses wherever a group may apply.)
+    None when the file cannot be read whole (absent, binary, a directive in it)."""
+    from pathlib import Path
+
+    from courant.case import polymesh
+    from courant.case.reads import plain_or_gz
+    from courant.case.reynolds import _patch_groups
+
+    rel = os.path.join("constant", *((region,) if region else ()), "polyMesh", "boundary")
+    path = os.path.join(case_dir, rel)
+    if not may_read(path):                              # MCP-3
+        return None
+    path = plain_or_gz(path)
+    try:
+        listed = polymesh.read_boundary(path)
+        groups = polymesh._read(Path(path), _patch_groups)
+    except Exception:  # noqa: BLE001 — not read whole: the keys stay as written
+        return None
+    if groups is None or [n for n, _ in groups] != [p.name for p in listed]:
+        return None
+    joined = {"wall", *SET_CONSTRAINT_TYPES}
+    return [(p.name, p.type, words | ({p.type} & joined)) for p, (_, words) in zip(listed, groups)]
+
+
+def _resolved(entries: list | None,
+              mesh: list[tuple[str, str, frozenset]]) -> dict[str, str] | None:
+    """{patch: type} for each mesh patch one field's `boundaryField` entries give a type, as
+    v2406's `GeometricBoundaryField::readField` gives it (read in the pinned image): 1. a
+    dictionary entry whose unquoted key is the patch's name; 2. one whose unquoted key names one
+    of its groups, the last written first; 3. `empty` for an `empty` patch; else the entry
+    `dictionary::findDict` finds by its name (`wordre.csearch`: its text, quoted or not, then the
+    patterns). A key naming no patch gives nothing. `#includeEtc "caseDicts/setConstraintTypes"`
+    is its entries (`SET_CONSTRAINT_TYPES`) in its place. None when the entries cannot be read so:
+    any other directive or a `$name;` merge, a pattern the matcher does not evaluate, or
+    `entries` None (a key written twice: `_written_twice`)."""
+    from courant.case import wordre
+
+    if entries is None:
+        return None
+
+    flat: list[tuple[str, bool, str | None, bool]] = []     # (text, quoted, type, a dictionary)
+    for key, value in entries:
+        if key == "#includeEtc" and str(value).strip().strip('"') == "caseDicts/setConstraintTypes":
+            flat += [(t, False, t, True) for t in SET_CONSTRAINT_TYPES]
+            continue
+        if key.startswith(("#", "$")):
+            return None
+        quoted = len(key) > 1 and key[0] == key[-1] == '"'
+        is_dict = hasattr(value, "get")
+        flat.append((key[1:-1] if quoted else key, quoted,
+                     _tokens(value.get("type")) if is_dict else None, is_dict))
+    out: dict[str, str | None] = {}
+    names = {name for name, _, _ in mesh}
+    for text, quoted, ptype, is_dict in flat:               # 1. its own name
+        if is_dict and not quoted and text in names:
+            out[text] = ptype                               # a later writing merges over it
+    for text, quoted, ptype, is_dict in reversed(flat):     # 2. its groups, the last first
+        # `polyBoundaryMesh::indices(key, true)`: a key that names a patch names that patch alone
+        # (set in 1.), never the group of the same name.
+        if is_dict and not quoted and text not in names:
+            for name, _, groups in mesh:
+                if name not in out and text in groups:
+                    out[name] = ptype
+    keys = [(text, quoted) for text, quoted, _, _ in flat]
+    for name, mesh_type, _ in mesh:                         # 3. empty, then findDict
+        if name in out:
+            continue
+        if mesh_type == "empty":
+            out[name] = "empty"
+            continue
+        hits, unsure = wordre.csearch(keys, name)
+        if unsure:
+            return None
+        if hits and flat[hits[-1]][3]:
+            out[name] = flat[hits[-1]][2]
+    return {name: out[name] for name, _, _ in mesh if out.get(name)}
+
+
+def _by_patch(case_dir: str, region: str | None, boundary: dict[str, dict[str, str]],
+              written: dict[str, list | None]) -> dict[str, dict[str, str]]:
+    """`boundary` (patch -> field -> type, keys as written) keyed by the mesh's patches as v2406
+    resolves each field's entries (`_resolved`), in the mesh's order (TRD VER-3g,
+    `case.boundary_patches`). A field whose entries cannot be resolved keeps its keys as written;
+    with no mesh read whole, `boundary` is returned as it is."""
+    mesh = _mesh_patches(case_dir, region)
+    if mesh is None:
+        return boundary
+    out: dict[str, dict[str, str]] = {name: {} for name, _, _ in mesh}
+    for field, entries in written.items():
+        got = _resolved(entries, mesh)
+        if got is None:
+            for patch, fields in boundary.items():
+                if field in fields:
+                    out.setdefault(patch, {})[field] = fields[field]
+            continue
+        for patch, ptype in got.items():
+            out[patch][field] = ptype
+    return {patch: fields for patch, fields in out.items() if fields}
+
+
 def _read_region(data: dict, region: str, tag: str, open_file, case_dir: str, *,
                  unreadable: dict[str, str], missing: list[str],
-                 zero_unlisted: bool = False) -> None:
+                 zero_unlisted: bool = False,
+                 whole: tuple[str | None, str | None] | None = None,
+                 compressed: bool = False, patches: bool = False) -> None:
     """One region of a multi-region case into `data` (T-MULTI-REGION, `regions`): its
     `system/<region>/fvSchemes` divergence schemes and `system/<region>/fvSolution`
     (`_fv_solution`), each required (`missing` when absent), and the boundary condition types of
@@ -1043,9 +1475,20 @@ def _read_region(data: dict, region: str, tag: str, open_file, case_dir: str, *,
     (`config.region_pseudonym`), so a key names no region: `U@region1`, `inlet@region1`.
 
     Only what the setup rules read is merged: the relaxation factors and their scopes, the
-    linear solvers, the divergence schemes and the boundary types. A region's correctors and
-    `residualControl` are not (one value of each per case is what the checks read), nor its
-    `constant/<region>/` dictionaries (the thermophysical model, a fluid's turbulence)."""
+    linear solvers, the divergence schemes and the boundary types.
+
+    `whole` (`case.regions.whole`, TRD VER-3e): (the region's kind in `regionProperties`, the
+    solver that ran). With it, also the region's correctors (`region_correctors[tag]`), its
+    thermophysical model (`_read_region_thermo`), each field `region_fields` says its solver
+    must read and `0/<region>/` does not hold (`missing`, `0/<region>/<field>`), and a
+    `0/<region>/` that cannot be listed or searched as `unreadable` without `zero_unlisted`. Not
+    read in any mode: a region's `residualControl` (no ESI CHT solver reads one:
+    chtMultiRegionSimpleFoam loops on `runTime.loop()`, chtMultiRegionFoam on `runTime.run()`)
+    and a fluid's turbulence dictionary (no check reads a model per region).
+
+    `compressed` (`case.zero_compressed`, VER-3f): `0/<region>/`'s files named by their field, the
+    region's `p` read from its `.gz` too. `patches` (`case.boundary_patches`, VER-3g): its boundary
+    types keyed by the patches of `constant/<region>/polyMesh/boundary` (`_by_patch`)."""
     def keyed(entries: dict) -> dict:
         return {f"{k}@{tag}": v for k, v in entries.items()}
 
@@ -1066,6 +1509,16 @@ def _read_region(data: dict, region: str, tag: str, open_file, case_dir: str, *,
             data.setdefault("linear_solvers", {}).update(
                 {f"{k}@{tag}": s.model_copy(update={"field": f"{k}@{tag}"})
                  for k, s in solvers.items()})
+        correctors = _region_correctors(fv, *whole) if whole is not None else {}
+        if correctors:
+            data.setdefault("region_correctors", {})[tag] = correctors
+    if whole is not None:
+        kind, ran = whole
+        # Required where `REGION_FIELDS` knows the solver's region (an ESI CHT solver builds the
+        # region's thermo from it); elsewhere (foamMultiRun's `physicalProperties`) read if there.
+        _read_region_thermo(data, region, tag, open_file, case_dir,
+                            required=bool(region_fields(ran, kind)), compressed=compressed)
+    zero_said = zero_unlisted or whole is not None
     # `0/<region>/` (the review of T-MULTI-REGION, M1): one that is not there is `missing`; one
     # that cannot be searched or listed, or whose files cannot be reached, is `unreadable` under
     # `zero_unlisted` (`case.zero_unlisted`, T-ZERO-UNLISTABLE's rule), never passed over in
@@ -1074,8 +1527,8 @@ def _read_region(data: dict, region: str, tag: str, open_file, case_dir: str, *,
     rel = f"0/{region}/"
     there = path_kind(zero)
     if there is None:
-        if zero_unlisted:
-            unreadable.setdefault(rel, reason(unknown(zero)))
+        if zero_said:
+            unreadable.setdefault(rel, reason(cast(OSError, unknown(zero))))
         return
     if not there:
         missing.append(rel)
@@ -1085,26 +1538,44 @@ def _read_region(data: dict, region: str, tag: str, open_file, case_dir: str, *,
     try:
         listed = sorted(os.listdir(zero))
     except OSError as exc:
-        if zero_unlisted:
+        if zero_said:
             unreadable.setdefault(rel, reason(exc))
         return
     found: dict[str, dict[str, str]] = {}
-    for fname in listed:
+    searchable = True
+    written: dict[str, list] | None = {} if patches else None
+    for fname, field in _zero_files(listed, compressed):
         fpath = os.path.join(zero, fname)
         is_regular = path_kind(fpath, stat.S_ISREG)
-        if is_regular is None and zero_unlisted:        # listed, not searchable
-            unreadable.setdefault(rel, reason(unknown(fpath)))
+        if is_regular is None:                          # listed, not searchable
+            searchable = False
+            if zero_said:
+                unreadable.setdefault(rel, reason(cast(OSError, unknown(fpath))))
         if is_regular:
-            _boundary_types(fpath, fname, found)
+            _boundary_types(fpath, field, found, written)
+    if written:
+        found = _by_patch(case_dir, region, found, written)
     if found:
         data.setdefault("boundary", {}).update(keyed(found))
+    # The fields the region's solver must read (`region_fields`): one `0/<region>/` does not list
+    # is `missing`. Only on a listing that could be searched: an entry whose kind cannot be told
+    # is said above, not taken for absent.
+    if whole is not None and searchable:
+        missing.extend(f"{rel}{name}" for name in region_fields(whole[1], whole[0])
+                       if name not in listed and f"{name}.gz" not in listed)
 
 
-def _field_file(case_dir: str, rel: str):
-    """A `0/` field file, parsed and noted (VER-14), or None when it is missing or unreadable."""
+def _field_file(case_dir: str, rel: str, compressed: bool = False):
+    """A `0/` field file, parsed and noted (VER-14), or None when it is missing or unreadable.
+    With `compressed` (`case.zero_compressed`, VER-3f) the file OpenFOAM opens: `rel`, else its
+    `.gz` (`reads.plain_or_gz`)."""
     from foamlib import FoamFile
 
+    from courant.case.reads import plain_or_gz
+
     path = os.path.join(case_dir, rel)
+    if compressed and may_read(path):                   # MCP-3: asked before it is looked for
+        path = plain_or_gz(path)
     if not os.path.isfile(path):
         return None
     try:
@@ -1130,7 +1601,8 @@ def _numbers(v) -> list[float] | None:
 
 def _vector(v) -> tuple[float, float, float] | None:
     values = _numbers(getattr(v, "value", v))
-    return tuple(values) if values is not None and len(values) == 3 else None
+    return cast("tuple[float, float, float]", tuple(values)) \
+        if values is not None and len(values) == 3 else None
 
 
 def _uniform(v) -> float | None:
@@ -1177,7 +1649,8 @@ def _held_walls(case_dir: str, fixed: dict[str, list[float]], gravity) -> dict:
         if len(vs) not in (1, p.n):
             return out                       # values that do not match the faces
         centres = mesh.face_centres[p.start:p.start + p.n]
-        faces += [(vs[0] if len(vs) == 1 else vs[i], tuple(float(x) for x in c))
+        faces += [(vs[0] if len(vs) == 1 else vs[i],
+                   cast("tuple[float, float, float]", tuple(float(x) for x in c)))
                   for i, c in enumerate(centres)]
     temps = [t for t, _ in faces]
     if not temps:

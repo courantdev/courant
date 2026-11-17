@@ -37,4 +37,8 @@ def audit(
         print(f"audit written: {html}", file=sys.stderr)
     sys.stdout.write(canonical_json(doc) if as_json else render_text(doc))
     t = doc["totals"]
-    raise typer.Exit(2 if t["not_trustworthy"] else 3 if t["not_assessable"] else 4 if t["unreadable"] else 0)
+    # SEC070-12: a directory with no run in it is not a pass.
+    none = not any(t.get(k) for k in ("trustworthy", "not_trustworthy", "not_assessable",
+                                       "unreadable"))
+    raise typer.Exit(2 if t["not_trustworthy"] else 3 if t["not_assessable"]
+                     else 4 if t["unreadable"] or none else 0)

@@ -30,10 +30,11 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from typing import cast
 
 from courant.verify import about
 from courant.verify.render import render_markdown
-from courant.verify.schema import canonical_json
+from courant.verify.schema import ToolInfo, canonical_json
 from courant.verify.verdict2 import SCHEMA_V1, AnyVerdict, in_schema
 
 VERDICT, REPORT, MANIFEST = "verdict.json", "report.md", "inputs.manifest"
@@ -42,26 +43,54 @@ VERDICT, REPORT, MANIFEST = "verdict.json", "report.md", "inputs.manifest"
 SPEC = "spec.json"
 
 
-def write_pack(verdict: AnyVerdict, out_dir: str | Path, target_name: str,
-               case_json_name: str | None = None, *, spec_path: str | Path | None = None,
-               spec_locked_sha256: str | None = None) -> Path:
-    """Write the pack. A task specification travels inside it, so the pack re-derives on its
-    own; its hash is already bound into the verdict's conformance block."""
-    out = Path(out_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    (out / VERDICT).write_text(verdict.to_json())
-    (out / REPORT).write_text(render_markdown(verdict))
+def pack_files(verdict: AnyVerdict, target_name: str, case_json_name: str | None = None, *,
+               spec_path: str | Path | None = None,
+               spec_locked_sha256: str | None = None) -> dict[str, bytes]:
+    """The pack's files and their bytes, by name: the one implementation of what a pack holds,
+    for `write_pack` and for `courant precheck` (GATE-14)."""
+    files = {VERDICT: verdict.to_json().encode(), REPORT: render_markdown(verdict).encode()}
     lines = [f"{sha}  {size}  {path}" for sha, size, path in _entries(verdict)]
     meta = {"tool": verdict.tool.name, "version": verdict.tool.version, "schema": verdict.schema_,
             "source": verdict.run.source, "target": target_name, "case_json": case_json_name,
             "error_rates": about.error_rates()}                 # GATE-12
     if spec_path is not None:
-        (out / SPEC).write_bytes(Path(spec_path).read_bytes())
+        files[SPEC] = Path(spec_path).read_bytes()
         meta["spec"] = SPEC
         if spec_locked_sha256:
             meta["spec_locked_sha256"] = spec_locked_sha256
-    (out / MANIFEST).write_text("\n".join(lines) + "\n# meta " + canonical_json(meta))
+    files[MANIFEST] = ("\n".join(lines) + "\n# meta " + canonical_json(meta)).encode()
+    return files
+
+
+def write_pack(verdict: AnyVerdict, out_dir: str | Path, target_name: str,
+               case_json_name: str | None = None, *, spec_path: str | Path | None = None,
+               spec_locked_sha256: str | None = None) -> Path:
+    """Write the pack. A task specification travels inside it, so the pack re-derives on its
+    own; its hash is already bound into the verdict's conformance block."""
+    files = pack_files(verdict, target_name, case_json_name, spec_path=spec_path,
+                       spec_locked_sha256=spec_locked_sha256)
+    out = Path(out_dir)
+    if out.is_symlink():                                 # SEC070-5: the pack stays where named
+        raise OSError(f"the pack directory {out} is a symbolic link; name the directory itself")
+    out.mkdir(parents=True, exist_ok=True)
+    for name in (VERDICT, REPORT, SPEC, MANIFEST):
+        if name in files:
+            _write(out / name, files[name])
     return out
+
+
+def _write(path: Path, data: bytes) -> None:
+    """Write `path` without following a link there: a run's producer can plant one in the pack
+    directory (`report.md` -> a start-up file), and the pack would write through it (security
+    review 0.7.0, SEC070-5). A link is refused (OSError), never followed."""
+    import os
+
+    if path.is_symlink():
+        raise OSError(f"{path} is a symbolic link; a pack writes its own files, not through one")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0),
+                 0o644)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
 
 
 def _entries(verdict: AnyVerdict) -> list[tuple[str, int, str]]:
@@ -70,14 +99,33 @@ def _entries(verdict: AnyVerdict) -> list[tuple[str, int, str]]:
     return [(f.sha256, f.bytes, f.path) for f in verdict.run.inputs]
 
 
+class ManifestError(ValueError):
+    """A manifest line that does not parse: the pack is not one this tool wrote (SEC070-8)."""
+
+
 def read_manifest(pack: Path) -> tuple[list[tuple[str, int, str]], dict]:
+    try:
+        text = (pack / MANIFEST).read_text()
+    except UnicodeDecodeError as exc:                   # this tool writes a manifest as text
+        raise ManifestError(f"{MANIFEST} is not text") from exc
+    return parse_manifest(text)
+
+
+def parse_manifest(text: str) -> tuple[list[tuple[str, int, str]], dict]:
+    """(entries, meta) of a manifest's text: the one parser, for a pack on disk and for a pack
+    inside a pre-check archive (GATE-14). Raises `ManifestError` on a line that does not parse."""
     entries, meta = [], {}
-    for line in (pack / MANIFEST).read_text().splitlines():
-        if line.startswith("# meta "):
-            meta = json.loads(line[len("# meta "):])
-        elif line.strip():
-            sha, size, path = line.split("  ", 2)
-            entries.append((sha, int(size), path))
+    for i, line in enumerate(text.splitlines(), 1):
+        try:
+            if line.startswith("# meta "):
+                meta = json.loads(line[len("# meta "):])
+                if not isinstance(meta, dict):
+                    raise ValueError("meta is not an object")
+            elif line.strip():
+                sha, size, path = line.split("  ", 2)
+                entries.append((sha, int(size), path))
+        except (ValueError, RecursionError) as exc:
+            raise ManifestError(f"{MANIFEST} line {i} does not parse") from exc
     return entries, meta
 
 
@@ -110,13 +158,18 @@ def _sidecar_problem(root: Path, log: str, named: str | None) -> str | None:
 
 def _case_reads(root: Path) -> list[str] | None:
     """The files `courant verify` reads when it judges `root` as a case directory, or None when
-    it cannot judge it as one (no solver log in it: a directory of runs, like the corpus)."""
+    it cannot judge it as one (no solver log in it: a directory of runs, like the corpus). A
+    case directory whose solver log cannot be read is a case directory all the same: its
+    `InputError` propagates (T-MANIFEST-3), never None."""
+    from courant.cli.tail import find_log
     from courant.verify.ingest import InputError, from_case_dir
 
     try:
         return [f.path for f in from_case_dir(root).inputs]
     except InputError:
-        return None
+        if find_log(root, finished=True) is None:
+            return None
+        raise
 
 
 def _under(root: Path, rel: str) -> bool:
@@ -155,12 +208,17 @@ def check_pack(pack_dir: str | Path, root: str | Path, *,
     run was judged. The verdict is re-derived in the schema the pack was written in (its
     manifest's `schema`), so a `courant.verdict/1` pack still checks byte for byte (ARC-16)."""
     from courant.spec import spec_sha256 as sha_of
-    from courant.verify import verify_path
+    from courant.verify import InputError, verify_path
 
     pack, root = Path(pack_dir), Path(root)
     if not root.is_dir():
         return False, f"the root is not a directory: {root}"
-    entries, meta = read_manifest(pack)
+    try:
+        entries, meta = read_manifest(pack)
+    except ManifestError as exc:
+        return False, f"the manifest cannot be read: {exc}"
+    except OSError as exc:
+        return False, f"the manifest cannot be read: {type(exc).__name__}"
     case_dir = meta.get("source") == "case_dir"
     target, sidecar = meta.get("target"), meta.get("case_json") or None
     named = []                                          # the files a log pack verifies
@@ -173,7 +231,7 @@ def check_pack(pack_dir: str | Path, root: str | Path, *,
                                "name in printable ASCII, directly under the root, and only that "
                                "file is verified")
             named.append(name)
-        problem = _sidecar_problem(root, target, sidecar)
+        problem = _sidecar_problem(root, cast(str, target), sidecar)   # _file_name passed: a str
         if problem:
             return False, problem
     if meta.get("spec") and not _file_name(meta["spec"]):
@@ -186,8 +244,8 @@ def check_pack(pack_dir: str | Path, root: str | Path, *,
         if not _under(root, rel):
             return False, (f"input outside the root: {rel} does not resolve to a file under the "
                            "root; a pack is checked only on files under it")
-    if not case_dir and not (root / target).is_file():  # the files hashed are the files read
-        missing = not (root / target).exists()
+    if not case_dir and not (root / cast(str, target)).is_file():  # the files hashed are read
+        missing = not (root / cast(str, target)).exists()
         return False, (f"the pack names its log as {target!r}, which is "
                        f"{'missing' if missing else 'not a file'} under the root")
     for sha, size, rel in entries:
@@ -205,6 +263,10 @@ def check_pack(pack_dir: str | Path, root: str | Path, *,
     if made_by and made_by != __version__:
         return False, (f"the pack was made by courant {made_by} and this is {__version__}: "
                        f"re-derive it with that version (pip install {DISTRIBUTION}=={made_by})")
+    # SEC070-9: what the meta claims about the tool is this tool's, or the pack is not its.
+    if meta.get("tool") != ToolInfo.model_fields["name"].default or meta.get("error_rates") != about.error_rates():
+        return False, ("the manifest's tool or published error rates are not this tool's: "
+                       "the pack claims something courant did not write")
     spec = pack / meta["spec"] if meta.get("spec") else None
     if spec is not None and not spec.is_file():
         return False, f"the pack names a specification that is missing: {meta['spec']}"
@@ -223,7 +285,12 @@ def check_pack(pack_dir: str | Path, root: str | Path, *,
                            + (f"locked at {locked[:12]}" if locked else "not locked")
                            + f", and the specification was locked at {given[:12]}")
     if not case_dir:                                    # a case directory is judged as one
-        extra = sorted(set(_case_reads(root) or ()) - {rel for _sha, _size, rel in entries})
+        try:
+            reads = _case_reads(root) or ()
+        except InputError as exc:
+            return False, (f"the root is a case directory, and `courant verify` cannot judge it: "
+                           f"{exc}")
+        extra = sorted(set(reads) - {rel for _sha, _size, rel in entries})
         if extra:
             more = f" and {len(extra) - 3} more" if len(extra) > 3 else ""
             return False, (f"the root is a case directory: `courant verify` reads "
@@ -235,7 +302,7 @@ def check_pack(pack_dir: str | Path, root: str | Path, *,
         what, scope = f"the case directory {root}", []
     else:
         cj = root / sidecar if sidecar else None
-        verdict = verify_path(root / target, cj, spec=spec, spec_locked_sha256=locked)
+        verdict = verify_path(root / cast(str, target), cj, spec=spec, spec_locked_sha256=locked)
         what = f"{target} under {root}"
         scope = [f"a log with its sidecar {sidecar}" if sidecar else "a log, no sidecar"]
     scope.append("no specification" if carried is None else (

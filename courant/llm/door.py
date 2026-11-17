@@ -26,8 +26,8 @@ model answered is the model's failure only when a model was asked and failed; wh
 a rejected key or a model that is not served stopped it, the stop is raised instead, so a
 batch never scores it (ARC-19). A rate limit that outlasts its retries is such a stop
 (``RateLimited``), and so is an account out of credit (402), as a rejected key is (ARC-20).
-So is any other 4xx that is not a rate limit (a 400 ``invalid_request_error``, a 403): the
-provider rejected the request, no model was asked, and the door raises ``Rejected``, never a
+So is any other 4xx that is not a rate limit (a 400 ``invalid_request_error``, a 403, and a
+408 or 425 once it outlasts its retries, ARC-22): the provider rejected the request, no model was asked, and the door raises ``Rejected``, never a
 failed exchange a batch would score as the model's abstention.
 Every rule applies per provider (ARC-17), and no provider is a fallback that lets a paid id
 through: automatic selection walks the allowlists only.
@@ -53,11 +53,11 @@ import os
 import re
 import time
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from courant.llm import budget, policy, prices
 from courant.llm.errors import (
@@ -121,11 +121,11 @@ _RETRYABLE = frozenset({408, 425, 429})
 #: not the model's failure (ARC-19): the day's quota stopped it, the provider rejected the key
 #: or the account has no credit (402, ARC-20; either way the door skips the provider from now
 #: on), or the id is not served (the door drops it). A rate limit that outlasted its retries
-#: is ``"quota"`` too (``_send``). Any other 4xx that is not retried is ``"rejected"`` (the
-#: provider rejected the request: ``Rejected``), and a transport that could not send at all
-#: (no SDK, no key) is ``"unsent"``; neither is the model's. Only a 5xx or a dropped connection
-#: that outlasted its retries is the exchange failing: ``"failed"``, the model's failure on the
-#: call.
+#: is ``"quota"`` too (``_send``). Any other 4xx is ``"rejected"`` (the provider rejected the
+#: request: ``Rejected``; a 408 or 425 once it outlasts its retries, ARC-22), and a
+#: transport that could not send at all (no SDK, no key) is ``"unsent"``; neither is the
+#: model's. Only a 5xx or a dropped connection that outlasted its retries is the exchange
+#: failing: ``"failed"``, the model's failure on the call.
 _WHY = {budget.DAILY_CAP: "quota", "http-401": "key", "http-402": "key", "http-404": "gone"}
 
 #: An error type a provider names in its error body (Anthropic: ``invalid_request_error``), kept
@@ -222,7 +222,7 @@ class BatchResults(dict):
     ``ran``, the ids this run ran (ARC-20). A finished batch run again has ``ran`` empty and
     the original stamps."""
 
-    def __init__(self, results: Mapping, *, finished: Mapping[str, str], ran) -> None:
+    def __init__(self, results: Mapping, *, finished: Mapping[str, str | None], ran) -> None:
         super().__init__(results)
         self.finished = {item_id: finished[item_id] for item_id in self if item_id in finished}
         self.ran = tuple(ran)
@@ -433,8 +433,10 @@ class _Outcome:
 
 class _MoveOn(Exception):
     """A candidate failed in a way the next candidate may not share. ``why`` is ``"quota"``,
-    ``"key"``, ``"gone"`` (``_WHY``) or ``"failed"``, the model's failure: what it means for
-    the call if no candidate answers (``_no_answer``)."""
+    ``"key"``, ``"gone"`` (``_WHY``), ``"rejected"`` (any other 4xx that is not a rate limit),
+    ``"unsent"`` (a transport that could not send at all) or ``"failed"`` (a 5xx or a dropped
+    connection after its retries, the model's failure): what it means for the call if no
+    candidate answers (``_no_answer``)."""
 
     def __init__(self, error: LLMError, *, whole_provider: bool, why: str = "failed") -> None:
         super().__init__(error.message)
@@ -540,8 +542,8 @@ class Door:
                 return self._send(candidate, payload, schema=schema, task=task, data=data,
                                   measurement=measurement, sent=sent)
             except _MoveOn as move:
-                if move.why == "quota":
-                    exhausted.append(move.error)
+                if move.why == "quota":                 # always a QuotaExhausted (_WHY)
+                    exhausted.append(cast(QuotaExhausted, move.error))
                     tried.append(("quota", move.error.message))
                 else:
                     tried.append((move.why, f"{candidate.id}: {move.error.message}"))
@@ -879,7 +881,7 @@ class Door:
                 return Completion(text=outcome.text, data=outcome.data,
                                   provider=candidate.provider, model=candidate.id,
                                   record=record, records=tuple(sent))
-            error = outcome.error
+            error = cast(LLMError, outcome.error)   # every scope but "ok" carries one
             if outcome.scope == "retry":
                 wait = self.retry.delay(attempt, outcome.retry_after)
                 if wait is not None:
@@ -890,7 +892,10 @@ class Door:
                 if outcome.status == "http-429":    # the rate limit outlasted the retries
                     raise _MoveOn(self._rate_limited(candidate, attempt, outcome),
                                   whole_provider=False, why="quota")
-                raise _MoveOn(error, whole_provider=False)
+                # A 408 or 425 that outlasted its retries is the provider's (ARC-22); a 5xx
+                # or a dropped connection is the exchange failing, the model's (ARC-19).
+                raise _MoveOn(error, whole_provider=False,
+                              why="rejected" if isinstance(error, Rejected) else "failed")
             if outcome.scope in ("candidate", "provider"):
                 raise _MoveOn(error, whole_provider=outcome.scope == "provider",
                               why=_why(outcome))
@@ -942,11 +947,11 @@ class Door:
         the id (C6c), a 401 or a 402 skips the provider (ARC-20). Armed before the outcome
         is written, so a failed write cannot disarm it (ARC-18 C6)."""
         if outcome.status == "paid":
-            _HALTED[self._run] = outcome.error.message
+            _HALTED[self._run] = cast(PaidResponse, outcome.error).message
         elif outcome.status == "http-404":
             self._dropped.add((candidate.provider, candidate.id))
         elif outcome.status in ("http-401", "http-402"):
-            self._rejected[candidate.provider] = outcome.error
+            self._rejected[candidate.provider] = cast(Rejected, outcome.error)   # see _read
 
     def _read(self, candidate: Candidate, raw: RawResponse | None, failure: LLMError | None,
               schema: Mapping, started: datetime) -> _Outcome:
@@ -957,6 +962,7 @@ class Door:
             return _Outcome("transport-error", "retry" if failure.retryable else "candidate",
                             error=failure)
 
+        raw = cast(RawResponse, raw)        # a send that raised nothing returned an answer
         status, body = raw.status, raw.body
         if 200 <= status < 300 and isinstance(body, Mapping) and "choices" not in body \
                 and isinstance(body.get("error"), Mapping):
@@ -982,9 +988,15 @@ class Door:
             return _Outcome(f"http-{status}", "provider", error=Rejected(
                 provider=candidate.provider, status=status, error_type=kind, reason=reason))
         retryable = status in _RETRYABLE or status >= 500
-        if 400 <= status < 500 and not retryable:       # rejected: no model was asked (ARC-19)
-            return _Outcome(f"http-{status}", "candidate", error=Rejected(
-                provider=candidate.provider, status=status, error_type=kind, reason=reason))
+        if 400 <= status < 500 and status != 429:
+            # The provider rejected the request: no model was asked (ARC-19). A 408 or 425 is
+            # retried first, and is the same stop once it outlasts its retries (ARC-22). A 429
+            # that is not the daily cap is a rate limit, which _send decides (ARC-20).
+            return _Outcome(f"http-{status}", "retry" if retryable else "candidate",
+                            error=Rejected(provider=candidate.provider, status=status,
+                                           error_type=kind, reason=reason,
+                                           transient=retryable),
+                            retry_after=retry_after)
         return _Outcome(f"http-{status}", "retry" if retryable else "candidate",
                         error=TransportError(said, status=status, retryable=retryable),
                         retry_after=retry_after)
@@ -1013,6 +1025,12 @@ class Door:
                                       + "; ".join(problems[:5]) + " (ARC-11)")
         except InvalidResponse as exc:
             return _Outcome("invalid", "call", error=exc, **spent)
+        except (RecursionError, TypeError, AttributeError, ValueError) as exc:
+            # A model's answer can be nested past the parser's depth or carry a part that is not
+            # text; it is an invalid answer like any other, never an escape past the ledger's
+            # outcome line (security review 0.7.0, SEC070-14).
+            return _Outcome("invalid", "call", error=InvalidResponse(
+                f"the answer could not be read ({type(exc).__name__})"), **spent)
         return _Outcome("ok", "ok", text=text, data=answer, **spent)
 
     # ------------------------------------------------------------------ budget and state
@@ -1057,7 +1075,7 @@ class Door:
                       "is not recorded, and its answer is discarded", ledger.provider,
                       type(exc).__name__)
             if outcome.status == "paid":
-                raise outcome.error from None
+                raise cast(PaidResponse, outcome.error) from None
             raise LedgerError(f"cannot write the {ledger.provider} ledger "
                               f"({type(exc).__name__}): a request was sent and its outcome "
                               f"cannot be recorded, so its answer is discarded (ARC-18)",
@@ -1093,11 +1111,11 @@ def _error_fields(body) -> tuple[str | None, str | None]:
 
 
 def _no_answer(tried: list[tuple[str, str]], exhausted: list[QuotaExhausted],
-               sent: list[CallRecord], rejected: list[Rejected] = ()) -> LLMError:
+               sent: list[CallRecord], rejected: Sequence[Rejected] = ()) -> LLMError:
     """What a call raises when no candidate answered it, from why each did not (ARC-19).
 
-    Only a model that is served, asked and failing (``"failed"``: a 400, a 5xx after its
-    retries, no connection) is the model's failure on the call: a ``TransportError``, which a
+    Only a model that is served, asked and failing (``"failed"``: a 5xx after its retries,
+    no connection) is the model's failure on the call: a ``TransportError``, which a
     batch scores as that item's abstention. Anything else in the walk makes the call a stop,
     which ``stops_batch`` says a batch stops on and never scores:
 
@@ -1110,8 +1128,9 @@ def _no_answer(tried: list[tuple[str, str]], exhausted: list[QuotaExhausted],
       * every candidate answered 404: no model is served, and the door refuses every later
         call the same way, so this one is refused too: ``Refused``;
       * a provider rejected the request with any other 4xx that is not a rate limit (a 400,
-        a 403), so no model was asked: ``Rejected``, naming the status and the provider's
-        error type; and a transport that could not send at all (no SDK, no key): ``Refused``.
+        a 403, a 408 or 425 that outlasted its retries, ARC-22), so no model was asked:
+        ``Rejected``, naming the status and the provider's error type; and a transport
+        that could not send at all (no SDK, no key): ``Refused``.
 
     ``records`` holds every request the call sent, whichever it raises.
     """
@@ -1127,13 +1146,17 @@ def _no_answer(tried: list[tuple[str, str]], exhausted: list[QuotaExhausted],
     if whys & {"key", "rejected", "unsent"} or "failed" not in whys:
         if rejected:
             first = rejected[0]
+            # The next run may answer only if every rejection was a status the door retries
+            # (a 408 or 425, ARC-22) and nothing else in the walk will recur.
+            transient = all(r.transient for r in rejected) and "unsent" not in whys
             if len(tried) == 1:
                 return Rejected(first.message, provider=first.provider, status=first.status,
                                 error_type=first.error_type, reason=first.reason,
-                                records=sent)
+                                records=sent, transient=transient)
             return Rejected(f"{first.line}. No allowlisted model could answer: {said}",
                             provider=first.provider, status=first.status,
-                            error_type=first.error_type, reason=first.reason, records=sent)
+                            error_type=first.error_type, reason=first.reason, records=sent,
+                            transient=transient)
         return Refused(f"no allowlisted model could answer: {said}", records=sent)
     return TransportError(f"no allowlisted model answered: {said}", retryable=False,
                           records=sent)

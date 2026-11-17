@@ -17,7 +17,7 @@ Each model accepted more wrong runs than Courant (exact one-sided McNemar; Claud
 
 ## At scale: Courant-10K (1,827 runs)
 
-Each draw run right, with a catalogue fault, and as the wrong problem, and judged by gate version 2 (development commits `36d277f` and `4976abc`). Two of its checks (the mesh's aspect ratio read from the mesh files, and the residual bar from the solver's declared tolerance) are not in release 0.5.0.
+Each draw run right, with a catalogue fault, and as the wrong problem, and judged by gate version 2 (development commits `36d277f` and `4976abc`), not by a release: these are gate version 2's verdicts. Two of its checks (the mesh's aspect ratio read from the mesh files, and the residual bar from the solver's declared tolerance) were not in release 0.5.0; both are on by default from 0.7.0.
 
 | With the task's specification | Result | Interval | Pre-registered bar |
 |---|---|---|---|
@@ -26,6 +26,10 @@ Each draw run right, with a catalogue fault, and as the wrong problem, and judge
 | Right runs left insufficient (≤ 5%) | 0 of 609 | 0.00–0.63% | supported |
 | Verifier exceptions (0) | 0 exceptions in 3654 verifications | — | supported |
 | Right runs rejected (≤ 2%) | 34 of 609 | 4.02–7.70% | refuted |
+
+| Without a specification | Result | Interval | Pre-registered bar |
+|---|---|---|---|
+| Faulted runs accepted, blind (≤ 1%) | 3 of 609 | 0.17–1.44% | refuted |
 
 The right runs rejected, by family and the gate's reason: `simpleFoam_pitzDaily` 30 (`bounds.turbulence`); `buoyantPimpleFoam_hotRoom` 4 (`cfl.max`).
 
@@ -37,7 +41,7 @@ The hidden split (210 tasks: `buoyantPimpleFoam_hotRoom` 30, `icoFoam_cavity` 30
 
 At the reveal the task list is published as JSONL and must hash to this value. Tasks whose reference answer the gate does not accept (feasibility) are excluded before scoring, and the excluded task ids are published with the reveal.
 
-## The Courant Test (31 runs, courant 0.7.0)
+## The Courant Test (31 runs, courant 0.7.1)
 
 Judged correctly 31 of 31; wrong results accepted 0 of 23; good results rejected 0 of 8.
 

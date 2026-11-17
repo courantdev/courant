@@ -180,10 +180,15 @@ def load_spec(path: str | Path) -> tuple[Spec, str]:
     path = Path(path)
     if not path.is_file():
         raise SpecError(f"no such specification: {path}")
-    raw = path.read_bytes()
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise SpecError(f"{path.name} could not be read: {exc.strerror or exc}") from exc
+    try:
+        data = json.loads(raw)          # bytes: JSON's own encoding detection (BOM, UTF-16)
+    except UnicodeDecodeError as exc:
+        raise SpecError(f"{path.name} is not text JSON can read: {exc}") from exc
+    except (ValueError, RecursionError) as exc:    # JSONDecodeError; an int past int()'s limit
         raise SpecError(f"{path.name} is not valid JSON: {exc}") from exc
     try:
         spec = Spec.model_validate(data)

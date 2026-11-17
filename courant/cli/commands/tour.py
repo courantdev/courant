@@ -2,8 +2,9 @@
 
 Offline, one core, read-only. Nothing is written outside a temporary folder unless
 `--keep DIR` is given. The runs are real OpenFOAM v2406 output, packaged in `courant/data/`:
-a healthy cavity, the same cavity with a timestep ten times too large, and pitzDaily run to a
-fixed 2,000-iteration budget with monitors.
+a healthy cavity, the same cavity with a timestep ten times too large, the cavity with its
+viscosity in the wrong units (checked by preflight), and pitzDaily run to a fixed
+2,000-iteration budget with monitors.
 
 It calls the same functions `courant verify` and `courant convergence` call. A demo with its
 own code path would be a demo of nothing.

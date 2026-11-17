@@ -194,6 +194,19 @@ class CaseConfig(BaseModel):
     #: `system/<region>/` dictionaries and `0/<region>/` are read in place of the top level's, and
     #: their keys carry `@<region>` by place (`region_pseudonym`: `U@region1`).
     regions: list[str] = Field(default_factory=list)
+    #: Each region's `constant/<region>/thermophysicalProperties`, as the viscosity check reads it
+    #: (`courant.case.viscosity`): `mu`, `molWeight`, `rho` (`rhoConst`) and the pressure `p`
+    #: (the region's `0/<region>/p` uniform internal field, else `pRef`), keyed by the region's
+    #: place (`region_pseudonym`: `region1`), each key set only when the file writes it. Read
+    #: under `--checks next` (`case.regions.whole`, T-MULTI-REGION-2, TRD VER-3e); {} otherwise.
+    region_thermo: dict[str, dict[str, float]] = Field(default_factory=dict)
+    #: Each region's `thermoType/equationOfState` (`perfectGas`, `rhoConst`), keyed by place.
+    region_equation_of_state: dict[str, str] = Field(default_factory=dict)
+    #: Each region's correctors as its solver reads them from `system/<region>/fvSolution`
+    #: (`n_non_orthogonal_correctors`, a fluid's `n_correctors`), keyed by place. The checks read
+    #: one value of each per case (`n_non_orthogonal_correctors`), which a multi-region case does
+    #: not have; `mesh.non_orthogonality` names these.
+    region_correctors: dict[str, dict[str, int]] = Field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict) -> "CaseConfig":
@@ -230,8 +243,10 @@ class CaseConfig(BaseModel):
     @classmethod
     def from_foam(cls, case_dir: str, *, buoyancy: bool = True, directives: bool = False,
                   steady_ddt: bool = False, zero_unlisted: bool = False,
-                  regions: bool = False,
-                  solver: str | None = None) -> "CaseConfig":  # pragma: no cover - needs a case
+                  regions: bool = False, regions_whole: bool = False,
+                  solver: str | None = None,
+                  merge_values: bool = False, compressed: bool = False,
+                  patches: bool = False) -> "CaseConfig":  # pragma: no cover - needs a case
         """Parse a real OpenFOAM case with foamlib (live path). `buoyancy=False` leaves out
         `constant/g`, and so the wall faces read from the mesh files (TRD VER-17), as the gate
         does under the default `--checks` (GATE-13). `directives=True` reads a dictionary whose
@@ -245,16 +260,28 @@ class CaseConfig(BaseModel):
         multi-region case as its solver does (`case.regions`, `--checks next`): `regions`, and
         each region's dictionaries in place of the top level's; `solver` is the solver the log
         names, which decides whether the case is multi-region (`_foam_reader.multi_region`;
-        without it, `controlDict`'s `application`)."""
+        without it, `controlDict`'s `application`). `regions_whole=True` reads the rest of
+        such a case as its solver does (`case.regions.whole`, `--checks next`, TRD VER-3e): each
+        region's thermophysical model and correctors, and the fields its solver must read.
+        `merge_values=True` notes a solver entry's `$name` merge written with a value as not read
+        (`case.merge_with_value`, `--checks next`, deck-oracle DO-2). `compressed=True` reads a
+        `0/` field file written compressed as OpenFOAM reads it, `T.gz` as the field `T`
+        (`case.zero_compressed`, `--checks next`, TRD VER-3f). `patches=True` keys `boundary` by
+        the mesh's patches as v2406 resolves `boundaryField` (`case.boundary_patches`, `--checks
+        next`, VER-3g)."""
         from courant.case._foam_reader import read_case_config
 
         return read_case_config(case_dir, buoyancy=buoyancy, directives=directives,
                                 steady_ddt=steady_ddt, zero_unlisted=zero_unlisted,
-                                regions=regions, solver=solver)
+                                regions=regions, regions_whole=regions_whole, solver=solver,
+                                merge_values=merge_values, compressed=compressed,
+                                patches=patches)
 
     def regions_read_whole(self) -> bool:
         """Whether every region's own dictionaries the reader reads (`system/<region>/fvSchemes`,
-        `fvSolution`, `0/<region>/`) were read: there are regions, and no path that names one is
+        `fvSolution`, `0/<region>/`, and under `case.regions.whole` `constant/<region>/
+        thermophysicalProperties` and the fields in `0/<region>/` its solver must read) were
+        read: there are regions, and no path that names one is
         `missing`, `unreadable` or holds a value not read as the solver read it
         (`unread_values`). What the verdict's multi-region sentence may claim (VER-3d)."""
         if not self.regions:
@@ -441,6 +468,15 @@ def region_pseudonym(regions, name: str) -> str:
     Evidence Bundle (T-MULTI-REGION; `phase_pseudonym`'s rule)."""
     listed = [str(r) for r in regions or ()]
     return f"region{listed.index(name) + 1}" if name in listed else "a region"
+
+
+def region_place(regions, tag: str) -> str:
+    """`tag` when it is the place of one of `regions` (`region_pseudonym`'s `region1` ...
+    `region<N>`), else "a region": how a finding writes a key of `region_thermo` or
+    `region_correctors`, which a view from anywhere (a sidecar, an MCP `case_json`) may key by a
+    region's own name (T-MULTI-REGION-2, the review, B1/M1)."""
+    places = {f"region{i}" for i in range(1, len(list(regions or ())) + 1)}
+    return tag if tag in places else "a region"
 
 
 def region_place_path(regions, path: str) -> str:

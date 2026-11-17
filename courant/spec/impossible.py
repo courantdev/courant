@@ -21,6 +21,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import PurePosixPath
+from typing import cast
 
 from courant.spec.model import Spec, SpecItem
 
@@ -179,7 +180,7 @@ def item_problems(item: SpecItem, *, thermo: bool = False) -> list[str]:
         out.append(f"{name}: dimensions {got} do not fit a {q.what} ({want})")
     if q.sign is not None:
         scalar = nums is not None and len(nums) == 1
-        lowest = nums[0] if scalar else None
+        lowest = cast(list[float], nums)[0] if scalar else None    # scalar: nums is a list
         if lowest is not None and (lowest < 0 or (q.sign == "positive" and lowest == 0)):
             out.append(f"{name}: a {q.what} of {lowest:g} is impossible "
                        f"({'above zero' if q.sign == 'positive' else 'zero or more'} required)")

@@ -41,14 +41,25 @@ def anthropic_workspace_id() -> str | None:
     return real_key(ANTHROPIC_WORKSPACE_ENV)
 
 
-def _parse_env_file(path: str) -> None:
-    """Set KEY=VALUE lines into the environment without overriding existing vars."""
+#: What a `.env` in the working directory may set: the credentials public/README.md documents
+#: there, and nothing else. The working directory is often a case an agent wrote, and its
+#: `.env` could otherwise set a proxy and CA file for the request that carries the user's key,
+#: move the request ledger, or switch on paid models (security review 0.7.0, SEC070-15).
+WORKING_DIR_DOTENV = frozenset({"OPENROUTER_API_KEY", "ANTHROPIC_API_KEY",
+                                ANTHROPIC_WORKSPACE_ENV})
+
+
+def _parse_env_file(path: str, only: frozenset[str] | None = None) -> None:
+    """Set KEY=VALUE lines into the environment without overriding existing vars; with `only`,
+    just those names."""
     with open(path) as fh:
         for line in fh:
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, val = line.split("=", 1)
+            if only is not None and key.strip() not in only:
+                continue
             os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
 
 
@@ -65,10 +76,11 @@ def load_dotenv(explicit: str | None = None) -> str | None:
         return None
 
     here = os.path.dirname(os.path.abspath(__file__))
-    for path in [explicit, os.path.join(here, "..", ".env"),
-                 os.path.join(os.getcwd(), ".env")]:
+    cwd = os.path.join(os.getcwd(), ".env")
+    for path in [explicit, os.path.join(here, "..", ".env"), cwd]:
         if path and os.path.exists(path):
-            _parse_env_file(path)
+            _parse_env_file(path, WORKING_DIR_DOTENV if path == cwd and path != explicit
+                            else None)
             return path
     return None
 

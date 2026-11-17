@@ -1,0 +1,31 @@
+{
+  "image": "opencfd/openfoam-default@sha256:dd5aa20630a55722663bf83ba0cb74870cba130081303e32e3865007fa2aa35a",
+  "build": "Build  : _be01ca78-20240625 OPENFOAM=2406 version=2406",
+  "runs": [
+    {
+      "name": "resolve",
+      "pre_commands": [
+        "blockMesh"
+      ],
+      "solver": "icoFoam",
+      "script": "source /usr/lib/openfoam/openfoam2406/etc/bashrc\nset -e\nmkdir -p /tmp/.OpenFOAM/2406\nprintf '%s\\n' 'InfoSwitches { allowSystemOperations 0; }' > /tmp/.OpenFOAM/2406/controlDict\nchmod a-w /tmp/.OpenFOAM/2406/controlDict /tmp/.OpenFOAM/2406 /tmp/.OpenFOAM\ngrep -qxF 'InfoSwitches { allowSystemOperations 0; }' /tmp/.OpenFOAM/2406/controlDict\ncd /case\n[ -d 0.orig ] && [ ! -d 0 ] && cp -r 0.orig 0 || true\nblockMesh > log.blockMesh 2>&1\nicoFoam 2>&1",
+      "logs": [
+        "log.blockMesh",
+        "log.icoFoam"
+      ]
+    },
+    {
+      "name": "calc_refused",
+      "pre_commands": [
+        "blockMesh"
+      ],
+      "solver": "icoFoam",
+      "script": "source /usr/lib/openfoam/openfoam2406/etc/bashrc\nset -e\nmkdir -p /tmp/.OpenFOAM/2406\nprintf '%s\\n' 'InfoSwitches { allowSystemOperations 0; }' > /tmp/.OpenFOAM/2406/controlDict\nchmod a-w /tmp/.OpenFOAM/2406/controlDict /tmp/.OpenFOAM/2406 /tmp/.OpenFOAM\ngrep -qxF 'InfoSwitches { allowSystemOperations 0; }' /tmp/.OpenFOAM/2406/controlDict\ncd /case\n[ -d 0.orig ] && [ ! -d 0 ] && cp -r 0.orig 0 || true\nblockMesh > log.blockMesh 2>&1\nicoFoam 2>&1",
+      "logs": [
+        "calc_refused/log.blockMesh"
+      ]
+    }
+  ],
+  "made_by": "scripts/sysops_probe.py",
+  "recorded": "2026-11-08"
+}

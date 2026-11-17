@@ -21,4 +21,7 @@ Releases are signed: every release carries `SHA256SUMS` and its Ed25519 signatur
   and the signature of `SHA256SUMS` against the pinned key when python3 with the `cryptography`
   package or OpenSSL 3 is available; it refuses on a mismatch. With neither, it installs after
   the checksum alone and says so, with the commands to check the signature by hand;
-  `COURANT_REQUIRE_SIGNATURE=1` makes it refuse instead.
+  `COURANT_REQUIRE_SIGNATURE=1` makes it refuse instead. It also refuses when the signed
+  `SHA256SUMS` does not list the binary. On a machine with neither `sha256sum` nor `shasum` it
+  cannot compare the binary's SHA-256 and refuses, unless `COURANT_SKIP_VERIFY=1` is set, which
+  installs the binary without that comparison.

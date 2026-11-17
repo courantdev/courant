@@ -12,6 +12,7 @@ import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import cast
 
 from courant.converge import sentences
 from courant.converge import steady as st
@@ -210,7 +211,9 @@ def _clock_at(series: Sequence[float | None], step: int) -> float | None:
     hi = next((j for j in range(i + 1, len(series)) if series[j] is not None), None)
     if lo is None or hi is None:
         return None
-    return series[lo] + (series[hi] - series[lo]) * (i - lo) / (hi - lo)
+    # lo and hi were chosen as indices whose entries are not None
+    a, b = cast(float, series[lo]), cast(float, series[hi])
+    return a + (b - a) * (i - lo) / (hi - lo)
 
 
 # ------------------------------------------------------------------ one monitor
@@ -350,14 +353,16 @@ def _steady(mon: _Mon, times, values, vector_mag, options: Options, budget: int)
                               "amplitude": osc.amplitude, "n_periods": osc.n_periods,
                               "fires": osc.fires, "reason": osc.reason}
     smooth = 1
+    # st.oscillation sets amplitude and n_periods together with lag, and fires only with a lag
+    amp, n_periods = cast(float, osc.amplitude), cast(int, osc.n_periods)
     if osc.tested and osc.lag is not None and osc.lag <= st.ITERATION_LAG_MAX:
         # CONV-6c: a period of two or three iterations is the steady iteration alternating,
         # not a flow that is unsteady. It is judged by half its amplitude, the distance from
         # the cycle mean to any sample, and values are read as means over one period.
-        tail = window[w - osc.n_periods * osc.lag:]
+        tail = window[w - n_periods * osc.lag:]
         cycle_mean = mean(tail)
-        half = osc.amplitude / 2.0
-        rel = osc.amplitude / sc.value if sc.value else None
+        half = amp / 2.0
+        rel = amp / sc.value if sc.value else None
         value = {"monitor": s.id, "lag": osc.lag, "acf": osc.acf, "amplitude": osc.amplitude,
                  "amplitude_rel": rel, "half_amplitude": half, "cycle_mean": cycle_mean}
         if half > limit:
@@ -373,9 +378,9 @@ def _steady(mon: _Mon, times, values, vector_mag, options: Options, budget: int)
                                     {"acf": st.ACF_THRESHOLD, "half_amplitude": limit}, value))
         smooth = osc.lag
     elif osc.fires:
-        tail = window[w - osc.n_periods * osc.lag:]
+        tail = window[w - n_periods * cast(int, osc.lag):]
         cycle_mean = mean(tail)
-        rel = osc.amplitude / sc.value if sc.value else None
+        rel = amp / sc.value if sc.value else None
         mon.verdict = "UNSTEADY_UNDER_STEADY_SOLVER"
         mon.findings.append(Finding(
             "CONV.UNSTEADY_STEADY", FAIL, s.id, METHOD_ACF,
@@ -472,8 +477,7 @@ def _transient(mon: _Mon, times, values, options: Options) -> None:
 
     def settled_tail(vs=values) -> bool:
         w = st.window_width(len(vs))
-        d = st.Drift(vs, w)
-        return not st.unsettled(d.drift(len(vs) - 1), st.DRIFT_FACTOR * _limit(tol, sc.value))
+        return not st.unsettled(st.end_drift(vs, w), st.DRIFT_FACTOR * _limit(tol, sc.value))
 
     res = tr.assess_prefix(values, limit_abs, tol.value, sc.value, settled_tail)
     ms = res.mser
@@ -501,10 +505,13 @@ def _transient(mon: _Mon, times, values, options: Options) -> None:
                 {"monitor": s.id, "stage": res.stage, "n": n},
                 sentences.INSUFFICIENT_DATA.format(monitor=s.id, detail=detail)))
         return
-    bt, sty = res.batches, res.stationarity
+    # Every verdict left here (CONVERGED, NOT_STATIONARY, CI_TOO_WIDE) comes after accepted
+    # batches and a stationarity test, so both are set and the batch statistics are floats.
+    bt, sty = cast(tr.Batches, res.batches), cast(tr.Stationarity, res.stationarity)
+    bt_mean, bt_half = cast(float, bt.mean), cast(float, bt.half_width)
     mon.row["transient"].update({
         "batch_size": bt.size, "batch_count": bt.count, "rho1": bt.rho1, "mean": bt.mean,
-        "half_width": bt.half_width, "half_width_rel": bt.half_width / sc.value if sc.value else None,
+        "half_width": bt.half_width, "half_width_rel": bt_half / sc.value if sc.value else None,
         "ess": bt.ess, "skew": bt.skew, "se": bt.se,
         "geweke_z": sty.geweke_z, "vn_z": sty.vn_z})
     stat_value = {"monitor": s.id, "geweke_z": sty.geweke_z, "vn_z": sty.vn_z, "n_a": sty.n_a,
@@ -564,11 +571,11 @@ def _transient(mon: _Mon, times, values, options: Options) -> None:
                                     {"rounds": tr.SEARCH_ROUNDS},
                                     {"monitor": s.id, "rounds_used": search.non_monotone_rounds}))
     prefix = tr.assess_prefix(values[:search.index + 1], limit_abs, tol.value, sc.value)
-    at_stop = prefix.batches.mean if prefix.batches and prefix.batches.mean is not None else bt.mean
+    at_stop = prefix.batches.mean if prefix.batches and prefix.batches.mean is not None else bt_mean
     mon.verdict = "CONVERGED"
     mon.row["stop_index"] = search.index
     mon.stop_step = mon.steps[search.index]
-    _delta(mon, tol, sc.value, at_stop, bt.mean)
+    _delta(mon, tol, sc.value, at_stop, bt_mean)
 
 
 # ------------------------------------------------------------------ the module
@@ -683,7 +690,8 @@ def assess(monitors: Sequence[MonitorSeries], residuals: Mapping[str, Sequence[f
     waste = None
     if status in (PASS, WARN) and all_stopped and binding and not meta.ended_by:
         bmon = next(m for m in counting if m.series.id == binding)
-        waste = _waste(bmon, converged_at, clock, meta, options, findings)
+        # binding is set, so converged_at is stops[binding], an int
+        waste = _waste(bmon, cast(int, converged_at), clock, meta, options, findings)
     if meta.ended_by:
         # "unknown": no exit code was given and the log stops before End with no crash in it
         # (VER-5.16). The run may still be going, so nothing after its stopping point is waste.
@@ -740,7 +748,8 @@ def sum_int(values) -> int:
 
 def _waste(bmon: _Mon, stop_step: int, clock: Clock, meta: RunMeta, options: Options,
            findings: list) -> dict:
-    first, final = bmon.first_step, bmon.final_step
+    # bmon has a stop_step, which _converged took from its non-empty steps, so both are set
+    first, final = cast(int, bmon.first_step), cast(int, bmon.final_step)
     wasted_steps = final - stop_step
     span = final - first
     wall = cpu = None
@@ -768,11 +777,13 @@ def _waste(bmon: _Mon, stop_step: int, clock: Clock, meta: RunMeta, options: Opt
     if not meta.ranks:
         missing.append("the core count is not known")
     if not missing:
-        waste["wasted_core_hours"] = meta.ranks * wall / 3600.0
+        # nothing missing: wall is not None and meta.ranks is a positive int
+        ranks, wall_s = cast(int, meta.ranks), cast(float, wall)
+        waste["wasted_core_hours"] = ranks * wall_s / 3600.0
         if options.cost_per_core_hour is not None:
             waste["wasted_cost"] = waste["wasted_core_hours"] * options.cost_per_core_hour
         if options.ccf_ghz is not None:
-            waste["wasted_auh"] = meta.ranks * wall * options.ccf_ghz / 3600.0
+            waste["wasted_auh"] = ranks * wall_s * options.ccf_ghz / 3600.0
             findings.append(Finding("CONV.ALLOCATION", "INFO", None,
                                     "FIA 2026 Sporting Regulations Section F Art. F4.4.4 (iss. 06, 27 Feb 2026)",
                                     {}, {"ncu": meta.ranks, "nss": wall, "ccf_ghz": options.ccf_ghz,

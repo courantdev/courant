@@ -339,11 +339,11 @@ def test_a_multi_region_case_is_not_refused_for_a_source_its_solver_does_not_rea
     `system/<region>/fvOptions`, ...) and never the case's own: `chtMultiRegionSimpleFoam`
     builds its fvOptions, MRF and radiation per region. A case-level file was taken as a source
     and the whole heat balance was not judged."""
-    from tests.unit.test_energy_balance import JUDGED
+    from tests.unit.test_energy_balance import JUDGED, OPEN
 
     case = _cht(tmp_path)
     (case / rel).write_text("FoamFile { class dictionary; object x; }\nheater { type x; }\n")
-    assert _measured(case) == JUDGED["cht_plate"]
+    assert _measured(case) == JUDGED["cht_plate"] | OPEN["cht_plate"]
     # a region's own file is where the solver looks: still refused
     (case / rel).unlink()
     top, name = rel.split("/", 1)
@@ -352,12 +352,12 @@ def test_a_multi_region_case_is_not_refused_for_a_source_its_solver_does_not_rea
 
 
 def test_a_multi_region_case_is_not_refused_for_the_cases_radiation_file(tmp_path):
-    from tests.unit.test_energy_balance import JUDGED
+    from tests.unit.test_energy_balance import JUDGED, OPEN
 
     case = _cht(tmp_path)
     (case / "constant" / "radiationProperties").write_text(
         "FoamFile { class dictionary; object radiationProperties; }\nradiationModel P1;\n")
-    assert _measured(case) == JUDGED["cht_plate"]
+    assert _measured(case) == JUDGED["cht_plate"] | OPEN["cht_plate"]
 
 
 def test_every_behaviour_the_code_asks_for_is_named_once_in_next():

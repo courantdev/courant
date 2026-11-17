@@ -82,18 +82,31 @@ def sign_bytes(data: bytes, *, key_path: str | Path | None = None,
     return sign_with(load_private(key_path, env), data)
 
 
-def verify_bytes(data: bytes, signature_hex: str, public_key: str | Path) -> bool:
-    """Whether `signature_hex` signs `data` under the published public key."""
+def public_bytes_hex(public_key: str) -> bytes:
+    """A public key given as 32 bytes of hex, and only that: never a path. A pinned key read as a
+    path let a file in the working directory, named after the key, supply a different key
+    (security review 0.7.0, SEC070-1)."""
+    try:
+        raw = bytes.fromhex(str(public_key).strip())
+    except ValueError as exc:
+        raise SignatureError("a public key is 32 bytes, hex") from exc
+    if len(raw) != 32:
+        raise SignatureError("a public key is 32 bytes, hex")
+    return raw
+
+
+def verify_bytes(data: bytes, signature_hex: str, public_key: str) -> bool:
+    """Whether `signature_hex` signs `data` under the public key, given as hex (never a path)."""
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
     try:
-        Ed25519PublicKey.from_public_bytes(public_bytes(public_key)).verify(
+        Ed25519PublicKey.from_public_bytes(public_bytes_hex(public_key)).verify(
             bytes.fromhex(signature_hex), data)
     except (InvalidSignature, ValueError, SignatureError):
         return False
     return True
 
 
-__all__ = ["SignatureError", "load_private", "public_bytes", "public_key_hex",
+__all__ = ["SignatureError", "load_private", "public_bytes", "public_bytes_hex", "public_key_hex",
            "repository_root", "sign_bytes", "sign_with", "verify_bytes"]

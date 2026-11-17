@@ -11,7 +11,33 @@ Each takes either major (GATE-3, ARC-16) and writes in that verdict's own words:
 
 from __future__ import annotations
 
+import re
+
 from courant.verify.verdict2 import AnyVerdict, VerdictV2
+
+# C0 controls but newline and tab, DEL and C1: a run's producer chooses its name, and a terminal
+# acts on these (security review 0.7.0, SEC070-6).
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def _shown(text: str) -> str:
+    """`text` with every control character but newline and tab written as `\\xNN`."""
+    return _CONTROL.sub(lambda m: f"\\x{ord(m.group()):02x}", text)
+
+
+def _md_name(text: str) -> str:
+    """A name the run's producer chose (its id, a file it holds), as inert Markdown: one line,
+    no control character, no HTML, no code-span or table break (SEC070-6)."""
+    text = _shown(str(text)).replace("\r", "\\r").replace("\n", "\\n").replace("\t", " ")
+    return (text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace("`", "'").replace("|", "\\|"))
+
+
+def _one_line(text: str) -> str:
+    """`text` as one line of a report: its line breaks shown, so a value read from the run cannot
+    write a report line of its own (SEC070-6)."""
+    return str(text).replace("\r", "\\r").replace("\n", "\\n")
+
 
 _WHY_HEAD = {"TRUSTWORTHY": "Notes", "NOT_TRUSTWORTHY": "Why", "NOT_ASSESSABLE": "Why",
              "accept": "Notes", "reject": "Why", "insufficient": "Why"}
@@ -44,7 +70,8 @@ def render_text(v: AnyVerdict) -> str:
     if _basis(v):
         out.append(f"BASIS     {_basis(v)}")
     out.append(f"GRADE     {v.grade or '—'}")
-    out.append(f"RUN       {v.run.id}" + (f" · {v.run.solver}" if v.run.solver else ""))
+    out.append(f"RUN       {_one_line(v.run.id)}"
+               + (f" · {_one_line(v.run.solver)}" if v.run.solver else ""))
     if v.reasons:
         out += ["", _WHY_HEAD[v.verdict].upper()]
         for i, r in enumerate(v.reasons, 1):
@@ -58,10 +85,10 @@ def render_text(v: AnyVerdict) -> str:
     out += _conformance_text(v)
     if v.not_assessed:
         out += ["", "NOT CHECKED"]
-        out += [f"  - {s}" for s in v.not_assessed]
+        out += [f"  - {_one_line(s)}" for s in v.not_assessed]
     if v.next_action:
-        out += ["", f"NEXT  {v.next_action}"]
-    return "\n".join(out) + "\n"
+        out += ["", f"NEXT  {_one_line(v.next_action)}"]
+    return _shown("\n".join(out)) + "\n"
 
 
 def _conformance_text(v: AnyVerdict) -> list[str]:
@@ -103,19 +130,19 @@ def _convergence_text(v: AnyVerdict) -> list[str]:
     out = ["", head]
     if c.wasted_steps is not None:
         out.append(f"  {_share(c)}")
-    out += [f"  {m}" for m in c.messages]
+    out += [f"  {_one_line(m)}" for m in c.messages]
     out.append("  Reported beside the verdict, not in it (VER-5.4b is off). "
                "Details: courant convergence <case>.")
     return out
 
 
 def render_markdown(v: AnyVerdict) -> str:
-    out = [f"# Verification: {v.run.id}", ""]
+    out = [f"# Verification: {_md_name(v.run.id)}", ""]
     out.append(f"**Verdict:** `{v.verdict}` (rule {v.rule})  ")
     if _basis(v):
         out.append(f"**Basis:** `{_basis(v)}`  ")
     out.append(f"**Grade:** {v.grade or '—'}  ")
-    out.append(f"**Solver:** {v.run.solver or '—'}  ")
+    out.append(f"**Solver:** {_md_name(v.run.solver) if v.run.solver else '—'}  ")
     out.append(f"**Verifier:** {v.tool.name} {v.tool.version}, schema `{v.schema_}`")
     out += ["", f"## {_WHY_HEAD[v.verdict]}", ""]
     if not v.reasons:
@@ -134,10 +161,10 @@ def render_markdown(v: AnyVerdict) -> str:
         out += ["", "## Convergence", "", f"**Status:** {c.status} · regime: {c.regime or '—'}  "]
         if c.converged_at_step is not None:
             out.append(f"**Stopping point:** step {c.converged_at_step:,}, binding monitor "
-                       f"`{c.binding_monitor}`  ")
+                       f"`{_md_name(c.binding_monitor)}`  ")
         if c.wasted_steps is not None:
             out.append(f"**After it:** {_share(c)}  ")
-        out += [f"- {m}" for m in c.messages]
+        out += [f"- {_one_line(m)}" for m in c.messages]
         out.append("")
         out.append("Reported beside the verdict, not in it: policy rule VER-5.4b is off.")
     k = v.conformance
@@ -159,15 +186,15 @@ def render_markdown(v: AnyVerdict) -> str:
                        f"| {i.tolerance} | `{_cell(i.file)}` {_cell(i.location)}"
                        + (f" ({_cell(i.basis)})" if i.basis else "") + f" | {result} |")
     out += ["", "## Not checked", ""]
-    out += [f"- {s}" for s in v.not_assessed] or ["- Nothing."]
+    out += [f"- {_one_line(s)}" for s in v.not_assessed] or ["- Nothing."]
     if v.next_action:
-        out += ["", "## Next action", "", v.next_action]
+        out += ["", "## Next action", "", _one_line(v.next_action)]
     out += ["", "## Inputs", "", "| File | Bytes | SHA-256 |", "|---|---|---|"]
-    out += [f"| `{f.path}` | {f.bytes} | `{f.sha256}` |" for f in v.run.inputs]
+    out += [f"| `{_md_name(f.path)}` | {f.bytes} | `{f.sha256}` |" for f in v.run.inputs]
     s = v.stats
     out += ["", f"Parsed {s.events} events, {s.residual_steps} residual steps, "
                 f"{s.crashes} crash events, {s.divergences} divergence events."]
-    return "\n".join(out) + "\n"
+    return _shown("\n".join(out)) + "\n"
 
 
 def _cell(text: str) -> str:

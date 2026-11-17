@@ -43,6 +43,7 @@ import itertools
 import math
 import re
 from dataclasses import dataclass
+from typing import Any
 
 #: J/(kmol K), as OpenFOAM's `specie` uses it with `molWeight` in kg/kmol.
 R_UNIVERSAL = 8314.462618
@@ -121,7 +122,7 @@ def _ok(*xs) -> bool:
 
 def _fluid(config, t_cold: float, t_hot: float, g: float) -> tuple[float, float, float] | None:
     """(g', nu, alpha) from what the solver read, or None."""
-    tp = config.transport or {}
+    tp: Any = config.transport or {}      # dict[str, float]; `_ok` below proves each a number
     pr = tp.get("Pr")
     if not _ok(pr):
         return None
@@ -219,7 +220,7 @@ def _upper_rayleigh(config, mesh, down, g: float, t_cold: float, t_hot: float) -
     (the densest gas, so the least ``nu``), ``alpha = nu / Pr``. inf when any of it cannot be
     read."""
     extent = _heights(mesh.bounding_box, down)
-    tp = config.transport or {}
+    tp: Any = config.transport or {}      # dict[str, float]; `_ok` below proves each a number
     pr = tp.get("Pr")
     if extent is None or not _ok(pr):
         return math.inf

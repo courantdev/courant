@@ -45,7 +45,8 @@ a request the provider rejected is never scored as the model's answer (TRD ARC-1
 
 `courant verify` (including `--batch`, `--pack`, `--check-pack`, `--record`, `--about`),
 `courant gate`, `courant spec init`, `hash`, `check`, `confirm` and `lock`, `courant
-convergence`, `courant preflight`, `courant audit`, `courant watch`, `courant test build`,
+convergence`, `courant preflight`, `courant audit`, `courant precheck` (and `--check`;
+it writes the archive for you to send yourself), `courant watch`, `courant test build`,
 `courant test run` with the `courant` or `constant:` judges, `courant demo`, `courant mcp` and
 `courant-mcp` (the server talks to its client over stdin and stdout only), `courant doctor`
 (and `--bundle`, which writes a file for you to send yourself), and `courant version`.

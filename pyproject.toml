@@ -139,6 +139,9 @@ include = [
 testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
+# Unset, pytest-asyncio 1.4.1.post1 warns at every start (no test has an async fixture, so the
+# scope changes nothing here).
+asyncio_default_fixture_loop_scope = "function"
 markers = [
     # Real OpenFOAM in Docker: a live solve takes ~100s, against ~30s for the
     # whole rest of the suite. Skipped automatically without a daemon; deselect

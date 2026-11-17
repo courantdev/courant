@@ -15,14 +15,14 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, ClassVar, Protocol, cast
 
 import numpy as np
 
 from courant.case.config import CaseConfig
 from courant.events import Event, EventKind
 from courant.events.diverged import divergences
-from courant.verification.fields import FieldData
+from courant.verification.bounding import is_excursion
 from courant.verification.convergence import (
     RESIDUAL_LOOSE,
     RESIDUAL_TARGET,
@@ -32,7 +32,13 @@ from courant.verification.convergence import (
     stall_sentence,
     worst_final_residual,
 )
+from courant.verification.fields import FieldData
 from courant.verification.grade import VerificationResult, VSeverity
+
+if TYPE_CHECKING:
+    from courant.events import CrashPayload, DivergencePayload, ResidualPayload
+    from courant.verification.convergence import ResidualJudgement
+    from courant.verification.fields import FluxSource
 
 OK, MINOR, MAJOR, CRIT = (VSeverity.OK, VSeverity.MINOR, VSeverity.MAJOR,
                           VSeverity.CRITICAL)
@@ -90,9 +96,11 @@ class StabilityCheck:
     def run(self, ctx: VerifyContext) -> VerificationResult:
         nan = divergences(ctx.events)
         if nan:
+            # a DIVERGENCE event; `Event` validates that its payload's kind is its own
+            first = cast("DivergencePayload", nan[0].payload)
             return _result(self.code, self.name, CRIT, False,
-                           detail=f"residual reached NaN/Inf on {nan[0].payload.field}",
-                           evidence={"field": nan[0].payload.field})
+                           detail=f"residual reached NaN/Inf on {first.field}",
+                           evidence={"field": first.field})
         return _result(self.code, self.name, OK, True, detail="no NaN/Inf residuals")
 
 
@@ -103,7 +111,8 @@ class CrashCheck:
         crashes = ctx.of(EventKind.CRASH)
         if crashes:
             return _result(self.code, self.name, CRIT, False,
-                           detail=f"solver crashed (tag={crashes[0].payload.tag})")
+                           detail=f"solver crashed "
+                                  f"(tag={cast('CrashPayload', crashes[0].payload).tag})")
         return _result(self.code, self.name, OK, True, detail="clean exit")
 
 
@@ -175,8 +184,9 @@ class ConvergenceCheck:
         # `residual.not_converged` already shared one threshold (OK here exactly when no
         # finding there); asking one function keeps that true per field. MAJOR stays where it
         # was, above LOOSE, because no declared tolerance moves a bar past LOOSE.
-        judged = judge_residuals(ctx.events, ctx.config, ctx.checks,
-                                 exclude=ctx.zero_components)
+        # Not None: `worst` above is read from the same last step with a finite residual.
+        judged = cast("ResidualJudgement", judge_residuals(ctx.events, ctx.config, ctx.checks,
+                                                          exclude=ctx.zero_components))
         # The judgement's own worst: the solve each field is read at is decided there (the
         # first, under VER-16a). Under the default it is `worst_final_residual`'s number.
         worst = judged.worst
@@ -233,9 +243,10 @@ class ContinuityCheck:
 
     def run(self, ctx: VerifyContext) -> VerificationResult:
         last = ctx.last_residual()
-        if last is None or last.payload.continuity is None:
+        payload = cast("ResidualPayload | None", last.payload if last is not None else None)
+        if payload is None or payload.continuity is None:
             return _skip(self.code, self.name, "no continuity data")
-        cum = last.payload.continuity.cumulative
+        cum = payload.continuity.cumulative
         if cum is None:
             return _skip(self.code, self.name, "no cumulative continuity error")
         mag = abs(cum)
@@ -251,7 +262,7 @@ class ContinuityCheck:
 
 class TurbulenceBoundsCheck:
     code, name = "bounds.turbulence", "Turbulence quantities not over-clipped"
-    TURB = {"k", "epsilon", "omega", "nut"}
+    TURB: ClassVar[set[str]] = {"k", "epsilon", "omega", "nut"}
     MANY = 10
 
     def run(self, ctx: VerifyContext) -> VerificationResult:
@@ -406,7 +417,8 @@ class MassFluxCheck:
             return _skip(self.code, self.name, why)
         src = f.flux_source
         evidence = {"input": f"{src.file} (boundary face fluxes)"} if src is not None else {}
-        unit = {"mass": " kg/s", "volume": " m^3/s"}.get(getattr(src, "kind", None), "")
+        unit = cast("dict[str | None, str]", {"mass": " kg/s", "volume": " m^3/s"}).get(
+            getattr(src, "kind", None), "")
         net = sum(f.patch_fluxes.values())
         if src is not None:
             inflow, outflow, largest = src.inflow, src.outflow, src.largest
@@ -419,7 +431,9 @@ class MassFluxCheck:
                            detail="the boundary flux is not finite (nan or inf in phi)")
         if not math.isfinite(largest):          # an interior face's: it is the round-off scale
             return _result(self.code, self.name, MAJOR, False, evidence=evidence,
-                           detail=f"an interior face flux in {src.file} is not finite "
+                           # `largest` is 0.0 when `src` is None
+                           detail=f"an interior face flux in {cast('FluxSource', src).file} "
+                                  f"is not finite "
                                   f"(nan or inf)")
         # Closed only when both directions are round-off; otherwise the denominator is the
         # inflow, or the outflow when no real flux comes in (a wall's round-off is not inflow).
@@ -483,7 +497,8 @@ class RegimeCheck:
             return _skip(self.code, self.name, REYNOLDS_NOT_IMPLEMENTED)
         if None in (f.inlet_speed, f.nu) or f.nu == 0:
             return _skip(self.code, self.name, "insufficient data for Reynolds number")
-        re = f.inlet_speed * f.length_scale / f.nu
+        # neither is None: skipped above
+        re = cast(float, f.inlet_speed) * f.length_scale / cast(float, f.nu)
         laminar = ctx.config is not None and ctx.config.is_laminar(ctx.checks)
         if laminar and re > self.RE_TURBULENT:
             return _result(self.code, self.name, MAJOR, False, value=re,
@@ -494,6 +509,20 @@ class RegimeCheck:
                            detail=f"turbulence model at low Re={re:.0f}")
         return _result(self.code, self.name, OK, True, value=re,
                        detail=f"Re={re:.0f} consistent with modeling")
+
+
+def _negative_beyond_roundoff(arr: np.ndarray) -> bool:
+    """Whether a finite field's minimum is below zero by more than round-off: `bounding.
+    is_excursion`'s question (`ROUNDOFF`, the one definition), asked against the field's own range,
+    its largest value less its smallest non-negative one. Not against max |value| (the verdict-path
+    audit's review): a temperature in kelvin, 300 to 350, with one cell at -0.2 has a max |value| of
+    350, whose round-off (0.35) would pass an undershoot of 300 K; its range, 50, does not. A
+    passive scalar of 0 to 1 at -1e-6 is within round-off of its range of 1."""
+    from types import SimpleNamespace
+
+    above = arr[arr >= 0]
+    scale = float(np.max(above) - np.min(above)) if above.size else 0.0
+    return is_excursion(SimpleNamespace(minimum=float(np.min(arr)), maximum=scale, average=None))
 
 
 class PlausibilityCheck:
@@ -513,9 +542,18 @@ class PlausibilityCheck:
                 return _result(self.code, self.name, MAJOR, False,
                                detail=f"non-finite {name} ({bad} of {arr.size} values "
                                       f"nan or inf)")
+        # VPA-CHK-2, behind `--checks next` (`checks.BOUNDS_ROUNDOFF`): a minimum below zero by
+        # no more than round-off of the field's own range is not a negative field,
+        # judged by the one definition of round-off (`bounding.is_excursion`, `ROUNDOFF`). A
+        # passive scalar of 0 to 1 at -1e-6 is not a negative temperature; -0.5 still is.
+        from courant.verify import checks
+
+        roundoff = checks.enabled(checks.BOUNDS_ROUNDOFF, ctx.checks)
         for name in ("k", "epsilon", "omega", "T"):
             arr = f.internal.get(name)
             if arr is not None and np.size(arr) and np.min(np.asarray(arr)) < 0:
+                if roundoff and not _negative_beyond_roundoff(np.asarray(arr, dtype=float)):
+                    continue
                 return _result(self.code, self.name, MAJOR, False,
                                value=float(np.min(arr)),
                                detail=f"negative {name} (min {float(np.min(arr)):.2e})")
@@ -545,6 +583,12 @@ class PlausibilityCheck:
             return _skip(self.code, self.name,
                          "no boundable scalar fields; velocity scale needs a "
                          "boundary reference Courant does not read yet")
+        held = [n for n in checked if roundoff and np.min(np.asarray(f.internal[n])) < 0]
+        if held:
+            return _result(self.code, self.name, OK, True,
+                           detail=f"{', '.join(checked)} non-negative "
+                                  f"({', '.join(held)} to round-off of its scale; velocity "
+                                  f"scale not checked — needs a boundary reference)")
         return _result(self.code, self.name, OK, True,
                        detail=f"{', '.join(checked)} non-negative "
                               f"(velocity scale not checked — needs a boundary "

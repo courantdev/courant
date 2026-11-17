@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
+from typing import cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -19,7 +21,7 @@ from courant.case.config import CaseConfig
 from courant.case.mesh import MeshQuality
 from courant.diagnosis.findings import Finding, FindingSet
 from courant.diagnosis.kb import KBMatch, KnowledgeBase
-from courant.events import Event, EventKind
+from courant.events import Event, EventKind, ResidualPayload
 
 MAX_EVENT_WINDOW = 30
 MAX_RESIDUAL_POINTS = 40
@@ -69,7 +71,7 @@ class EvidenceBundle(BaseModel):
         return len(self.to_llm_json()) // 4
 
 
-def _downsample(values: list[float], max_points: int) -> list[int]:
+def _downsample(values: Sequence[float], max_points: int) -> list[int]:
     """Indices of an evenly-strided sample that always includes first and last."""
     n = len(values)
     if n <= max_points:
@@ -83,20 +85,22 @@ def _extract_residual_series(events: list[Event]) -> tuple[dict[str, list[float]
     residual_events = [e for e in events if e.kind is EventKind.RESIDUAL]
     if not residual_events:
         return {}, []
+    # Event's validator ties kind to payload type, so a RESIDUAL event carries a ResidualPayload.
+    payloads = [cast(ResidualPayload, e.payload) for e in residual_events]
     # x-axis: iteration index (fallback to running count)
     xs_full = [
-        (e.payload.iteration if e.payload.iteration is not None else i)
-        for i, e in enumerate(residual_events)
+        (p.iteration if p.iteration is not None else i)
+        for i, p in enumerate(payloads)
     ]
     idx = _downsample(xs_full, MAX_RESIDUAL_POINTS)
     fields: dict[str, list[float]] = {}
     for i in idx:
-        for name, val in residual_events[i].payload.initial_residuals.items():
+        for name, val in payloads[i].initial_residuals.items():
             fields.setdefault(name, [])
     # fill aligned series (NaN-safe: use None where missing -> filtered to float where present)
     series: dict[str, list[float]] = {name: [] for name in fields}
     for i in idx:
-        res = residual_events[i].payload.initial_residuals
+        res = payloads[i].initial_residuals
         for name in series:
             v = res.get(name)
             series[name].append(float(v) if v is not None else float("nan"))
@@ -156,16 +160,18 @@ def assemble_bundle(
                           checks=checks)
 
     from courant.diagnosis.redact import (
+        log_window_of,
         place_bundle_regions,
         redact_log_lines,
-        redact_log_window,
         region_places,
     )
 
+    # the log is filtered once; the window is `redact_log_window` of the same lines (perf-070)
+    log_lines = redact_log_lines(log_text)
     bundle = EvidenceBundle(
         run_id=run_id,
-        log_lines=redact_log_lines(log_text),
-        log_window=redact_log_window(log_text),
+        log_lines=log_lines,
+        log_window=log_window_of(log_lines),
         case_summary=CaseSummary(
             solver=config.solver if config else None,
             cell_count=cell_count or (mesh.n_cells if mesh else None),

@@ -98,6 +98,16 @@ class TestHealthyRun:
         assert first.initial_residuals["p"] == 0.156
         assert first.final_residuals["Ux"] == 8.9e-06
         assert first.solver_iterations["p"] == 12
+
+    def test_an_iteration_count_no_label_holds_is_not_recorded(self):
+        """The invariants test (inv6, mutant `log+huge`): a 5,000-digit `No Iterations` ended the
+        read in `int()`'s digit limit. The residuals are still read; the count is not."""
+        text = HEALTHY_SIMPLEFOAM.replace("No Iterations 12", "No Iterations " + "9" * 5000, 1)
+        assert text != HEALTHY_SIMPLEFOAM
+        first = _by_kind(LogParser("r").parse_text(text, return_code=0),
+                         EventKind.RESIDUAL)[0].payload
+        assert first.initial_residuals["p"] == 0.156
+        assert "p" not in first.solver_iterations
         assert first.continuity.sum_local == 1.2e-08
         assert first.continuity.global_ == -3.4e-19
         assert first.exec_time == 0.34

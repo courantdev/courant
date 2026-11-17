@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import cast
 
 from courant.case.regime import R_UNIVERSAL
 
@@ -53,9 +54,12 @@ class Viscosity:
     basis: str = ""
     #: The phase whose `nu` this is (`CaseConfig.phase_nu`), or None for the case's own.
     phase: str | None = None
-    #: How a finding names that phase (`config.phase_pseudonym`): the name is the case
-    #: author's and stays local.
+    #: How a finding names that phase (`config.phase_pseudonym`), or that region: the name is
+    #: the case author's and stays local.
     alias: str | None = None
+    #: The region of a multi-region case whose `mu` this is, by its place (`region1`;
+    #: `CaseConfig.region_thermo`), or None for the case's own (TRD VER-3e).
+    region: str | None = None
 
     @property
     def out_of_range(self) -> bool:
@@ -69,15 +73,16 @@ def _positive(*xs) -> bool:
         return False
 
 
-def _density(config) -> tuple[float, float, str]:
-    """(least, greatest, how) density of the fluid, kg/m^3."""
-    tp = config.transport or {}
-    eos = config.equation_of_state
-    if eos == "perfectGas" and _positive(tp.get("molWeight"), config.pressure):
-        temps = config.fixed_temperature_range
+def _density(tp: dict, eos: str | None, pressure: float | None,
+             temps: tuple[float, float] | None) -> tuple[float, float, str]:
+    """(least, greatest, how) density of the fluid, kg/m^3, from its transport and
+    equation-of-state values `tp`, its equation of state, its absolute pressure and the
+    temperatures its walls are held at (None: not read). One rule for the case's own fluid and
+    each region's (TRD PRE-6, VER-3e)."""
+    if eos == "perfectGas" and _positive(tp.get("molWeight"), pressure):
         held = temps is not None and _positive(*temps)
-        t_lo, t_hi = temps if held else T_RANGE
-        p, mw = config.pressure, tp["molWeight"]
+        t_lo, t_hi = cast("tuple[float, float]", temps) if held else T_RANGE  # held: not None
+        p, mw = pressure, tp["molWeight"]
         how = (f"density from perfectGas at p = {p:g} Pa, T {t_lo:g} to {t_hi:g} K"
                + ("" if held else " (no wall temperature read)"))
         return p * mw / (R_UNIVERSAL * t_hi), p * mw / (R_UNIVERSAL * t_lo), how
@@ -104,7 +109,8 @@ def viscosities(config, checks: str = "default") -> tuple[Viscosity, ...]:
         return tuple(out)
     mu = tp.get("mu")
     if nu is None and mu is not None:
-        rho_lo, rho_hi, how = _density(config)
+        rho_lo, rho_hi, how = _density(tp, config.equation_of_state, config.pressure,
+                                       config.fixed_temperature_range)
         out.append(Viscosity(mu / rho_hi, mu / rho_lo, "mu", mu=mu, basis=how))
     from courant.case.config import phase_pseudonym
 
@@ -112,13 +118,29 @@ def viscosities(config, checks: str = "default") -> tuple[Viscosity, ...]:
     listed = getattr(config, "phases", None) or list(phase_nu)  # a config written before `phases`
     out.extend(Viscosity(v, v, "nu", phase=phase, alias=phase_pseudonym(listed, phase))
                for phase, v in phase_nu.items())
+    # TRD VER-3e (`case.regions.whole`): each region's `mu` through its own density, the
+    # temperatures over `T_RANGE` (a region's held walls are not read). A solid writes none.
+    if enabled("case.regions.whole", checks):
+        from courant.case.config import region_place
+
+        regions = getattr(config, "regions", None) or []
+        eos = getattr(config, "region_equation_of_state", None) or {}
+        for tag, values in (getattr(config, "region_thermo", None) or {}).items():
+            mu = values.get("mu")
+            if mu is None:
+                continue
+            rho_lo, rho_hi, how = _density(values, eos.get(tag), values.get("p"), None)
+            place = region_place(regions, tag)
+            out.append(Viscosity(mu / rho_hi, mu / rho_lo, "mu", mu=mu, basis=how,
+                                 alias=place, region=place))
     return tuple(out)
 
 
 def kinematic(config, checks: str = "default") -> Viscosity | None:
-    """The case's own kinematic viscosity (not a phase's), or None when it sets none the gate
-    reads: the first of `viscosities` that is not a phase's."""
-    return next((v for v in viscosities(config, checks) if v.phase is None), None)
+    """The case's own kinematic viscosity (not a phase's or a region's), or None when it sets
+    none the gate reads: the first of `viscosities` that is neither."""
+    return next((v for v in viscosities(config, checks)
+                 if v.phase is None and v.region is None), None)
 
 
 __all__ = ["NU_MAX", "NU_MIN", "RHO_RANGE", "T_RANGE", "Viscosity", "kinematic", "viscosities"]

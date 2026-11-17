@@ -62,7 +62,7 @@ def audit(root: str | Path, cost_per_core_hour: float | None = None) -> dict:
             row.update({"error": str(exc)})
             runs.append(row)
             continue
-        hours, ranks = core_hours(inputs.log_text)
+        run_hours, ranks = core_hours(inputs.log_text)    # not `hours`: the helper below
         pre = None
         try:
             if target.is_dir():
@@ -75,7 +75,7 @@ def audit(root: str | Path, cost_per_core_hour: float | None = None) -> dict:
         row.update({
             "verdict": v.verdict, "rule": v.rule, "grade": v.grade,
             "cause": v.probable_causes[0].code if v.probable_causes and v.verdict != "TRUSTWORTHY" else None,
-            "core_hours": hours, "ranks": ranks, "preflight": pre,
+            "core_hours": run_hours, "ranks": ranks, "preflight": pre,
             "convergence": c.status if c is not None and c.monitors_found else None,
             "wasted_core_hours": float(c.wasted_core_hours) if c is not None and c.wasted_core_hours else None,
             "wasted_fraction": float(c.wasted_fraction) if c is not None and c.wasted_fraction else None,

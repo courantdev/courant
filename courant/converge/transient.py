@@ -38,6 +38,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import cast
 
 from courant.converge.exact import ExactSums, icbrt, mean, variance
 from courant.converge.tables import t975
@@ -242,10 +243,11 @@ def assess_prefix(y: Sequence[float], limit_abs: float | None, tol_rel: float | 
     st = stationarity(yt, bt)
     if not st.stationary:
         return TransientResult("NOT_STATIONARY", "stationarity", ms, bt, st)
+    half = cast(float, bt.half_width)       # set on every accepted Batches (batch_means)
     if limit_abs is not None:
-        within = bt.half_width <= limit_abs
+        within = half <= limit_abs
     elif scale:
-        within = bt.half_width / scale <= tol_rel
+        within = half / scale <= cast(float, tol_rel)   # the relative branch always has tol_rel
     else:
         within = bt.half_width == 0.0
     return TransientResult("CONVERGED" if within else "CI_TOO_WIDE", "criterion", ms, bt, st,

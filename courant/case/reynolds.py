@@ -123,6 +123,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
 
 #: The patch types this reader knows (`polyMesh/boundary`). Any other (a cyclic, an AMI, a
 #: mapped patch) gives no number: what crosses it is not known here.
@@ -320,7 +321,7 @@ def _vector_at(tokens: list[str], i: int) -> tuple[tuple[float, float, float] | 
     xs = [_number(t) for t in tokens[i + 1:i + 4]]
     if len(xs) != 3 or any(x is None for x in xs):
         return None, i
-    return (xs[0], xs[1], xs[2]), i + 5
+    return cast("tuple[float, float, float]", (xs[0], xs[1], xs[2])), i + 5   # no None: above
 
 
 def _vector(raw: str | None) -> tuple[float, float, float] | None:
@@ -473,9 +474,9 @@ class _Surface:
     """The domain's boundary, joined over every rank: each face's global point ids, its area
     vector (outward), its patch's name and type; and the points."""
 
-    points: object                      # (P, 3) array
+    points: Any                         # (P, 3) array
     faces: tuple                        # arrays of global point ids
-    areas: object                       # (F, 3) array
+    areas: Any                          # (F, 3) array
     patch: tuple[str, ...]
     kind: dict[str, str]
 
@@ -503,7 +504,7 @@ def _surface(meshes) -> _Surface | None:
                 faces.append(np.array([local[v] for v in f.tolist()], dtype=np.int64))
                 names.append(p.name)
             areas.append(mesh.face_areas[p.start:p.start + p.n])
-        order = sorted(local, key=local.get)
+        order = sorted(local, key=local.get)  # pyright: ignore[reportCallIssue, reportArgumentType]  (every key present)
         coords.append(mesh.points[np.asarray(order, dtype=np.int64)] if order
                       else np.zeros((0, 3)))
         offset += len(local)
@@ -673,7 +674,7 @@ def _roots_and_meshes(case: Path, run, start: str):
     return roots, meshes, groups
 
 
-def _patch_groups(path: Path) -> list[tuple[str, frozenset[str]]] | None:
+def _patch_groups(path: Path, binary: bool = False) -> list[tuple[str, frozenset[str]]] | None:
     """Every patch of a `polyMesh/boundary` file, in order, with every word of its `inGroups`
     entries (`inGroups 1(wall);`, `inGroups List<word> 1(wall);`): the groups v2406 puts it in
     (patchIdentifier.C reads `inGroups`), or more, the count and `List<word>` taken as words too.
@@ -681,10 +682,11 @@ def _patch_groups(path: Path) -> list[tuple[str, frozenset[str]]] | None:
     (polyPatch.C) joins whatever the file says. None where an entry may be hidden or misread: a
     directive, a macro or a quoted key in the list (`readIfPresent` matches a pattern), or
     `inGroups` written other than as an entry of its own. Split on `;` and blanks, so linear in
-    the file's length (the mesh's cost bound holds it)."""
+    the file's length (the mesh's cost bound holds it). `binary` (FLD-7): a file whose header says
+    `format binary` is read too, its entries being text in either format."""
     from courant.case import polymesh
 
-    _, inner, _ = polymesh._outer_list(polymesh._body(path)[0])
+    _, inner, _ = polymesh._outer_list(polymesh._body(path, binary)[0])
     if any(c in inner for c in "#$\""):
         return None
     out = []

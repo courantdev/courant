@@ -28,9 +28,15 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, cast
 
 from courant.events import Event, EventKind
 from courant.events.diverged import diverged, is_residual_climb
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from courant.events.core import DivergencePayload, ResidualPayload
 
 #: Worst final initial-residual accepted. `TARGET` is clean convergence;
 #: `LOOSE` is "converged enough to be worth a human's attention", and is the bar
@@ -135,7 +141,9 @@ def final_residuals(events: list[Event]) -> dict[str, float]:
     for event in reversed(events):
         if event.kind is not EventKind.RESIDUAL:
             continue
-        values = _finite_items(event.payload.initial_residuals or {})
+        # Event's validator ties kind to payload class: a RESIDUAL event holds a ResidualPayload.
+        payload = cast("ResidualPayload", event.payload)
+        values = _finite_items(cast("dict[str, float | None]", payload.initial_residuals or {}))
         if values:
             return values
     return {}
@@ -552,7 +560,8 @@ def stalled(events: list[Event], config, final: dict[str, float],
         if excess >= 10.0 ** STALL_ORDERS and (best is None or excess > best[0]):
             best = (excess, Stall(window=window_width(summary.n), steps=summary.n, field=name,
                                   residual=final[name], relaxation=alpha, bar=bar,
-                                  drift_rel=summary.drift_rel))
+                                  # plateaued is True only where drift_rel was computed
+                                  drift_rel=cast(float, summary.drift_rel)))
     return best[1] if best else None
 
 
@@ -636,13 +645,14 @@ class ResidualJudgement:
         return f"the target {self.bar:.0e}"
 
 
-def _last_step(events: list[Event]):
+def _last_step(events: list[Event]) -> ResidualPayload | None:
     """The payload of the last step that reported a finite residual (`final_residuals`'s)."""
     for event in reversed(events):
         if event.kind is not EventKind.RESIDUAL:
             continue
-        if _finite_items(event.payload.initial_residuals or {}):
-            return event.payload
+        payload = cast("ResidualPayload", event.payload)   # kind RESIDUAL: Event's validator
+        if _finite_items(cast("dict[str, float | None]", payload.initial_residuals or {})):
+            return payload
     return None
 
 
@@ -786,14 +796,22 @@ def judge_residuals(events: list[Event], config,
     """
     from functools import cmp_to_key
 
-    from courant.verify.checks import enabled
+    from courant.events.time_markers import no_time_markers
+    from courant.verify.checks import RESIDUAL_NO_TIME_MARKERS, enabled
 
     step = _last_step(events)
     if step is None:
         return None
     control = enabled("residual.control", checks)       # the bar per field (VER-16)
-    last = _finite_items(step.initial_residuals or {})
+    last = _finite_items(cast("dict[str, float | None]", step.initial_residuals or {}))
     first = _finite_items(getattr(step, "first_initial_residuals", None) or {})
+    if enabled(RESIDUAL_NO_TIME_MARKERS, checks) and no_time_markers(events):
+        # VPA-CHK-1: with no `Time =` line there is no step, so no first solve of one; the
+        # parser's single step's "first" is the run's first iteration (a residual near 1). A
+        # declared tolerance, and `worst`, read the last solve, as the flat bar does
+        # (`reads_first_solve`); read at the first, a healthy steady log with residualControl
+        # was rejected VER-5.3 grade C where VER-5.15 says insufficient.
+        first = {}
     if exclude and set(last) - set(exclude):
         last = {name: v for name, v in last.items() if name not in exclude}
         first = {name: v for name, v in first.items() if name not in exclude}
@@ -801,7 +819,8 @@ def judge_residuals(events: list[Event], config,
     candidates = {name: _candidates(config, name) for name in last} if steady else {}
     floor = enabled("residual.control.floor", checks)       # VER-16c: a tighter one is a note
     every_first = reads_first_solve(config, checks, events=events)
-    nearer = cmp_to_key(lambda a, b: _further_over(a[:2], b[:2]))
+    nearer: Callable[[tuple[float, float, bool]], Any] = cmp_to_key(
+        lambda a, b: _further_over(a[:2], b[:2]))
     final: dict[str, float] = {}
     bars: dict[str, float] = {}
     strict: dict[str, bool] = {}            # a tolerance is met strictly, the flat bar with <=
@@ -917,7 +936,7 @@ def peak_courant(events: list[Event]) -> float | None:
     for event in events:
         if event.kind is not EventKind.RESIDUAL:
             continue
-        value = event.payload.courant_max
+        value = cast("ResidualPayload", event.payload).courant_max   # kind RESIDUAL: validator
         if value is None or math.isnan(value):
             continue
         peak = value if peak is None else max(peak, value)
@@ -934,10 +953,12 @@ def sustained_courant(events: list[Event], fraction: float = 0.2) -> float | Non
     Judged on the peak it is broken; judged on where it settled it is fine,
     which is also what a real blow-up fails.
     """
-    values = [e.payload.courant_max for e in events
+    # Event's validator ties kind to payload class: a RESIDUAL event holds a ResidualPayload,
+    # which pyright cannot narrow from `e.kind` inside a comprehension.
+    values = [e.payload.courant_max for e in events  # pyright: ignore[reportAttributeAccessIssue]
               if e.kind is EventKind.RESIDUAL
-              and e.payload.courant_max is not None
-              and not math.isnan(e.payload.courant_max)]
+              and e.payload.courant_max is not None  # pyright: ignore[reportAttributeAccessIssue]
+              and not math.isnan(e.payload.courant_max)]  # pyright: ignore[reportAttributeAccessIssue]
     if not values:
         return None
     return max(values[-max(1, int(len(values) * fraction)):])
@@ -987,7 +1008,7 @@ def solve_converged(events: list[Event], *,
         # A soft divergence is a residual *trend* from the anomaly detector, not a non-finite
         # value, so the run did not diverge (ADP-5); it is still not a converged solve. Saying
         # "NaN" for it sent RRD RM-18 looking for a NaN that was not in the log.
-        p = climbs[0].payload
+        p = cast("DivergencePayload", climbs[0].payload)   # is_residual_climb: kind DIVERGENCE
         slope = f", slope {p.slope:.3g} decades/step" if p.slope is not None else ""
         return False, (f"residual of {p.field or 'a field'} climbing (soft divergence at "
                        f"{p.residual:.3g}{slope})" if p.residual is not None

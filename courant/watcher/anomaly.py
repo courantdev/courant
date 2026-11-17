@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import cast
 
 import numpy as np
 
@@ -106,14 +107,14 @@ class AnomalyDetector:
     def observe(self, event: Event) -> list[Event]:
         if event.kind is not EventKind.RESIDUAL:
             return []
-        payload: ResidualPayload = event.payload
+        payload = cast(ResidualPayload, event.payload)     # a RESIDUAL event carries one
         rep, worst = self._representative(payload)
         if rep is None:
             return []
         self._last_progress_wall = event.ts_wall
         idx = payload.iteration if payload.iteration is not None else len(self._h.reps)
         self._h.reps.append(rep)
-        self._h.fields.append(worst)
+        self._h.fields.append(cast(str, worst))     # set with rep, which is not None
         self._h.iters.append(idx)
 
         out: list[Event] = []

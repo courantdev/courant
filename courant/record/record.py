@@ -58,7 +58,13 @@ def build_record(verdict, *, target_name: str, case_json_name: str | None = None
 def write_record(verdict, out: str | Path, *, target_name: str, case_json_name: str | None = None,
                  spec_path: str | Path | None = None, spec_locked_sha256: str | None = None,
                  producer: str | None = None, requester: str | None = None) -> Path:
-    """Write `out` (canonical JSON, VER-9)."""
+    """Write `out` (canonical JSON, VER-9). `verdict` is the version 2 verdict the gate decided:
+    a version 1 verdict is refused (VPA-CLI-1), because converting it back drops what version 1
+    does not carry (an extracted specification's basis, the fork, the solver version) and the
+    record would then not re-derive. `--schema 1` output comes from the same version 2 verdict."""
+    if not isinstance(verdict, VerdictV2):
+        raise TypeError(f"a {SCHEMA} is written from the courant.verdict/2 the gate decided, "
+                        f"not a {type(verdict).__name__}: pass the verdict before in_schema")
     text = Path(spec_path).read_bytes().decode("utf-8") if spec_path is not None else None
     record = build_record(verdict, target_name=target_name, case_json_name=case_json_name,
                           spec_text=text, spec_locked_sha256=spec_locked_sha256,

@@ -1,0 +1,2 @@
+# SOURCE: synthetic, not a real run. Written 2026-11-08 from Anthropic's Claude Code documentation (headless mode, stream-json). The stream stops after the init line, before the model's first reply: the CLI died before any output, which is not the agent's run (retried once, then harness_error).
+{"type":"system","subtype":"init","cwd":"/work/case","session_id":"0d8e4f11-5c2a-4b7e-8f3d-91a2b3c4d5e7","tools":["Bash","Read"],"mcp_servers":[],"model":"claude-test-model","permissionMode":"bypassPermissions","apiKeySource":"none"}

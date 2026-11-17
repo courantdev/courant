@@ -55,11 +55,13 @@ from collections.abc import Callable, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import lru_cache, wraps
+from typing import Literal, cast
 
 try:                                                     # Python 3.11+
-    from re import _compiler as _sre_compile
-    from re import _constants as _c
-    from re import _parser as _sre_parse
+    # private modules of `re`, not in its stub
+    from re import _compiler as _sre_compile  # pyright: ignore[reportAttributeAccessIssue]
+    from re import _constants as _c  # pyright: ignore[reportAttributeAccessIssue]
+    from re import _parser as _sre_parse  # pyright: ignore[reportAttributeAccessIssue]
 except ImportError:                                      # pragma: no cover - Python < 3.11
     import sre_compile as _sre_compile                   # type: ignore[no-redef]
     import sre_constants as _c                           # type: ignore[no-redef]
@@ -111,7 +113,7 @@ class _Budget:
 
     def __init__(self, steps: int) -> None:
         self.left = steps
-        self.programs: dict[str, tuple | bool | None] = {}
+        self.programs: dict[str, _NameSet | tuple | Literal[False] | None] = {}
         self.answers: dict[tuple[str, str], bool | None] = {}
 
 
@@ -174,7 +176,7 @@ def _charged(pattern: str, name: str) -> bool | None:
     outermost = budgets[0]
     known = outermost.answers.get((pattern, name), _MISSING)
     if known is not _MISSING:
-        return known
+        return cast("bool | None", known)
     answer = _answer(budgets, pattern, name)
     if len(outermost.answers) < MAX_ANSWERS:
         outermost.answers[(pattern, name)] = answer
@@ -371,7 +373,7 @@ def _names(items, flags: int) -> tuple[str, frozenset[str]] | None:
 
 
 @lru_cache(maxsize=1024)
-def _compile(pattern: str):
+def _compile(pattern: str) -> _NameSet | tuple | Literal[False] | None:
     """What `pattern` is matched by: a set of names (`_NameSet`), or the automaton, a tuple of
     instructions; False when `re` refuses the pattern, None when it is not one this matcher
     evaluates."""
@@ -427,7 +429,7 @@ def _emit(sub, flags: int, prog: list) -> None:
             _group, add, remove, body = av
             _emit(body, _scoped(flags, add, remove), prog)
         elif op is _c.MAX_REPEAT or op is _c.MIN_REPEAT:  # greedy or lazy: the same language
-            _repeat(*av, flags, prog)
+            _repeat(*av, flags, prog)  # pyright: ignore[reportCallIssue]  (av: low, high, body)
         elif op is _c.AT:
             prog.append(("at", _one_position(av, flags)))
         else:                     # GROUPREF, ASSERT, ASSERT_NOT, POSSESSIVE_REPEAT, ATOMIC_GROUP...

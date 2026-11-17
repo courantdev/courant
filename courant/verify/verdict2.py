@@ -33,7 +33,7 @@ from __future__ import annotations
 import itertools
 import json
 from collections.abc import Mapping
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -133,7 +133,7 @@ class VerdictV2(BaseModel):
             tool=self.tool,
             run=RunInfo(id=self.run.id, source=self.run.source, solver=self.run.solver,
                         inputs=self.run.inputs),
-            verdict=TO_V1[self.verdict], rule=self.rule, grade=self.grade,
+            verdict=cast(VerdictValue, TO_V1[self.verdict]), rule=self.rule, grade=self.grade,
             reasons=reasons, probable_causes=self.probable_causes,
             not_assessed=not_assessed, next_action=self.next_action, stats=self.stats,
             convergence=self.convergence, conformance=self.conformance)
@@ -142,7 +142,7 @@ class VerdictV2(BaseModel):
 AnyVerdict = Verdict | VerdictV2
 
 
-def basis_of(conformance: ConformanceBlock | None, *, extracted: bool = False) -> str:
+def basis_of(conformance: ConformanceBlock | None, *, extracted: bool = False) -> Basis:
     """GATE-2. What the verdict was judged against, from its conformance block alone (so a
     version 1 verdict maps without its inputs). `extracted`: the specification records an
     extraction and no confirmation (SPEC-7). It labels; it does not decide: the policy was given
@@ -208,7 +208,7 @@ def to_v2(v1: Verdict, *, extracted: bool = False, fork: str | None = None,
         tool=v1.tool,
         run=RunInfoV2(id=v1.run.id, source=v1.run.source, solver=v1.run.solver, fork=fork,
                       solver_version=solver_version, inputs=v1.run.inputs),
-        verdict=FROM_V1[v1.verdict], basis=basis, rule=v1.rule, grade=v1.grade,
+        verdict=cast(Decision, FROM_V1[v1.verdict]), basis=basis, rule=v1.rule, grade=v1.grade,
         reasons=reasons, probable_causes=v1.probable_causes, not_assessed=not_assessed,
         next_action=v1.next_action, stats=v1.stats, convergence=v1.convergence,
         conformance=v1.conformance)
@@ -233,7 +233,7 @@ def load_verdict(data: str | bytes | Mapping) -> VerdictV2:
     """Read a verdict of either major (ARC-16). A version 1 verdict comes back as version 2
     through `to_v2`; its `to_v1()` gives the original back."""
     if isinstance(data, (str, bytes)):
-        data = json.loads(data)
+        data = cast(Mapping, json.loads(data))       # not checked: TYPES-VER-1 (a JSON array)
     schema = data.get("schema")
     if schema == SCHEMA_V2:
         return VerdictV2.model_validate(data)

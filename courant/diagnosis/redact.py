@@ -28,7 +28,7 @@ from a fixed allowlist.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Literal
 
 REDACTED = "<redacted>"
 
@@ -103,6 +103,15 @@ _SOLVER_LINE_PATTERNS = (
     re.compile(r"^\s*End\s*$"),
 )
 
+#: The allowlist above as one pattern, which `redact_log_lines` asks once per line instead of
+#: thirteen times (perf-070). Each pattern keeps its own flags as an inline group, and a search for
+#: an alternation finds a match exactly when one of its branches matches somewhere, so this admits
+#: exactly the lines `any(p.search(line) for p in _SOLVER_LINE_PATTERNS)` admits; the patterns
+#: stay the definition (tests/unit/test_perf070.py holds the two equal).
+_SOLVER_LINE = re.compile("|".join(
+    f"(?i:{p.pattern})" if p.flags & re.IGNORECASE else f"(?:{p.pattern})"
+    for p in _SOLVER_LINE_PATTERNS))
+
 _FATAL_MARKER = re.compile(r"FOAM FATAL (ERROR|IO ERROR)", re.I)
 # Bounded: the reason and its provenance, not an unbounded tail of whatever
 # followed the crash.
@@ -125,17 +134,18 @@ def redact_log_lines(text: str, *, max_lines: int = 200) -> list[dict]:
     if not text:
         return []
 
-    kept: list[dict] = []
+    # (offset, line) of every line the allowlist admits. Which lines are admitted does not depend
+    # on how a line redacts, so only the tail that is returned is redacted (perf-070): on a 10 MB
+    # log that is 200 lines, not 100,000.
+    kept: list[tuple[int, str]] = []
     error_block_remaining = 0
     offset = 0
+    admitted = _SOLVER_LINE.search
 
     for line in text.splitlines(keepends=True):
         start = offset
         offset += len(line.encode())
         stripped = line.rstrip("\n")
-
-        def keep(content: str, at: int = start) -> None:
-            kept.append({"offset": at, "text": redact_text(content)})
 
         # A FOAM FATAL ERROR is followed by its reason on the next few indented
         # lines ("Maximum number of iterations exceeded"). That is the single
@@ -143,21 +153,21 @@ def redact_log_lines(text: str, *, max_lines: int = 200) -> list[dict]:
         # solver pattern, so capture a bounded block after the marker and put
         # it through the ordinary path/identity redaction.
         if _FATAL_MARKER.search(stripped):
-            keep(stripped)
+            kept.append((start, stripped))
             error_block_remaining = FATAL_BLOCK_LINES
             continue
 
         if error_block_remaining > 0:
             error_block_remaining -= 1
             if stripped.strip():
-                keep(stripped)
+                kept.append((start, stripped))
             continue
 
-        if any(p.search(stripped) for p in _SOLVER_LINE_PATTERNS):
-            keep(stripped)
+        if admitted(stripped):
+            kept.append((start, stripped))
 
     # Tail, not head: the lines nearest the failure are the useful ones.
-    return kept[-max_lines:]
+    return [{"offset": at, "text": redact_text(content)} for at, content in kept[-max_lines:]]
 
 
 def redact_log_window(text: str, *, max_chars: int = 4_000) -> str:
@@ -168,7 +178,13 @@ def redact_log_window(text: str, *, max_chars: int = 4_000) -> str:
     engineer would want to see quoted in a report — chiefly the FOAM FATAL
     ERROR block, which no Event captures in full.
     """
-    window = "\n".join(line["text"] for line in redact_log_lines(text))
+    return log_window_of(redact_log_lines(text), max_chars=max_chars)
+
+
+def log_window_of(lines: list[dict], *, max_chars: int = 4_000) -> str:
+    """`redact_log_window` from lines `redact_log_lines` already returned, so a caller that
+    wants both filters the log once (perf-070)."""
+    window = "\n".join(line["text"] for line in lines)
     return window[-max_chars:] if len(window) > max_chars else window
 
 
@@ -334,8 +350,9 @@ def sanitize_config_view(config: dict, *, places: list[str] | None = None) -> di
 MAX_REASON_LENGTH = 120
 
 
-def _is_case_relative(path: Any) -> bool:
-    """Whether this is one of the case-relative names the reader produces.
+def _is_case_relative(path: Any) -> bool | Literal[""]:
+    """Whether this is one of the case-relative names the reader produces (truthy or falsy;
+    an empty name gives "").
 
     `system/controlDict`, `constant/transportProperties`. An absolute path or a
     traversal is not something the reader emits, so its presence means something
@@ -582,7 +599,8 @@ def _received_places(bundle: dict) -> list[str]:
         if isinstance(regions, list) else []
     lines = [str(x.get("text", "")) for x in bundle.get("log_lines") or [] if isinstance(x, dict)]
     log = "\n".join([*lines, str(bundle.get("log_window") or "")])
-    keys: dict[str, None] = dict.fromkeys(bundle.get("residual_series") or {})
+    # Any key a received bundle holds, None included; only the strings are read below.
+    keys: dict[Any, None] = dict.fromkeys(bundle.get("residual_series") or {})
     for event in bundle.get("event_window") or []:
         payload = event.get("payload") if isinstance(event, dict) else None
         if isinstance(payload, dict):

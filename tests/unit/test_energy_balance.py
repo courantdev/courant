@@ -68,6 +68,10 @@ WALLS = {
 }
 #: The balances owed (VER-22 (a) and (b)): the closed regions by name, the interface as its pair.
 JUDGED = {"hot_box": {DEFAULT_REGION}, "cht_plate": {"plate", INTERFACE}}
+#: The regions open to flow, judged under `next` since T-ENERGY-FLOW (VER-22 (c)) on the heat
+#: through their walls and the heat carried through their openings
+#: (`tests/unit/test_energy_flow.py`, whose oracle `_oracle` gives their measure).
+OPEN = {"hot_box": set(), "cht_plate": {"air"}}
 
 #: OpenFOAM's own rows at the log's last time, transcribed literally from each committed
 #: `wallHeatFlux.dat` once the solves exist (work order section 4): {solve: (the log's last
@@ -349,10 +353,14 @@ def test_next_grades_each_solved_balance_on_openfoams_own_rows(tmp_path, name, m
     the severity is MassFluxCheck's bars on it. A converged solve graded above TARGET is a false
     alarm to report to the orchestrator, not a bar, a setting or a stop time to change."""
     expected = _expected_measures(name)
+    case = _solve(tmp_path, name)
+    if OPEN[_family(name)]:                     # VER-22 (c): the open region's own measure
+        from tests.unit.test_energy_flow import _oracle
+
+        expected.update({region: _oracle(case, name) for region in OPEN[_family(name)]})
     worst_key = max(expected, key=expected.get)
     worst = expected[worst_key]
     grade = _graded(worst)
-    case = _solve(tmp_path, name)
     doc, r = _judge(case, monkeypatch)
     assert r is not None, f"no {CODE} result under --checks next"
     assert not r.skipped, r.detail
@@ -396,24 +404,27 @@ def test_a_solved_run_out_of_heat_balance_is_rejected(tmp_path, monkeypatch):
 
 
 # ------------------------------------------------------------------------------------- C3
-def test_a_cht_run_judges_its_solid_and_its_interface_and_says_the_open_air_is_not_judged(
-        tmp_path, monkeypatch):
-    """C3. On cht_plate the `plate` region and the `plate_to_air`/`air_to_plate` pair are
-    judged, each measure computed; the `air` region, open through `inlet` and `outlet`, is not,
-    and the sentence says the heat its flow carries is not read. On hot_box the one region is."""
+def test_a_cht_run_judges_its_solid_its_interface_and_its_open_air(tmp_path, monkeypatch):
+    """C3, as T-ENERGY-FLOW (VER-22 (c)) leaves it. On cht_plate the `plate` region and the
+    `plate_to_air`/`air_to_plate` pair are judged, each measure computed from the rows; the `air`
+    region, open through `inlet` and `outlet`, is judged too, on the heat its flow carries
+    (`test_energy_flow._oracle`), and no sentence says it is not. With the flow name off, the
+    0.7.0 sentence (the heat its flow carries is not read) is `test_energy_flow`'s. On hot_box
+    the one region is."""
+    from tests.unit.test_energy_flow import _oracle
+
     for name in ("cht_plate-converged", "cht_plate-early"):
         expected = _expected_measures(name)
         case = _solve(tmp_path / name, name)
+        expected["air"] = _oracle(case, name)
         reading = _read_heat(case)
         measures = {_key(k): m for k, m in reading.measures.items()}
-        assert set(measures) == JUDGED["cht_plate"], set(measures)
+        assert set(measures) == JUDGED["cht_plate"] | OPEN["cht_plate"], set(measures)
         for key, m in expected.items():
             assert measures[key] == pytest.approx(m, rel=1e-9), (key, measures[key], m)
         doc, _ = _judge(case, monkeypatch)
-        air = [s for s in doc["not_assessed"]
-               if "air" in s and "inlet" in s and "outlet" in s and "heat" in s.lower()]
-        assert len(air) == 1, doc["not_assessed"]
-        assert "flow" in air[0] and "not read" in air[0], air[0]
+        air = [s for s in doc["not_assessed"] if "`air`" in s and "heat" in s.lower()]
+        assert air == [], doc["not_assessed"]
     case = _solve(tmp_path / "hot_box", "hot_box-converged")
     assert {_key(k) for k in _read_heat(case).measures} == JUDGED["hot_box"]
 
@@ -539,14 +550,29 @@ def test_what_is_not_judged_says_why(tmp_path, shape, monkeypatch):
         heat_edit(case)
     doc, r = _judge(case, monkeypatch)
     without, _ = _judge(bare, monkeypatch)
-    assert r is None or r.skipped, (r.severity, r.detail)
-    assert not [x for x in doc["reasons"] if x["code"] == CODE], doc["reasons"]
+    if shape == "unreadable_boundary":
+        # VER-22 (c) (T-ENERGY-FLOW): the open `air` region of cht_plate `early` is judged on its
+        # own mesh, which reads, and its own rows, flow and conduction (out of balance, MAJOR:
+        # the run stopped at step 10). What the plate's unreadable boundary refuses is the plate
+        # and its interface: the result is the air's alone.
+        from tests.unit.test_energy_flow import _oracle
+
+        assert {_key(k) for k in _read_heat(case).measures} == {"air"}
+        assert r is not None and r.severity is VSeverity.MAJOR, r
+        assert r.value == pytest.approx(_oracle(case, name), rel=1e-9)
+        assert "region `air`" in r.detail and "plate" not in r.detail, r.detail
+    else:
+        assert r is None or r.skipped, (r.severity, r.detail)
+        assert not [x for x in doc["reasons"] if x["code"] == CODE], doc["reasons"]
     new = [s for s in doc["not_assessed"] if s not in without["not_assessed"]]
     if shape == "cut_before_last_time":         # the sentence names the time it has no row at
         last = _last_time(_log_text(name))
         new = [s for s in new if last in s or f"{float(last):g}" in s]
     said = [s for s in new if "heat" in s.lower() and all(w in s for w in words)]
     assert said, (words, new)
+    if shape == "unreadable_boundary":          # the air's MAJOR, above: VER-5.3 rejects
+        assert (doc["verdict"], doc["rule"], doc["grade"]) == ("reject", "VER-5.3", "C")
+        return
     assert (doc["verdict"], doc["rule"], doc["grade"]) == (
         without["verdict"], without["rule"], without["grade"])
 
@@ -802,7 +828,8 @@ def test_an_interface_whose_sides_are_round_off_is_not_judged(tmp_path):
         "plate_to_air": ("-2.4432271189e+03", "-2.9773801832e+02", "-1.0000000000e-13"),
         "air_to_plate": ("2.9773801832e+02", "2.4432271189e+03", "1.2000000000e-13")})
     reading = _read_heat(case)
-    assert {_key(k) for k in reading.measures} == {"plate"}, reading.measures
+    # the open air is judged too (VER-22 (c)): its walls now carry ~0 and its flow 0.16 W out
+    assert {_key(k) for k in reading.measures} == {"plate"} | OPEN["cht_plate"], reading.measures
     assert [s for s in reading.sentences if "no heat crosses the interface" in s
             and "round-off" in s], reading.sentences
 
@@ -871,7 +898,7 @@ def test_an_interface_named_by_a_couple_group_is_said_not_judged(tmp_path):
         _boundary_sub(case, region, r"^\s*sampleRegion\s+\w+;\s*\n\s*samplePatch\s+\w+;",
                       "        coupleGroup     plate_air;")
     reading = _read_heat(case)
-    assert {_key(k) for k in reading.measures} == {"plate"}, reading.measures
+    assert {_key(k) for k in reading.measures} == {"plate"} | OPEN["cht_plate"], reading.measures
     said = [s for s in reading.sentences if "interface" in s and "coupleGroup" in s
             and "not judged" in s]
     assert said and ("plate_to_air" in said[0] or "air_to_plate" in said[0]), reading.sentences
@@ -924,7 +951,7 @@ def test_the_cases_own_schemes_do_not_decide_a_multi_region_run(tmp_path):
     steadyState under chtMultiRegionSimpleFoam: judged as the unedited solve is."""
     case = _solve(tmp_path, "cht_plate-converged")
     _sub(case / "system" / "fvSchemes", r"^ddtSchemes \{\}", "ddtSchemes { default Euler; }")
-    assert {_key(k) for k in _read_heat(case).measures} == JUDGED["cht_plate"]
+    assert {_key(k) for k in _read_heat(case).measures} == JUDGED["cht_plate"] | OPEN["cht_plate"]
 
 
 def test_an_anisotropic_solid_is_not_judged(tmp_path, monkeypatch):
@@ -953,6 +980,15 @@ def test_a_directory_listed_and_not_searched_is_said_never_a_traceback(tmp_path,
     target = case / where
     os.chmod(target, 0o644)
     try:
+        # The property needs a directory this process cannot search. Root (uid 0, a container's
+        # default user) searches one of mode 644 all the same, so there the case is unchanged and
+        # the test would only measure an untouched run (test hygiene, 4 Nov 2026).
+        try:
+            os.stat(target / next(iter(os.listdir(target))))
+            pytest.skip("this process searches a directory of mode 644 (root)")
+        except PermissionError:
+            pass
+
         doc = json.loads(verify_inputs(from_case_dir(case, checks="next")).to_json())
     finally:
         os.chmod(target, 0o755)

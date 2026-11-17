@@ -1,0 +1,50 @@
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2406                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : _be01ca78-20240625 OPENFOAM=2406 version=2406
+Arch   : "LSB;label=32;scalar=64"
+Exec   : blockMesh
+Date   : Nov 08 2026
+Time   : 16:56:47
+Host   : aa6371212952
+PID    : 223
+I/O    : uncollated
+Case   : /case
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Disallowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Using #calc - line 25 in file "system/controlDict"
+
+
+--> FOAM FATAL IO ERROR: (openfoam-2406)
+Loading shared libraries using case-supplied code may have been disabled
+by default for security reasons.
+If you trust the code, you may enable this by adding
+
+    allowSystemOperations 1
+
+to the InfoSwitches setting in the system controlDict.
+The system controlDict is any of
+
+    ~/.OpenFOAM/2406/controlDict
+    ~/.OpenFOAM/controlDict
+    $WM_PROJECT_DIR/etc/controlDict
+
+
+
+file: system/controlDict at line 17 to 23.
+
+    From static void Foam::dynamicCode::checkSecurity(const char*, const Foam::dictionary&)
+    in file db/dynamicLibrary/dynamicCode/dynamicCode.C at line 83.
+
+FOAM exiting
+

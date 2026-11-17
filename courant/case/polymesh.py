@@ -16,14 +16,20 @@ faces grouped by patch after them. Geometry follows OpenFOAM's own construction:
 The reader takes the files as an agent or a user left them, so every step is linear in the
 file: comments are stripped with `str.find`, lists are delimited by a vectorised bracket depth
 and split on their brackets, and no regular expression that can backtrack meets the file body.
-Binary meshes are refused with a clear message rather than half-read. Each file is noted for
-the verdict's manifest once its bytes are read, parsed or not (VER-14, `reads.reading`).
+A binary mesh (`format binary`, TRD FLD-7) is read only where the caller asks (`binary=True`):
+each list as OpenFOAM writes it, its size in text and then `(`, the raw elements, `)` (or the size
+alone for an empty list), the label and scalar widths and the byte order from the header's
+`arch` line, never guessed; anything else is refused with a reason rather than half-read. A
+caller that does not ask gets the refusal it always got. Each file is noted for the verdict's
+manifest once its bytes are read, parsed or not (VER-14, `reads.reading`).
 """
 
 from __future__ import annotations
 
 import gzip
 import re
+import sys
+import zlib
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
@@ -256,9 +262,10 @@ def strip_comments(text: str) -> str:
 _HEADER_ENTRY = re.compile(r"(\w{1,64})[ \t]+([^;\n]{0,256});")
 
 
-def _body(path: Path) -> tuple[str, dict]:
+def _body(path: Path, binary: bool = False) -> tuple[str, dict]:
     """(the text after the FoamFile header, the header's entries). Comments removed; binary
-    refused. A `.gz` file is read decompressed, as OpenFOAM reads it."""
+    refused, unless `binary` (a file whose entries are text in either format: `boundary`). A
+    `.gz` file is read decompressed, as OpenFOAM reads it."""
     if path.suffix == ".gz":            # as OpenFOAM reads a compressed file (IFstream)
         # Decompressed to the bound the mesh reader holds a mesh's files to on disk: a small
         # file can decompress to gigabytes (T-FOLLOWUP-MINORS, T-ENERGY-BALANCE's minors).
@@ -281,10 +288,183 @@ def _body(path: Path) -> tuple[str, dict]:
             header = {key: val.strip().strip('"')
                       for key, val in _HEADER_ENTRY.findall(text[a + 1:b])}
             text = text[b + 1:]
-    if header.get("format", "ascii") != "ascii":
+    if header.get("format", "ascii") != "ascii" and not (binary and header["format"] == "binary"):
         raise UnsupportedFormat(f"{path.name} is {header.get('format')}: convert it with "
                                 "`foamFormatConvert` (binary polyMesh is not read in this version)")
     return text, header
+
+
+# ------------------------------------------------------------------------------ binary (FLD-7)
+_SPACE = re.compile(rb"[ \t\r\n\f\v]+")
+_SIZE = re.compile(rb"[0-9]{1,15}(?![0-9])")
+#: One header statement, `keyword value;`, the keyword where a statement starts (`x-format` is
+#: not `format`), the value a quoted string (which may hold `;`, as `arch` does) or a word list.
+_STATEMENT = re.compile(r'[ \t\r\n]*([A-Za-z_][A-Za-z0-9_]{0,63})[ \t]+("[^"\n]{0,256}"|[^";\n{}]{1,256}?)'
+                        r'[ \t]*;')
+#: Bytes a text file may hold: a binary `boundary` is text, and one holding anything else is not
+#: what OpenFOAM writes there.
+_NOT_TEXT = re.compile(rb"[^\t\n\r\f\v\x20-\x7e]")
+
+
+def parse_arch(arch) -> tuple[list[str], dict[str, str]]:
+    """The header's `arch` line, `"LSB;label=32;scalar=64"`, as (its words without `=`, its
+    `key=value` pairs): the one reading of the line, for the mesh and the field reader alike."""
+    parts = [p.strip() for p in str(arch).strip().strip('"').split(";") if p.strip()]
+    return [p for p in parts if "=" not in p], dict(p.split("=", 1) for p in parts if "=" in p)
+
+
+def _widths(arch: str | None, path: Path) -> tuple[np.dtype, np.dtype]:
+    """(the label dtype, the scalar dtype) a binary file's `arch` says it was written with: LSB,
+    each width 32 or 64 bits, each said once. Anything else is refused, never guessed: OpenFOAM
+    takes a size the line leaves out from the build that reads it, which the gate is not, and it
+    converts widths but never byte order, so an `MSB` file is read by the solver as its own
+    host's order (refused, as the field reader refuses it, and on a big-endian host)."""
+    if sys.byteorder != "little":
+        raise UnsupportedFormat(f"{path.name} is binary, read here only on a little-endian host")
+    if arch is None:
+        raise UnsupportedFormat(f"{path.name} is binary with no `arch` line, so the sizes of its "
+                                "labels and scalars are not known")
+    order, sizes = parse_arch(arch)
+    said_once = all(str(arch).count(f"{k}=") == 1 for k in ("label", "scalar"))
+    if (order != ["LSB"] or set(sizes) != {"label", "scalar"} or not said_once
+            or sizes["label"] not in ("32", "64") or sizes["scalar"] not in ("32", "64")):
+        raise UnsupportedFormat(f"{path.name} is binary written as `arch \"{arch}\"`, which is "
+                                "not read (LSB, labels and scalars of 32 or 64 bits)")
+    return np.dtype(f"<i{int(sizes['label']) // 8}"), np.dtype(f"<f{int(sizes['scalar']) // 8}")
+
+
+def _raw(path: Path) -> bytes:
+    """The file's bytes; a `.gz` one decompressed, to the bound `_body` holds it to."""
+    if path.suffix != ".gz":
+        return path.read_bytes()
+    from courant.case import mesh
+
+    bound = mesh.POLYMESH_MAX_BYTES
+    try:
+        with gzip.open(path, "rb") as fh:
+            raw = fh.read(bound + 1)
+    except (EOFError, zlib.error) as exc:       # cut short or corrupt: not read, a ValueError
+        raise ValueError(f"{path.name} cannot be decompressed: {exc}") from None
+    if len(raw) > bound:
+        raise ValueError(f"{path.name} decompresses past the reader's {bound // 2**20} MiB bound")
+    return raw
+
+
+def _skip(raw: bytes, i: int) -> int:
+    """The index of the first byte at or after `i` that is neither white space nor in a comment."""
+    n = len(raw)
+    while i < n:
+        m = _SPACE.match(raw, i)
+        if m:
+            i = m.end()
+        elif raw.startswith(b"//", i):
+            k = raw.find(b"\n", i)
+            i = n if k < 0 else k + 1
+        elif raw.startswith(b"/*", i):
+            k = raw.find(b"*/", i + 2)
+            i = n if k < 0 else k + 2
+        else:
+            break
+    return i
+
+
+def _header_close(raw: bytes, i: int) -> int:
+    """The index of the `}` that closes a header opened at `i`, past comments; -1 when none. One
+    forward pass: each search runs again only once the scan has passed its last answer, as in
+    `strip_comments`."""
+    n, j = len(raw), i + 1
+    a = b = c = -2
+    while j < n:
+        if a != -1 and a < j:
+            a = raw.find(b"//", j)
+        if b != -1 and b < j:
+            b = raw.find(b"/*", j)
+        if c < j:
+            c = raw.find(b"}", j)
+            if c < 0:
+                return -1
+        first = min(x for x in (a, b, c) if x >= 0)
+        if first == c:
+            return c
+        k = raw.find(b"\n", first) if first == a else raw.find(b"*/", first + 2)
+        j = n if k < 0 else k + (1 if first == a else 2)
+    return -1
+
+
+def _statements(text: str) -> dict | None:
+    """A header's entries as OpenFOAM writes them, `keyword value;` one after another and nothing
+    else; None when the text is not only that (a keyword inside another word, a comment, a
+    keyword said twice: the gate would take one entry and OpenFOAM's dictionary another)."""
+    out: dict = {}
+    i = 0
+    while True:
+        m = _STATEMENT.match(text, i)
+        if not m:
+            break
+        key, val = m.group(1), m.group(2).strip()
+        if key in out:
+            return None
+        out[key] = val[1:-1] if val.startswith('"') else val
+        i = m.end()
+    return out if not text[i:].strip() else None
+
+
+def _binary_file(path: Path) -> tuple[dict, str | None, int, bytes] | None:
+    """(the header's entries, its `arch`, the index after its `}`, the bytes) when the file opens
+    with a FoamFile header that says `format binary`; None for a file whose header does not
+    mention binary, which the text reader then reads or refuses as it always has. A header that
+    mentions binary and is not plain `keyword value;` statements is refused: the gate and the
+    solver might not take the same format, or the same widths, from it."""
+    raw = _raw(path)
+    i = _skip(raw, 0)
+    if not raw.startswith(b"FoamFile", i):
+        return None
+    i = _skip(raw, i + len(b"FoamFile"))
+    if raw[i:i + 1] != b"{":
+        return None
+    close = _header_close(raw, i)
+    if close < 0:
+        return None
+    text = raw[i + 1:close].decode("ascii", errors="replace")
+    header = _statements(text)
+    if header is None:
+        if b"binary" in raw[i + 1:close]:
+            raise UnsupportedFormat(f"{path.name} is binary with a header OpenFOAM does not "
+                                    "write (a keyword repeated or inside another word, a "
+                                    "comment): which format and sizes the solver read is not known")
+        return None
+    if header.get("format") != "binary":
+        return None
+    return header, header.get("arch"), close + 1, raw
+
+
+def _binary_list(raw: bytes, i: int, dtype: np.dtype, per: int, what: str,
+                 bound=None) -> tuple[np.ndarray, int]:
+    """(the elements, the index after the list) of the binary list at or after `i`: its size,
+    then `(`, size x `per` elements of `dtype`, `)`; a size of 0 alone, as OpenFOAM writes an
+    empty list. `bound(size)` raises before a byte of the payload is looked at. Every element is
+    copied out of `raw` (`astype` in the callers), so nothing keeps the file's bytes alive."""
+    i = _skip(raw, i)
+    m = _SIZE.match(raw, i)
+    if not m:
+        raise ValueError(f"{what}: a binary list without its size")
+    n = int(m.group())
+    if bound is not None:
+        bound(n)
+    j = _skip(raw, m.end())
+    if n == 0:
+        return np.zeros(0, dtype=dtype), j
+    if raw[j:j + 1] != b"(":
+        raise ValueError(f"{what}: no `(` after the binary list's size {n}")
+    close = j + 1 + n * per * dtype.itemsize
+    if close >= len(raw) or raw[close] != 0x29:
+        raise ValueError(f"{what}: a binary list of {n} does not end at its `)`")
+    return np.frombuffer(raw, dtype=dtype, count=n * per, offset=j + 1), close + 1
+
+
+def _binary_end(raw: bytes, i: int, what: str) -> None:
+    if _skip(raw, i) != len(raw):
+        raise ValueError(f"{what}: content after its binary list")
 
 
 def _outer_list(text: str, start: int = 0) -> tuple[int, str, int]:
@@ -312,6 +492,43 @@ def _labels(text: str) -> np.ndarray:
     if inside.any() or len(out) != n:
         raise ValueError(f"a list of {n} holds {len(out)} labels")
     return out
+
+
+def _text(path: Path, binary: bool) -> tuple[str, dict]:
+    """`_body` for a file `_binary_file` did not take: under `binary`, a refusal says the binary
+    file's layout is not one that is read, not that binary is never read."""
+    try:
+        return _body(path)
+    except UnsupportedFormat as exc:
+        if not binary:
+            raise
+        raise UnsupportedFormat(f"{path.name} is binary, laid out as OpenFOAM does not write it "
+                                "(text before its FoamFile header, or a header not closed)") from exc
+
+
+def _label_list(path: Path, binary: bool = False) -> np.ndarray:
+    """A `labelList` file (`owner`, `neighbour`), ascii or, when `binary`, binary."""
+    found = _binary_file(path) if binary else None
+    if found is None:
+        return _labels(_text(path, binary)[0])
+    _, arch, at, raw = found
+    label, _ = _widths(arch, path)
+    values, at = _binary_list(raw, at, label, 1, path.name)
+    _binary_end(raw, at, path.name)
+    return values.astype(np.int64)
+
+
+def read_labels(path: str | Path, *, binary: bool = False) -> np.ndarray:
+    """One `labelList` file of a polyMesh (`owner`, `neighbour`), plain or `.gz`; a binary one
+    only when `binary` (FLD-7), else refused with `UnsupportedFormat`. Noted for the manifest
+    once its bytes are read (VER-14)."""
+    return _read(Path(path), lambda p: _label_list(p, binary))
+
+
+def read_points(path: str | Path, *, binary: bool = False, max_n: int | None = None) -> np.ndarray:
+    """A polyMesh `points` file, (P, 3); a binary one only when `binary` (FLD-7). More than
+    `max_n` points is refused from the list's size, before it is parsed. Noted (VER-14)."""
+    return _read(Path(path), lambda p: _points(p, max_n, binary))
 
 
 def _read(path: Path, parse):
@@ -351,10 +568,23 @@ def _numbers(inner: str, dtype) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return values, inside, counts
 
 
-def _points(path: Path, max_n: int | None = None) -> np.ndarray:
-    n, inner, _ = _outer_list(_body(path)[0])
-    if max_n is not None and n > max_n:
-        raise ValueError(f"points: {n} points, above the bound of {max_n}")
+def _points_bound(max_n: int | None):
+    def bound(n: int) -> None:
+        if max_n is not None and n > max_n:
+            raise ValueError(f"points: {n} points, above the bound of {max_n}")
+    return bound
+
+
+def _points(path: Path, max_n: int | None = None, binary: bool = False) -> np.ndarray:
+    found = _binary_file(path) if binary else None
+    if found is not None:
+        _, arch, at, raw = found
+        _, scalar = _widths(arch, path)
+        values, at = _binary_list(raw, at, scalar, 3, "points", _points_bound(max_n))
+        _binary_end(raw, at, "points")
+        return values.astype(np.float64).reshape(-1, 3)
+    n, inner, _ = _outer_list(_text(path, binary)[0])
+    _points_bound(max_n)(n)
     if inner.count("(") != n:                           # before parsing: the count is cheap
         raise ValueError(f"points: a list of {n} holds {inner.count('(')}")
     values, inside, counts = _numbers(inner, float)
@@ -363,20 +593,46 @@ def _points(path: Path, max_n: int | None = None) -> np.ndarray:
     return values.reshape(n, 3)
 
 
-def _faces(path: Path, max_faces: int | None = None) -> tuple[np.ndarray, ...]:
-    text, header = _body(path)
-    if header.get("class") == "faceCompactList":
-        offsets_n, offsets_text, after = _outer_list(text)
+def _compact(offsets: np.ndarray, flat: np.ndarray) -> tuple[np.ndarray, ...]:
+    """The faces of a `faceCompactList`, once its two lists agree: the offsets start at 0, rise
+    by at least 3 (a face has three points or more) and end at the flat list's size. The one
+    check, for the ascii and the binary list alike."""
+    if (len(offsets) < 1 or offsets[0] != 0 or offsets[-1] != len(flat)
+            or (np.diff(offsets) < 3).any()):
+        raise ValueError("faces: the compact lists disagree")
+    return tuple(np.split(flat, offsets[1:-1]))
+
+
+def _faces_bound(max_faces: int | None):
+    def bound(offsets_n: int) -> None:
         if max_faces is not None and offsets_n - 1 > max_faces:
             raise ValueError(f"faces: {offsets_n - 1} faces, above the bound of {max_faces}")
+    return bound
+
+
+def _faces(path: Path, max_faces: int | None = None,
+           binary: bool = False) -> tuple[np.ndarray, ...]:
+    found = _binary_file(path) if binary else None
+    if found is not None:
+        header, arch, at, raw = found
+        if header.get("class") != "faceCompactList":
+            raise UnsupportedFormat(f"{path.name} is binary and a {header.get('class')}: only a "
+                                    "faceCompactList, as OpenFOAM writes a polyMesh, is read")
+        label, _ = _widths(arch, path)
+        offsets, at = _binary_list(raw, at, label, 1, "faces", _faces_bound(max_faces))
+        flat, at = _binary_list(raw, at, label, 1, "faces")
+        _binary_end(raw, at, "faces")
+        return _compact(offsets.astype(np.int64), flat.astype(np.int64))
+    text, header = _text(path, binary)
+    if header.get("class") == "faceCompactList":
+        offsets_n, offsets_text, after = _outer_list(text)
+        _faces_bound(max_faces)(offsets_n)
         flat_n, flat_text, _ = _outer_list(text, after)
         offsets, i1, _ = _numbers(offsets_text, np.int64)
         flat, i2, _ = _numbers(flat_text, np.int64)
-        if (i1.any() or i2.any() or len(offsets) != offsets_n or len(flat) != flat_n
-                or len(offsets) < 1 or offsets[0] != 0 or offsets[-1] != len(flat)
-                or (np.diff(offsets) < 3).any()):
+        if i1.any() or i2.any() or len(offsets) != offsets_n or len(flat) != flat_n:
             raise ValueError("faces: the compact lists disagree")
-        return tuple(np.split(flat, offsets[1:-1]))
+        return _compact(offsets, flat)
     n, inner, _ = _outer_list(text)
     if max_faces is not None and n > max_faces:
         raise ValueError(f"faces: {n} faces, above the bound of {max_faces}")
@@ -389,8 +645,12 @@ def _faces(path: Path, max_faces: int | None = None) -> tuple[np.ndarray, ...]:
     return tuple(np.split(values[inside], np.cumsum(counts)[:-1]))
 
 
-def _boundary(path: Path) -> tuple[Patch, ...]:
-    _, inner, _ = _outer_list(_body(path)[0])
+def _boundary(path: Path, binary: bool = False) -> tuple[Patch, ...]:
+    text, header = _body(path, binary)
+    if header.get("format") == "binary" and _NOT_TEXT.search(_raw(path)):
+        raise UnsupportedFormat(f"{path.name} is binary and holds raw bytes: a boundary is read "
+                                "only when its entries are text, as OpenFOAM writes them")
+    _, inner, _ = _outer_list(text)
     out = []
     for chunk in inner.split("}")[:-1]:
         name, sep, block = chunk.partition("{")
@@ -412,34 +672,54 @@ def _word(raw: str | None) -> str | None:
     return word or None
 
 
-def read_boundary(path: str | Path) -> tuple[Patch, ...]:
+def read_boundary(path: str | Path, *, binary: bool = False) -> tuple[Patch, ...]:
     """One `polyMesh/boundary` file's patches, in order (the boundary flux's face counts, TRD
     VER-18; each patch's type and a mapped patch's `sampleRegion` and `samplePatch`, VER-22),
-    plain or `.gz`. Noted for the manifest once its bytes are read (VER-14)."""
-    return _read(Path(path), _boundary)
+    plain or `.gz`; one whose header says binary only when `binary` (FLD-7). Noted for the
+    manifest once its bytes are read (VER-14)."""
+    return _read(Path(path), lambda p: _boundary(p, binary))
 
 
 def noted_cells(path: Path) -> int | None:
-    """The `nCells` an owner file's header notes, from its first 4 KiB, or None."""
+    """The `nCells` an owner file's header notes, from its first 4 KiB (decompressed for a `.gz`),
+    or None. The one reading of the note: the mesh reader's and the re-solve's."""
     refuse_outside(path)                # MCP-3
-    with open(path, "rb") as fh:
+    with (gzip.open(path, "rb") if path.suffix == ".gz" else open(path, "rb")) as fh:
         m = re.search(rb"nCells:[ \t]*(\d{1,12})", fh.read(4096))
     return int(m.group(1)) if m else None
 
 
-def read_polymesh(case_dir: str | Path, *, max_faces: int | None = None) -> Mesh:
-    """`constant/polyMesh` of a case. Raises `UnsupportedFormat` on a binary file and
-    `ValueError` (or `OSError`) on anything it cannot read whole, or on more than `max_faces`
-    faces (checked from the faces list's own count, before it is parsed)."""
+def read_polymesh(case_dir: str | Path, *, max_faces: int | None = None,
+                  binary: bool = False) -> Mesh:
+    """`constant/polyMesh` of a case. Raises `UnsupportedFormat` on a binary file unless `binary`
+    (FLD-7; then on a binary file it cannot read as OpenFOAM wrote it), and `ValueError` (or
+    `OSError`) on anything it cannot read whole, or on more than `max_faces` faces (checked from
+    the faces list's own count, before it is parsed)."""
     d = Path(case_dir) / "constant" / "polyMesh"
+    return _read_mesh(lambda name: d / name, max_faces, binary)
+
+
+def read_polymesh_dir(directory: str | Path, *, max_faces: int | None = None) -> Mesh:
+    """The mesh in one `polyMesh` directory, each of its five files plain or `.gz`
+    (`reads.plain_or_gz`, the one rule): a region's mesh as the solver read it (TRD VER-22 (c),
+    `courant.verification._flow_heat`). Raises as `read_polymesh` does."""
+    from courant.case.reads import plain_or_gz
+
+    d = Path(directory)
+    return _read_mesh(lambda name: Path(plain_or_gz(str(d / name))), max_faces)
+
+
+def _read_mesh(path, max_faces: int | None, binary: bool = False) -> Mesh:
+    """The five files of one mesh, each at `path(name)`, every one bounded (`read_polymesh`)."""
     # A real mesh has fewer points than faces (a hex mesh about a third as many); twice the faces
     # bound leaves room for any of them and still bounds the parse.
-    points = _read(d / "points", lambda p: _points(p, 2 * max_faces if max_faces else None))
-    faces = _read(d / "faces", lambda p: _faces(p, max_faces))
-    owner = _read(d / "owner", lambda p: _labels(_body(p)[0]))
-    neighbour = _read(d / "neighbour", lambda p: _labels(_body(p)[0]))
-    boundary = _read(d / "boundary", _boundary)
-    n_cells = cell_count(owner, neighbour, noted_cells(d / "owner"))
+    points = _read(path("points"), lambda p: _points(p, 2 * max_faces if max_faces else None,
+                                                     binary))
+    faces = _read(path("faces"), lambda p: _faces(p, max_faces, binary))
+    owner = _read(path("owner"), lambda p: _label_list(p, binary))
+    neighbour = _read(path("neighbour"), lambda p: _label_list(p, binary))
+    boundary = _read(path("boundary"), lambda p: _boundary(p, binary))
+    n_cells = cell_count(owner, neighbour, noted_cells(path("owner")))
     return Mesh(points=points, faces=faces, owner=owner, neighbour=neighbour,
                 boundary=boundary, n_cells=n_cells)
 

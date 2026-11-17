@@ -7,10 +7,10 @@ Courant checks a finished or running OpenFOAM simulation and tells you three thi
 
 It runs on your machine and reads files. It never edits your case and never runs a solver. Its
 checks never use the network; the few commands whose purpose is a network call (`courant
-update`, and a language model you name) say what they contact first. [NETWORK.md](NETWORK.md)
+update`, `courant doctor --models`, and a language model you name) say what they contact first. [NETWORK.md](NETWORK.md)
 lists them.
 
-Version 0.7.0. Measured on OpenFOAM v2406. Every figure quoted below carries its denominator;
+Version 0.7.1. Measured on OpenFOAM v2406. Every figure quoted below carries its denominator;
 `courant verify --about` prints the error rates measured for this version.
 
 <!-- Every bash block below is run by tests/integration/test_docs_commands.py on the demo data
@@ -69,8 +69,12 @@ An unreadable input exits 4, and so does an unexpected internal error, with one 
 the command and the version. `--debug` prints the traceback. Every report also lists **what was
 not checked**, in fixed words. For example: "a single mesh was supplied, so discretisation error
 was not quantified." It states its **basis** too: `validity` when no task specification was
-given, `validity+conformance` when one was given and locked before the run, and
-`validity+unlocked-spec` when it was given without a lock.
+given, `validity+conformance` when one was given with the SHA-256 it was locked under
+(`--spec-sha256`) and matches it, and `validity+unlocked-spec` when it was given without a lock
+or with one it does not match (a mismatch also makes the verdict `insufficient`, VER-5.8, unless
+the run is already rejected on its own evidence), and `validity+extracted-spec` when a model
+extracted it and nobody has confirmed it. Courant checks the hash, not
+when it was recorded: lock the specification before the run.
 
 The reasons an `insufficient` verdict can carry are a closed list, each with one sentence and
 one rule:
@@ -134,7 +138,7 @@ not change when a results file does.
 
 A run can converge beautifully and still answer the wrong question: an inlet doubled, a
 viscosity tripled, gravity rotated, the geometry scaled. Nothing in its log says so. When the
-task is on record — which it always is when an AI agent set the case up — Courant checks
+task is on record (an AI agent's task usually is, though sometimes only as a prompt), Courant checks
 every value the task names against the case.
 
 ```bash
@@ -236,7 +240,7 @@ What it reads and how it judges:
   allocation unit hours.
 
 `courant verify` on a case directory shows the same result in a CONVERGENCE block, beside the
-verdict. In v0.3 it does not change the verdict.
+verdict. It does not change the verdict (policy rule VER-5.4b is off).
 
 ## 4. While it runs
 
@@ -245,7 +249,7 @@ courant watch ./my_case
 ```
 
 This prints a line when the state changes: RUNNING, FAILING (a crash, a non-finite residual,
-or residuals three orders above their best), or CONVERGED (on a steady run with monitors). When
+or the worst residual three orders of magnitude above its best and above 0.1), or CONVERGED (on a steady run with monitors). When
 the solver prints `End`, it prints the full verdict and exits with its code. It is read-only:
 it never stops your run. To act on it, use your own job script:
 
@@ -272,6 +276,28 @@ code is the worst run's, as for `verify --batch`. Then it totals, from the logs 
 - the core-hours on setups that were broken before they started.
 
 Each total has its denominator, and the cost is shown only at your rate.
+
+## 4c. A pre-check you send: the evidence, not the case
+
+```bash
+courant precheck ./runs --redact-paths -o precheck.zip
+courant precheck --check precheck.zip      # what the receiver runs
+```
+
+`precheck` judges every run under `./runs` and writes one archive on your machine (without
+`-o`, `courant-precheck-<date>-<digest>.zip` in the current directory):
+- an evidence pack per run: `verdict.json`, `report.md`, `inputs.manifest`;
+- `summary.json` and `summary.md`;
+- `MANIFEST.sha256`.
+
+No log, deck, mesh or field file goes in unless you add `--include-logs`. `--redact-paths`
+replaces each run's name with a label and keeps the label map beside the archive, not in it.
+A run that cannot be read is a row that says why, so the row count is the number of runs found.
+The command opens no network connection, and the archive stays where it is until you send it.
+
+`--check` re-reads an archive on the receiver's side: every member against the manifest, every
+verdict and the summary against their schemas, and every pack against its row. Exit 0 means
+intact; exit 5 names the first mismatch.
 
 ## 5. In CI
 
@@ -327,7 +353,7 @@ claude mcp add courant -- courant mcp --root ~/runs
 
 An agent that runs a simulation can then check its own result before it reports success.
 
-## 7. What Courant does not do (v0.3)
+## 7. What Courant does not do
 
 - It does not make a solver faster. It shows where compute was spent after the answer was
   known, or after the run had already failed.

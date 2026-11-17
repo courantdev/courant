@@ -71,10 +71,14 @@ import os
 import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 from courant.case.mesh import is_time
 from courant.case.reads import may_read, plain_or_gz, reading
 from courant.case.reynolds import _CONSTRAINT
+
+if TYPE_CHECKING:
+    from courant.case.polymesh import Patch
 
 #: OpenFOAM's `polyMesh::defaultRegion`: the one region of a case with no regionProperties.
 DEFAULT_REGION = "region0"
@@ -260,8 +264,7 @@ def read_heat(case_dir: str, last: float | None, config, solver: str | None,
         return HeatReading(sentences=(_say(
             "the run wrote a wallHeatFlux table and the log shows no time step to read it at, so "
             "the heat balance is not judged"),))
-    from courant.case._foam_reader import (REGION_PROPERTIES, multi_region,
-                                           read_region_properties)
+    from courant.case._foam_reader import REGION_PROPERTIES, multi_region, read_region_properties
 
     # A multi-region case (`multi_region`, the one predicate: a solver that reads regions and a
     # regionProperties): its solver reads each region's schemes, never system/fvSchemes, so
@@ -297,7 +300,10 @@ def read_heat(case_dir: str, last: float | None, config, solver: str | None,
             why = _anisotropic(case, region)
             if why is not None:
                 return HeatReading(sentences=(_say(why),))
-    return _judge(case, tables, regions, kinds is not None, last, log_text)
+    from courant.verify.checks import REGIONS_WHOLE, enabled
+
+    return _judge(case, tables, regions, kinds is not None, last, log_text, checks,
+                  by_solver=enabled(REGIONS_WHOLE, checks))
 
 
 def _not_owed(case: Path, config, solver, checks, log_text, multi: bool = False) -> str | None:
@@ -347,7 +353,7 @@ def _regions_steady(case: Path, regions: list[str], solver: str | None,
             text, why = None, f"{rel} could not be read"
         if text is None:
             return (f"{_q(rel)}, the schemes the solver read for {_named(region)}, could not be "
-                    f"read ({why.removeprefix(rel).strip()}), so whether the run is steady is "
+                    f"read ({cast(str, why).removeprefix(rel).strip()}), so whether the run is steady is "
                     f"not known and the heat balance is not judged")
         try:
             body = deck.block(text, "ddtSchemes") if deck._complete(text) else None
@@ -392,7 +398,7 @@ def _anisotropic(case: Path, region: str, strict: bool = True) -> str | None:
         return None
     if text is None:
         return (f"{_q(rel)}, the thermophysical model of solid {_named(region)}, could not be "
-                f"read ({why.removeprefix(rel).strip()}): whether its conductivity is a scalar, "
+                f"read ({cast(str, why).removeprefix(rel).strip()}): whether its conductivity is a scalar, "
                 f"the one v2406's wallHeatFlux reports, is not known, {tail}")
     if raw is None:
         return (f"{_q(rel)} names no thermoType the reader reads whole (a directive or a macro, "
@@ -448,7 +454,8 @@ def _unsearched(named: str, error: str | None, tail: str) -> str:
 
 
 def _boundary(case: Path, region: str, log_text: str | None,
-              start: float | None) -> tuple[tuple | None, list[str], str | None]:
+              start: float | None, *, by_solver: bool = False
+              ) -> tuple[tuple | None, list[str], str | None]:
     """(the patches of the mesh the solver read for `region`, every rank's together; the boundary
     files read, relative to the case; None) or (None, those files, why it is not judged). The
     mesh is `courant.case.mesh.solver_mesh`'s, the one rule; a patch is a rank's sum of faces."""
@@ -458,8 +465,11 @@ def _boundary(case: Path, region: str, log_text: str | None,
     named = _named(region)
     tail = f"so the heat balance of {named} and of its interfaces is not judged"
     try:
+        # `by_solver` (`case.regions.whole`, VER-3e): a known single-region solver beside a stray
+        # regionProperties read its own mesh, as this reader's `multi_region` already decided.
         found = solver_mesh(case, log_text, start=start,
-                            region=None if region == DEFAULT_REGION else region)
+                            region=None if region == DEFAULT_REGION else region,
+                            by_solver=by_solver)
     except OSError as exc:                              # a directory listed and not searched
         return None, [], _unsearched(named, exc.strerror, tail)
     if found.unsearchable:      # the same, said by `solver_mesh` since T-ZERO-UNLISTABLE
@@ -469,7 +479,7 @@ def _boundary(case: Path, region: str, log_text: str | None,
                           f"known ({found.why}), {tail}")
     if not found.dirs:
         return None, [], f"{named} has no mesh ({_q(found.where)}), {tail}"
-    merged: dict[str, object] = {}
+    merged: dict[str, Patch] = {}
     rels: list[str] = []
     for d in found.dirs:
         path = Path(plain_or_gz(str(d / "boundary")))      # the field reader's rule
@@ -493,9 +503,11 @@ def _boundary(case: Path, region: str, log_text: str | None,
 
 
 def _judge(case: Path, tables, regions: list[str], multi: bool, last: float,
-           log_text: str | None = None) -> HeatReading:
+           log_text: str | None = None, checks: str = "default", *,
+           by_solver: bool = False) -> HeatReading:
     from courant.verification._fluid_reader import _COUPLED
     from courant.verification.checks import MassFluxCheck
+    from courant.verify import checks as flags
 
     said: list[str] = []
     at = f"{last:g}"
@@ -514,7 +526,7 @@ def _judge(case: Path, tables, regions: list[str], multi: bool, last: float,
                              f"read"))
             continue
         try:
-            is_table, rows, bad = _read_table(case, rel, last, budget)
+            is_table, read_rows, bad = _read_table(case, rel, last, budget)
         except _TooLarge:
             said.append(_say(f"the heat tables together are past the {MAX_BYTES // 2**20} MiB "
                              f"one reading reads, so {_q(rel)} was not read whole and the heat "
@@ -534,7 +546,7 @@ def _judge(case: Path, tables, regions: list[str], multi: bool, last: float,
                              f"({' '.join(COLUMNS)}), so it was not read"))
             continue
         files.setdefault(region, []).append(rel)
-        for patch, values in rows.items():
+        for patch, values in read_rows.items():
             for v, lo, hi in values:
                 found.setdefault(region, {}).setdefault(patch, []).append((v, lo, hi, rel))
         for patch in bad:
@@ -573,11 +585,12 @@ def _judge(case: Path, tables, regions: list[str], multi: bool, last: float,
                 said.append(_say(f"{_named(region)} wrote no wallHeatFlux table, so its heat "
                                  f"balance is not judged"))
             continue
-        patches, rels, why = _boundary(case, region, log_text, start)
+        patches, rels, why = _boundary(case, region, log_text, start, by_solver=by_solver)
         if why is not None:
             said.append(_say(why))
             continue
-        boundaries[region], boundary_files[region] = patches, rels
+        # `_boundary` gives the patches whenever it gives no reason
+        boundaries[region], boundary_files[region] = cast("tuple[Patch, ...]", patches), rels
     # ---- the scales round-off is judged against: every row the case wrote at the last time,
     # every region's, so never only the sums a balance is made of (`MassFluxCheck.round_off`).
     # A patch with no faces is left out: v2406 still writes its row, and gMin and gMax of an
@@ -608,15 +621,25 @@ def _judge(case: Path, tables, regions: list[str], multi: bool, last: float,
                 f"for {_named(region)}: the run wrote its heat flux on another boundary, so the "
                 f"heat balance of {_named(region)} and of its interfaces is not judged"))
             continue
-        opening = [p.name for p in patches if p.n and p.type not in WALL_TYPES
+        opening = [p for p in patches if p.n and p.type not in WALL_TYPES
                    and p.type not in _CLOSED_TYPES and not any(c in p.type for c in _COUPLED)]
+        flow = None
         if opening:
-            said.append(_say(
-                f"{_named(region)} is open to flow through {_listed(_q(n) for n in opening)}: "
-                f"the heat the flow carries through {'it' if len(opening) == 1 else 'them'} is "
-                f"not read, so its heat balance is not judged (only the heat through its walls "
-                f"was read)"))
-            continue
+            names = _listed(_q(p.name) for p in opening)
+            if not flags.enabled(flags.ENERGY_FLOW, checks):
+                said.append(_say(
+                    f"{_named(region)} is open to flow through {names}: the heat the flow "
+                    f"carries through {'it' if len(opening) == 1 else 'them'} is not read, so "
+                    f"its heat balance is not judged (only the heat through its walls was "
+                    f"read)"))
+                continue
+            flow = _openings(case, region, opening, boundary_files[region], last)
+            if isinstance(flow, str):
+                said.append(_say(
+                    f"{_named(region)} is open to flow through {names}, and the heat carried "
+                    f"through {'it' if len(opening) == 1 else 'them'} is not read: {flow}; so "
+                    f"its heat balance is not judged"))
+                continue
         walls = [p.name for p in patches if p.type in WALL_TYPES]
         have = rows.get(region, {})
         missing = [w for w in walls if w not in have and w not in broken.get(region, ())]
@@ -629,23 +652,29 @@ def _judge(case: Path, tables, regions: list[str], multi: bool, last: float,
             continue
         if broken.get(region):
             continue                                    # said where the row was read
-        if not walls:
+        if not walls and flow is None:
             continue
-        b = _region_balance(region, [(w, have[w]) for w in walls], last, files[region], largest)
+        terms = [(w, have[w]) for w in walls]
+        ways = [(w, spans[region][w]) for w in walls]
+        if flow is None:
+            b = _region_balance(region, terms, last, files[region], largest)
+        else:
+            b = _region_balance(region, terms, last, files[region], max(largest, flow.scale),
+                                flow=flow)
         if b is None:
-            said.append(_say(f"no heat crosses the walls of {_named(region)} at time {at} (its "
-                             f"heat in and its heat out are round-off next to the largest "
-                             f"integral the case wrote at that time), so there is no heat "
-                             f"balance to judge"))
+            said.append(_say(f"no heat crosses the {'boundary' if flow else 'walls'} of "
+                             f"{_named(region)} at time {at} (its heat in and its heat out are "
+                             f"round-off next to the largest integral the case wrote at that "
+                             f"time), so there is no heat balance to judge"))
             continue
-        why = _both_ways(b, [(w, spans[region][w]) for w in walls], face, at)
+        why = _both_ways(b, ways, face, at)
         if why is not None:
             said.append(_say(why))
         else:
             balances.append(b)
     # ---- the interfaces
     done: set[frozenset] = set()
-    unresolved: list[tuple[str, object]] = []
+    unresolved: list[tuple[str, Patch]] = []
     for region in regions:
         if region not in boundaries:
             continue
@@ -720,31 +749,58 @@ def _judge(case: Path, tables, regions: list[str], multi: bool, last: float,
 
 
 def _region_balance(region: str, values: list[tuple[str, float]], last: float,
-                    files: list[str], largest: float) -> Balance | None:
+                    files: list[str], largest: float, flow=None) -> Balance | None:
     """VER-22 (a): |net| over the heat in, or over the heat out, the denominator chosen by the
     boundary balance's own rule (`MassFluxCheck.denominator`), its scale `largest`, the largest
     |integral| in every row the case wrote at `last` (every region's, so not one the region's
     own sums set); None for walls no heat crosses. A non-finite integral gives a non-finite
-    measure (MAJOR in the check)."""
+    measure (MAJOR in the check). VER-22 (c): with `flow` (`_flow_heat.Openings`), the heat
+    carried through each opening is a term beside the walls', and `largest` the larger of the
+    rows' and the openings' face scale."""
     from courant.verification.checks import MassFluxCheck
 
     ints = [v for _, v in values]
+    carried = list(flow.heat.values()) if flow is not None else []
     where = _named(region)
+    read = tuple(dict.fromkeys([*files, *(flow.files if flow is not None else ())]))
     if not all(math.isfinite(v) for v in ints):
         return Balance(key=region, measure=math.nan, where=where, time=last, sums="",
-                       scale_name="the heat in", files=tuple(files))
-    net = sum(ints)
-    heat_in = sum(v for v in ints if v > 0)
-    heat_out = -sum(v for v in ints if v < 0)
+                       scale_name="the heat in", files=read)
+    net = sum(ints) + sum(carried)
+    heat_in = sum(v for v in ints if v > 0) + (flow.heat_in if flow is not None else 0.0)
+    heat_out = -sum(v for v in ints if v < 0) + (flow.heat_out if flow is not None else 0.0)
     over = MassFluxCheck.denominator(heat_in, heat_out, largest)
     if over is None:
         return None
     scale, through = over[0], f"the heat {over[1]}"
-    return Balance(key=region, measure=abs(net) / scale, where=f"the walls of {where}",
+    if flow is None:
+        return Balance(key=region, measure=abs(net) / scale, where=f"the walls of {where}",
+                       time=last,
+                       sums=(f"net wall heat flux {net:.4g} W over its {len(values)} wall "
+                             f"patches against {through} of {scale:.4g} W"),
+                       scale_name=through, files=read)
+    through_each = "; ".join(f"{_q(n)} {v:.4g} W" for n, v in flow.heat.items())
+    return Balance(key=region, measure=abs(net) / scale, where=f"the boundary of {where}",
                    time=last,
-                   sums=(f"net wall heat flux {net:.4g} W over its {len(values)} wall "
-                         f"patches against {through} of {scale:.4g} W"),
-                   scale_name=through, files=tuple(files))
+                   sums=(f"net heat {net:.4g} W into it: {sum(ints):.4g} W through its "
+                         f"{len(values)} wall patches and, carried by the flow (against its "
+                         f"inflow at {flow.t_ref:.6g} K; {flow.mechanical:.3g} W of it kinetic "
+                         f"energy and buoyancy work) and by conduction, {through_each}; "
+                         f"against {through} of {scale:.4g} W"),
+                   scale_name=through, files=read)
+
+
+def _openings(case: Path, region: str, opening, boundary_files: list[str], last: float):
+    """VER-22 (c): `_flow_heat.read_openings` on the one mesh `_boundary` read for `region`, or
+    why not (a clause): a decomposed run's mesh is several directories, not read here."""
+    from courant.verification._flow_heat import read_openings
+
+    if len(boundary_files) != 1:
+        return (f"its mesh is read on {len(boundary_files)} ranks "
+                f"({_listed(_q(f) for f in boundary_files)}), and only a mesh in one directory "
+                f"is read for it")
+    mesh_dir = (case / boundary_files[0]).parent
+    return read_openings(case, region, opening, mesh_dir, last, _region_dir(region), _q)
 
 
 def _both_ways(b: Balance, spans: list[tuple[str, tuple[float, float]]], face: float,

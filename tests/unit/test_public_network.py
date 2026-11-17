@@ -115,6 +115,12 @@ def watch(monkeypatch, tmp_path):
     for var in ("OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "COURANT_TOKEN",
                 "COURANT_OPENROUTER_MODEL", "COURANT_ALLOW_PAID_LLM", "DOCKER_HOST"):
         monkeypatch.delenv(var, raising=False)
+    # No proxy from the machine: behind HTTPS_PROXY the HTTP client connects to the proxy, so
+    # every attempt names the proxy's address and not the host the command contacts (test
+    # hygiene, 4 Nov 2026: a cloud sandbox with a local proxy failed the doctor test).
+    for var in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY",
+                "all_proxy"):
+        monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("COURANT_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("COURANT_LLM_STATE", str(tmp_path / "llm"))
     return seen
@@ -275,6 +281,7 @@ def _offline_invocations(w: dict) -> dict[str, list[list[str]]]:
         "doctor": [[], ["--bundle", str(tmp / "bundle.json")]],
         "version": [[]],
         "update": [[], ["--check"]],
+        "precheck": [[runs, "-o", str(tmp / "p.zip")], ["--check", str(tmp / "p.zip")]],
     }
 
 

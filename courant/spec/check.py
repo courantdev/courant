@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from typing import cast
 
 from courant.case import wordre
 from courant.spec import deck
@@ -69,7 +70,8 @@ def within(item: SpecItem, found) -> bool | None:
 def _bound(item: SpecItem) -> str:
     if item.min is not None and item.max is not None:
         return f"in [{_num(item.min)}, {_num(item.max)}]"
-    return f"≥ {_num(item.min)}" if item.min is not None else f"≤ {_num(item.max)}"
+    # bounded: a min or a max, so without a min there is a max
+    return f"≥ {_num(item.min)}" if item.min is not None else f"≤ {_num(cast(float, item.max))}"
 
 
 def conforms(item: SpecItem, found, *, rel: float, angle_deg: float) -> bool | None:
@@ -87,8 +89,8 @@ def conforms(item: SpecItem, found, *, rel: float, angle_deg: float) -> bool | N
         return str(want) == str(found)
     want_l = list(want) if isinstance(want, (list, tuple)) else None
     found_l = list(found) if isinstance(found, (list, tuple)) else None
-    if want_l is None and found_l is None:
-        return _close(float(want), float(found), rel, item.abs_tol)
+    if want_l is None and found_l is None:          # both scalars: neither str nor a sequence
+        return _close(float(cast(float, want)), float(cast(float, found)), rel, item.abs_tol)
     if want_l is None or found_l is None or len(want_l) != len(found_l):
         return False
     if len(want_l) == 3:                                # a vector: magnitude, then direction
@@ -147,24 +149,38 @@ def check_conformance(spec: Spec | dict, case_dir: str | Path | None, *, spec_sh
     (`as_run.Run`), when there is one, and the case's own mesh files are read for the mesh
     items. Under the default the deck alone decides, as in v0.5.0. Under `next` too, each file is
     read as the solver reads it, as the case reader reads it (`spec.directives`, TRD VER-3b:
-    `deck.read`'s `macros`)."""
+    `deck.read`'s `macros`), and as the solver finds and parses it (`spec.read_as_solver`,
+    VPA-SPEC-1/3/4/6: `deck.read`'s `solver`), a word value whole and the end time's controlDict
+    with its includes (`spec.read_whole`, deck-oracle DO-3, DO-4); a turbulence model is compared
+    only in the block the regime that ran selects (`spec.turbulence_block`, VPA-DRAFT-1)."""
     from courant.spec.impossible import impossibilities
-    from courant.verify.checks import enabled
+    from courant.verify.checks import (
+        SPEC_READ_AS_SOLVER,
+        SPEC_READ_WHOLE,
+        SPEC_TURBULENCE_BLOCK,
+        enabled,
+    )
     from courant.verify.schema import ConformanceBlock, ConformanceItem
 
     macros = enabled("spec.directives", checks)
+    solver = enabled(SPEC_READ_AS_SOLVER, checks)
+    whole = enabled(SPEC_READ_WHOLE, checks)
+    compressed = enabled("case.zero_compressed", checks)        # VER-3f, behind next
     as_run = None
     if enabled("conformance.as_run", checks) and case_dir is not None:
         from courant.spec.as_run import AsRun
 
-        as_run = AsRun(case_dir, run, macros=macros)
+        as_run = AsRun(case_dir, run, macros=macros, solver=solver, whole=whole,
+                       by_solver=enabled("case.regions.whole", checks),     # VER-3e
+                       turbulence_block=enabled(SPEC_TURBULENCE_BLOCK, checks),
+                       compressed=compressed)
     if isinstance(spec, dict):
         spec = Spec.model_validate(spec)
     invalid = impossibilities(spec)
     if invalid:
         # VER-5.11: no case can conform to an impossible specification, so the case is not
         # compared to it (and not read for it).
-        items = tuple(ConformanceItem(
+        not_compared = tuple(ConformanceItem(
             name=item.name, file=item.file, location=item.location,
             specified=_specified(item), found=None, conforms=None,
             tolerance=_tolerance(item, spec.rel_tol, spec.angle_tol_deg),
@@ -173,7 +189,8 @@ def check_conformance(spec: Spec | dict, case_dir: str | Path | None, *, spec_sh
             for item in spec.items)
         return ConformanceBlock(
             spec_schema=SPEC_SCHEMA, spec_sha256=spec_sha256, locked_sha256=locked_sha256,
-            task=spec.task, items=items, checked=0, nonconformant=0, unreadable=len(items),
+            task=spec.task, items=not_compared, checked=0, nonconformant=0,
+            unreadable=len(not_compared),
             invalid=invalid)
     items: list[ConformanceItem] = []
     for item in spec.items:
@@ -182,7 +199,9 @@ def check_conformance(spec: Spec | dict, case_dir: str | Path | None, *, spec_sh
         if case_dir is None:
             found = deck.Found(None, item.file, "only a log was given; the case directory is needed")
         else:
-            found = deck.read(case_dir, item, macros=macros)
+            found = deck.read(case_dir, item, macros=macros, solver=solver, whole=whole,
+                              regions=as_run is not None and as_run.regions,
+                              compressed=compressed)
             if as_run is not None:
                 found = as_run.read(item, found, rel=rel)
         ok = conforms(item, found.value, rel=rel, angle_deg=angle)
@@ -197,7 +216,7 @@ def check_conformance(spec: Spec | dict, case_dir: str | Path | None, *, spec_sh
             if any(q is None for q in qs):
                 ok, note = None, "a per-face list whose values a bound cannot be applied to"
             else:
-                lo, hi = min(qs), max(qs)
+                lo, hi = min(cast(list[float], qs)), max(cast(list[float], qs))   # no None
                 ok = all(within(item, f) for f in found.faces)
                 shown = lo if lo == hi else f"{_num(lo)} to {_num(hi)}"
                 basis = f"every one of {len(qs)} face values ({_num(lo)} to {_num(hi)})"
@@ -279,8 +298,10 @@ _PHASES_FILE = "constant/transportProperties"
 _TEXT_KEYS = {"application", "simulationType", "RASModel", "LESModel", "model", "solver"}
 
 
-def _probe(case: Path, item: SpecItem, macros: bool = False):
-    found = deck.read(case, item, macros=macros)
+def _probe(case: Path, item: SpecItem, macros: bool = False, solver: bool = False,
+           regions: bool = False, whole: bool = False, compressed: bool = False):
+    found = deck.read(case, item, macros=macros, solver=solver, regions=regions, whole=whole,
+                      compressed=compressed)
     return found.value
 
 
@@ -299,8 +320,14 @@ def draft_spec(case_dir: str | Path, *, task: str | None = None,
     there to say where it started, so its `0/` items are not checked (VER-5.9) until a log is
     given.
     """
-    from courant.spec.as_run import AsRun, names_the_mesh
-    from courant.verify.checks import enabled
+    from courant.spec.as_run import _TURBULENCE_FILES, AsRun, names_the_mesh
+    from courant.verify.checks import (
+        SPEC_DRAFT_AS_RUN,
+        SPEC_READ_AS_SOLVER,
+        SPEC_READ_WHOLE,
+        SPEC_TURBULENCE_BLOCK,
+        enabled,
+    )
 
     case = Path(case_dir)
     items: list[SpecItem] = []
@@ -308,14 +335,37 @@ def draft_spec(case_dir: str | Path, *, task: str | None = None,
     #: TRD VER-3b (`spec.directives`, --checks next): each value read as the solver reads it, as
     #: `check_conformance` reads it in the same mode, so the draft conforms to its own case.
     macros = enabled("spec.directives", checks)
+    #: VPA-SPEC-1/3/4/6 (`spec.read_as_solver`, --checks next): each value found and parsed as
+    #: the solver does, as `check_conformance` reads it in the same mode.
+    solver = enabled(SPEC_READ_AS_SOLVER, checks)
+    #: deck-oracle DO-3 (`spec.read_whole`, --checks next): a word value read whole, as
+    #: `check_conformance` reads it in the same mode.
+    whole = enabled(SPEC_READ_WHOLE, checks)
+    #: VPA-DRAFT-1 (`spec.turbulence_block`, --checks next): a turbulence model is drafted only
+    #: from the block the case's `simulationType` selects, none for a laminar case.
+    block_only = enabled(SPEC_TURBULENCE_BLOCK, checks)
+    #: VPA-DRAFT-2 (`spec.draft_as_run`, --checks next): every item read outside `0/` is drafted
+    #: only when what ran is what the deck says (an endTime its `stopAt` does not stop at, a model
+    #: whose `turbulence` switch is off, are left out), so the draft conforms to its own case. A
+    #: value under `0/` is left to conformance: its start time may be one `courant spec check`
+    #: cannot know (the exception above). Under the default the draft is 0.7.0's.
+    as_ran = enabled(SPEC_DRAFT_AS_RUN, checks)
+    #: VER-3f (`case.zero_compressed`, --checks next): a compressed `0/` field read as OpenFOAM
+    #: opens it, as `check_conformance` reads it in the same mode; the field named by its field
+    #: (`T at floor`, file `0/T`), never by its file (`0/T.gz`).
+    compressed = enabled("case.zero_compressed", checks)
     #: SPEC-13, under `conformance.as_run` (--checks next): blockMeshDict's cells and scale are
     #: drafted only when the case's own mesh is the one blockMeshDict describes; on a mesh
     #: refined, scaled or snapped after blockMesh they name a mesh nobody solved on, and the draft
     #: would not conform to its own case under next. The default drafts as v0.5.0 did.
-    solved = AsRun(case, macros=macros) if enabled("conformance.as_run", checks) else None
+    solved = AsRun(case, macros=macros, solver=solver, whole=whole, turbulence_block=block_only,
+                   by_solver=enabled("case.regions.whole", checks), compressed=compressed) \
+        if enabled("conformance.as_run", checks) else None
+    regions = solved is not None and solved.regions     # decided once (`AsRun.regions`)
 
     def read(item: SpecItem) -> deck.Found:
-        return deck.read(case, item, macros=macros)
+        return deck.read(case, item, macros=macros, solver=solver, regions=regions, whole=whole,
+                         compressed=compressed)
 
     def add(**kw) -> None:
         if kw["name"] in names:
@@ -324,9 +374,10 @@ def draft_spec(case_dir: str | Path, *, task: str | None = None,
             item = SpecItem(**kw)
         except ValueError:
             return
-        if _probe(case, item, macros) is None:
+        if _probe(case, item, macros, solver, regions, whole, compressed) is None:
             return
-        if solved is not None and names_the_mesh(item):
+        if solved is not None and (names_the_mesh(item)
+                                   or (as_ran and not item.file.startswith("0/"))):
             written = read(item)
             if solved.read(item, written, rel=0.0).value != written.value:
                 return
@@ -336,12 +387,15 @@ def draft_spec(case_dir: str | Path, *, task: str | None = None,
     # Boundary-condition parameters. Fields are listed from 0/ and 0.orig/; each value is read
     # the way conformance will read it, so one rewritten by the run (setFields) comes from
     # 0.orig/ and one that cannot be read at all is left out of the draft.
-    fields = sorted({p.name for d in ("0", "0.orig") if (case / d).is_dir()
+    fields = sorted({p.name.removesuffix(".gz") if compressed else p.name
+                     for d in ("0", "0.orig") if (case / d).is_dir()
                      for p in (case / d).iterdir()
-                     if p.is_file() and not p.name.startswith(".") and not p.name.endswith(".orig")})
+                     if p.is_file() and not p.name.startswith(".") and not p.name.endswith(".orig")
+                     and not (compressed and p.name.endswith(".orig.gz"))})
     for name in fields:
-        src = "0" if (case / "0" / name).is_file() else "0.orig"
-        text, _ = deck._read_text(case, f"{src}/{name}")
+        zero = deck.opened(case, f"0/{name}") if compressed else f"0/{name}"
+        rel = zero if (case / zero).is_file() else f"0.orig/{name}"
+        text, _ = deck._read_text(case, rel, gunzip=compressed)
         try:
             bf = deck.block(text or "", "boundaryField")
         except deck.KeywordNotEvaluated:
@@ -350,6 +404,8 @@ def draft_spec(case_dir: str | Path, *, task: str | None = None,
             continue
         for patch, body in deck.blocks(bf):
             bc_type = deck.entry(body, "type")
+            if solver and bc_type is not None:
+                bc_type = deck.word(bc_type)             # `type "fixedValue";` (VPA-SPEC-6)
             for key in BC_PARAMETERS.get(bc_type or "", ()):
                 if deck.entry(body, key) is None:
                     continue
@@ -365,11 +421,16 @@ def draft_spec(case_dir: str | Path, *, task: str | None = None,
     # Properties, forces, run control, modelling choices.
     properties = _PROPERTIES
     if solved is not None and _probe(case, SpecItem(name="a", file=_MODULE[0], key="application",
-                                                    value="x"), macros) == "foamRun":
+                                                    value="x"), macros, solver, regions, whole) == "foamRun":
         properties = (*_PROPERTIES, _MODULE)
     for file, path, key, name, choice in properties:
         if not (case / file).is_file():
             continue
+        if block_only and file in _TURBULENCE_FILES and path in (("RAS",), ("LES",)):
+            regime = _probe(case, SpecItem(name="r", file=file, key="simulationType", value="x"),
+                            macros, solver, regions, whole)
+            if regime != path[0]:
+                continue                                # not the block the case runs
         is_text = key in _TEXT_KEYS
         probe = SpecItem(name=name, file=file, path=path, key=key,
                          value="x" if is_text else 0.0)
@@ -395,10 +456,10 @@ def draft_spec(case_dir: str | Path, *, task: str | None = None,
     # The mesh: cell counts are a modelling choice; surface geometry is identity.
     if include_mesh and (case / "system/blockMeshDict").is_file():
         cells = _probe(case, SpecItem(name="c", file="system/blockMeshDict", blocks="cells",
-                                      value=(0.0,)), macros)
+                                      value=(0.0,)), macros, solver, regions, whole)
         if cells:
             add(name="mesh cells", file="system/blockMeshDict", blocks="cells",
-                value=tuple(cells), modelling_choice=True)
+                value=tuple(cast(list[float], cells)), modelling_choice=True)   # a cells read
     tri = case / "constant" / "triSurface"
     if tri.is_dir():
         for surf in sorted(p for p in tri.iterdir()

@@ -12,7 +12,8 @@ app = typer.Typer(help="The Courant Test: can AI do engineering simulation, and 
 
 @app.command("build")
 def build() -> None:
-    """Build judge-v0 from certification/corpus (tasks and hash-locked labels)."""
+    """Build judge-v0 from certification/corpus (tasks and hash-locked labels), in a checkout of
+    the repository; it writes them over the packaged copies in courant/ctest/data."""
     from courant.ctest.build import LABELS, TASKS, build_judge_v0, write
 
     tasks, labels = build_judge_v0()

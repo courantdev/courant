@@ -309,9 +309,13 @@ def test_the_verdict_says_which_region_dictionaries_were_read(cht, tmp_path):
     case = _copy(cht, tmp_path)
     default, nxt = verify_path(case), verify_path(case, checks="next")
     assert sentences.MULTI_REGION_MERGED in default.not_assessed
-    assert sentences.MULTI_REGION_KEYED_READ in nxt.not_assessed
+    # Under next each region's thermophysicalProperties is read too (`case.regions.whole`,
+    # T-MULTI-REGION-2), and the sentence says so; 0.7.0's words stay for a region not read.
+    assert sentences.MULTI_REGION_KEYED_THERMO_READ in nxt.not_assessed
     assert sentences.MULTI_REGION_KEYED not in nxt.not_assessed
+    assert sentences.MULTI_REGION_KEYED_READ not in nxt.not_assessed
     assert "system/<region>/" in sentences.MULTI_REGION_KEYED_READ
+    assert "system/<region>/" in sentences.MULTI_REGION_KEYED_THERMO_READ
 
 
 # ---------------------------------------------------------------- the region checkMesh logs
@@ -448,8 +452,8 @@ def test_a_regions_zero_that_cannot_be_read_is_said_under_next(cht, tmp_path, re
     assert "0/region1/: PermissionError: Permission denied" in said and "0/air/" not in said
     from courant.verify import sentences
 
-    assert sentences.MULTI_REGION_KEYED_PART in v.not_assessed
-    assert sentences.MULTI_REGION_KEYED_READ not in v.not_assessed
+    assert sentences.MULTI_REGION_KEYED_THERMO_PART in v.not_assessed      # T-MULTI-REGION-2
+    assert sentences.MULTI_REGION_KEYED_THERMO_READ not in v.not_assessed
 
 
 def test_a_missing_regions_zero_is_named(cht, tmp_path):
@@ -463,11 +467,13 @@ def test_the_sentence_claims_the_regions_read_only_when_each_was(cht, tmp_path):
     from courant.verify import sentences
 
     case = _copy(cht, tmp_path)
-    assert sentences.MULTI_REGION_KEYED_READ in verify_path(case, checks="next").not_assessed
+    # The thermo variants under next (T-MULTI-REGION-2: each region's thermo read too).
+    nxt = verify_path(case, checks="next").not_assessed
+    assert sentences.MULTI_REGION_KEYED_THERMO_READ in nxt
     (case / "system" / "plate" / "fvSchemes").unlink()
     v = verify_path(case, checks="next")
-    assert sentences.MULTI_REGION_KEYED_PART in v.not_assessed
-    assert sentences.MULTI_REGION_KEYED_READ not in v.not_assessed
+    assert sentences.MULTI_REGION_KEYED_THERMO_PART in v.not_assessed
+    assert sentences.MULTI_REGION_KEYED_THERMO_READ not in v.not_assessed
 
 
 # ---------------------------------------------------------------- the per-field join (m3)
@@ -486,3 +492,24 @@ def test_a_regions_residual_is_relaxed_by_its_regions_own_factor(cht, tmp_path):
     assert equation_relaxation(config, "p_rgh@air") == 1.0           # pressure: never
     assert equation_relaxation(config, "h@nowhere") == 1.0
     assert equation_relaxation(config, "h") == 1.0                   # no region: not a region's
+
+
+def test_a_count_that_is_not_a_finite_number_is_left_unread(tmp_path):
+    """The invariants test (inv6, mutant `system/fvSolution+huge`): `nOuterCorrectors 1e999999;`
+    ended `CaseConfig.from_foam` in an OverflowError, and `nan` in a ValueError. A count that is
+    not a finite number is not read; the rest of the file still is."""
+
+    from courant.case import _foam_reader
+    from courant.case.config import CaseConfig
+
+    src = Path(__file__).resolve().parents[1] / "fixtures" / "moving_mesh" / "mixer_moving"
+    for i, bad in enumerate(("1e999999", "-1e999999", "nan", "inf")):
+        case = tmp_path / str(i)
+        shutil.copytree(src, case)
+        fv = case / "system" / "fvSolution"
+        fv.write_text(re.sub(r"nOuterCorrectors\s+[^;]+;", f"nOuterCorrectors {bad};",
+                             fv.read_text()))
+        cfg = CaseConfig.from_foam(str(case))
+        assert cfg.n_outer_correctors is None and cfg.n_correctors == 1   # the rest still read
+    assert _foam_reader._count(3.0) == 3 and _foam_reader._count(None) is None
+    assert _foam_reader._count(float("inf")) is None and _foam_reader._count(float("nan")) is None

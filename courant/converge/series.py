@@ -29,6 +29,7 @@ import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from courant.case.reads import is_dir, kind, may_read, reading
 from courant.converge.assess import (
@@ -342,7 +343,8 @@ def discover(case_dir: Path, checks: str = "default") -> Discovery:
                 findings.append(Finding("CONV.RESTART_OVERLAP", "WARN", mid, "M1-S-5",
                                         {"fraction": RESTART_MAJORITY},
                                         {"monitor": mid, "discarded_samples": discarded,
-                                         "discarded_time_range": list(span)}))
+                                         # _merge_restarts sets span whenever discarded > 0
+                                         "discarded_time_range": list(cast(tuple, span))}))
                 if discarded > RESTART_MAJORITY * (len(merged) + discarded):
                     reason = "RESTART_OVERLAP_MAJORITY"
             if total and bad > BAD_ROW_FRACTION * total:

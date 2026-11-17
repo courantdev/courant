@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from courant.ctest.build import load_labels, load_tasks
 from courant.ctest.judges import make
 from courant.ctest.judges.llm import PROMPT_VERSION, LLMJudge, judge_request
@@ -80,4 +82,5 @@ def _batched(judge: LLMJudge, tasks, measurement: str | None, split: str,
                             content=judge_request, task="judge", measurement=judge.measurement)
     answers = [JudgeAnswer.model_validate(held[t.task_id]["answer"]) for t in tasks]
     calls = [call for t in tasks for call in held[t.task_id]["calls"]]
-    return answers, calls, max(held.finished.values(), default=None)
+    # Ledger.mark writes a "ts" stamp on every line; only a hand-edited ledger lacks one.
+    return answers, calls, max(cast("dict[str, str]", held.finished).values(), default=None)

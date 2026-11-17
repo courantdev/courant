@@ -268,7 +268,8 @@ class Ledger:
                               sent=False) from None
 
     def _reserve_locked(self, line: dict, clock, per_minute: int, window: timedelta,
-                        day_limit, spend_cap: SpendCap | None = None) -> Reservation | float:
+                        day_limit: int | Callable[[date], int | None] | None,
+                        spend_cap: SpendCap | None = None) -> Reservation | float:
         """``reserve``'s one locked step. The clock is read here, under the lock, so a
         reservation is stamped after every one appended before it and is counted by every
         one appended after it."""
@@ -548,7 +549,7 @@ class Checkpoint:
         return {item_id: record.get("result", NO_RESULT)
                 for item_id, record in self._lines(keys).items()}
 
-    def finished(self, keys: Mapping[str, str] | None = None) -> dict[str, str]:
+    def finished(self, keys: Mapping[str, str] | None = None) -> dict[str, str | None]:
         """``{id: ledger stamp}``: when each item done was finished, as ``held`` reads them."""
         return {item_id: record.get("ts") for item_id, record in self._lines(keys).items()}
 

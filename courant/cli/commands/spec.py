@@ -7,16 +7,21 @@
 
 `check` needs no log: conformance is decided by the case as set up, so it can run before the
 solver spends anything. Exit codes: 0 every named value matches; 2 a value does not; 3 a
-value could not be read, or the specification is impossible in itself (SPEC-9); 4 the inputs
-could not be read.
+value could not be read, the specification is impossible in itself (SPEC-9), or a value does not
+match an extracted specification nobody confirmed (VER-5.12: not binding); 4 the inputs could
+not be read.
 """
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import typer
+
+if TYPE_CHECKING:
+    from courant.spec.model import Provenance
 
 app = typer.Typer(help="Write, lock and check a task specification (courant.spec/1).",
                   no_args_is_help=True, add_completion=False)
@@ -88,8 +93,11 @@ def check(
 ) -> None:
     """Is this case the problem that was asked? Every named value, compared to the case."""
     from courant.spec import SpecError, check_conformance, load_spec
+    from courant.verify import policy
     from courant.verify.checks import MODES
+    from courant.verify.ingest import InputError, lock_of
     from courant.verify.schema import canonical_json
+    from courant.verify.verdict2 import extracted_unconfirmed
 
     if checks not in MODES:
         print(f"courant spec check: --checks is one of {', '.join(MODES)}, not {checks!r}",
@@ -103,10 +111,17 @@ def check(
     except SpecError as exc:
         print(f"courant spec check: {exc}", file=sys.stderr)
         raise typer.Exit(4) from exc
-    locked = spec_sha256.strip().lower() if spec_sha256 else None
+    try:
+        locked = lock_of(spec_sha256, checks)           # VPA-ORDER-1: `spec.lock_strict`
+    except InputError as exc:
+        print(f"courant spec check: {exc}", file=sys.stderr)
+        raise typer.Exit(4) from exc
     block = check_conformance(spec_model, case, spec_sha256=sha, locked_sha256=locked,
                               checks=checks)
-    if locked and locked != sha:
+    # VER-5.12, SPEC-7: an extracted specification nobody confirmed is not binding; a mismatch
+    # against it can only make the answer insufficient (exit 3), never "does not conform" (2).
+    unconfirmed = extracted_unconfirmed(spec_model.model_dump(mode="json", by_alias=True))
+    if locked and policy.spec_void(block):
         print(f"SPECIFICATION CHANGED  {spec} is {sha[:12]}, locked at {locked[:12]}")
         raise typer.Exit(3)
     if block.invalid:                                   # SPEC-9: nothing was compared
@@ -124,6 +139,8 @@ def check(
         ok = sum(1 for i in block.items if i.conforms)
         head = ("CONFORMS" if not block.nonconformant and not block.unreadable
                 else "DOES NOT CONFORM" if block.nonconformant else "NOT FULLY CHECKED")
+        if unconfirmed and (block.nonconformant or block.unreadable):
+            head = f"{head} · UNCONFIRMED EXTRACTION: not binding"
         print(f"{head}  {ok} of {len(block.items)} specified values match · spec {sha[:12]}")
         width = max(len(i.name) for i in block.items)
         for i in block.items:
@@ -132,7 +149,8 @@ def check(
                       (i.note or f"{i.found} in the case, {i.specified} specified")
                       if i.conforms is False else f"not checked: {i.note}")
             print(f"  {mark} {i.name:<{width}}  {detail}")
-    raise typer.Exit(2 if block.nonconformant else 3 if block.unreadable else 0)
+    raise typer.Exit(2 if block.nonconformant and not unconfirmed
+                     else 3 if block.nonconformant or block.unreadable else 0)
 
 
 @app.command("extract")
@@ -144,7 +162,8 @@ def extract(
 ) -> None:
     """Draft a specification from a task in words through the model door (SPEC-7).
 
-    The draft is shown, hashed and marked extracted. Until a person confirms it
+    The task's text is sent to the provider the door chooses, named before it is contacted;
+    a call the door refuses contacts nothing. The draft is shown, hashed and marked extracted. Until a person confirms it
     (`courant spec confirm --by NAME`) it is not binding: a mismatch can only make a verdict
     insufficient, never reject. If no model may extract it, the exit code is 4 (SPEC-8: only a model
     measured by RRD RM-23).
@@ -223,8 +242,9 @@ def confirm_(
     target = out or spec
     Path(target).write_text(confirmed.to_json())
     print(spec_sha256(target))
-    print(f"confirmed by {confirmed.provenance.confirmed_by} on "
-          f"{confirmed.provenance.confirmed_date}: {target} is binding; lock this hash",
+    prov = cast("Provenance", confirmed.provenance)      # confirm() always sets it
+    print(f"confirmed by {prov.confirmed_by} on "
+          f"{prov.confirmed_date}: {target} is binding; lock this hash",
           file=sys.stderr)
 
 
@@ -247,6 +267,7 @@ def lock(spec: str = typer.Argument(..., help="A courant.spec/1 file.")) -> None
     if binding(spec_model):
         print(f"{spec}: binding; a value the case does not match rejects the run", file=sys.stderr)
     else:
-        print(f"{spec}: extracted by {spec_model.provenance.model or 'a model'} and UNCONFIRMED; "
+        prov = cast("Provenance", spec_model.provenance)  # not binding => provenance is set
+        print(f"{spec}: extracted by {prov.model or 'a model'} and UNCONFIRMED; "
               "a mismatch only makes the verdict insufficient. To make it binding: courant spec "
               "confirm --by NAME, then lock the new hash", file=sys.stderr)

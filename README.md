@@ -7,8 +7,8 @@ engineer's) and the person who signs it. Without a task specification it decides
 OpenFOAM run is *valid*. With the task the run was asked to solve, it decides whether the run is
 *the problem that was asked*.
 
-Every verdict is `accept`, `reject` or `insufficient`, and every reason cites the file it read,
-the method, the threshold and the value. Deterministic code decides every verdict; no language
+Every verdict is `accept`, `reject` or `insufficient`, and every reason cites the file it read
+and the method, with the threshold and the value wherever its check has one. Deterministic code decides every verdict; no language
 model is in the verdict's path. Courant never edits a case, never runs a solver, and its checks
 never use the network.
 
@@ -22,10 +22,11 @@ never use the network.
 
 <sub>Two real OpenFOAM v2406 runs of the pitzDaily tutorial, from `certification/corpus/`. Run A
 is the tutorial as shipped. Run B is the same case with its pressure solver's tolerance loosened
-from 1e-06 to 0.01. The solver ends both with `End`, exit 0. Their residuals are read by the
-parser the verdict uses, and the verdicts are `courant verify --json` on the same two files:
-A is accepted (rule VER-5.6); B is rejected (rule VER-5.4), first reason
-`residual.not_converged`.</sub>
+from 1e-06 to 0.01, its relative tolerance from 0.1 to 0.3, and its
+iterations capped at 5 (`maxIter 5`). The solver ends both with
+`End`, exit 0. Their residuals are read by the parser the verdict uses, and the verdicts are
+`courant verify --json` on the same two files: A is accepted (rule VER-5.6); B is rejected
+(rule VER-5.4), first reason `residual.not_converged`.</sub>
 
 ## What it catches
 
@@ -140,7 +141,7 @@ The solver exited normally on this run. The verdict says why it cannot be accept
 not checked. The exit code is the verdict's: `accept` 0, `reject` 2, `insufficient` 3, and 4 for
 an input that cannot be read. `--json` prints the same verdict as canonical JSON
 (`courant.verdict/2`), `--html` and `--report md` as a report, and `--pack` writes an evidence
-pack that `--check-pack` re-derives from its inputs. `--spec` with `--spec-sha256` adds the task:
+pack that `--check-pack` re-derives from its inputs (exit 5 when it does not). `--spec` with `--spec-sha256` adds the task:
 every value the specification names is checked against the case
 ([Getting started](https://github.com/courantdev/courant/blob/main/docs/GETTING-STARTED.md),
 section 2b).
@@ -149,7 +150,8 @@ section 2b).
 
 Deterministic code decides every verdict, number and grade. A language model may draft prose,
 and may extract a task specification that is shown, hashed and can only lower a verdict to
-`insufficient`; nothing else, and nothing a model writes is in the verdict's path. Courant never
+`insufficient`; nothing else a model writes reaches the verdict, and no model is called on its
+path. Courant never
 edits a case, never runs a solver, and its checks never use the network. A pull request that
 lets a model, a threshold nobody recorded or the network into the verdict's path is not merged
 ([CONTRIBUTING.md](https://github.com/courantdev/courant/blob/main/CONTRIBUTING.md)).
@@ -212,7 +214,7 @@ run, and fails the check unless every run is accepted. Its logic is `courant gat
 the same way on any CI system.
 
 ```yaml
-- uses: courantdev/courant/.github/actions/courant-gate@v0.7.0
+- uses: courantdev/courant/.github/actions/courant-gate@v0.7.1
   with:
     paths: runs/*.log.gz
     spec: task/spec.json
@@ -227,13 +229,14 @@ run, which any CI system shows.
 | Command | What it does |
 |---|---|
 | `courant verify <case or log>` | `accept`, `reject` or `insufficient` (exit 0, 2 or 3; `courant.verdict/2`), with the basis it was judged on and what was not checked. `--spec` with `--spec-sha256` checks every value a task specification names against the case. `--html`, `--report md`, `--json`, `--pack` and `--check-pack` (an evidence pack anyone can re-derive), `--batch` with `--junit`, `--record`, `--about` |
-| `courant spec init / hash / check / lock / confirm / extract` | Draft a task specification from a reference case, lock it by hash, and check a case against it before or after its run |
+| `courant spec init / hash / check / lock / confirm / extract` | Draft a task specification from a reference case, lock it by hash, and check a case against it before or after its run. `extract` (a model drafting a specification from the task's text) exits 4 and contacts nothing until a model is measured for extraction |
 | `courant gate` | The CI check, and the [GitHub Action](https://github.com/courantdev/courant/tree/main/.github/actions/courant-gate): verify the runs a repository names, one summary row per run, one evidence pack per run |
 | `courant preflight <case>` | A broken setup, caught before the solver spends anything |
 | `courant convergence <case>` | Where the monitored answer stopped changing, and the iterations, wall clock and core-hours after it |
 | `courant watch <case>` | A read-only live advisory while the solver runs, with `--exit-on-fail` for job scripts |
 | `courant audit <dir>` | What a folder of runs cost, and how much of it bought nothing |
-| `courant test run --judge …` | The Courant Test: score any judge, including an AI model, on real OpenFOAM runs |
+| `courant precheck <dir>` | One offline archive of a folder's evidence packs and a summary, to send instead of the cases: no log, deck, mesh or field file unless `--include-logs`, run names replaced with `--redact-paths`. `--check` verifies an archive you received |
+| `courant test run --judge …` | The Courant Test: score a judge on real OpenFOAM runs. A model judge (`llm:`) stops with exit 3 and contacts nothing until that model is measured for judging (see NETWORK.md) |
 | `courant mcp` | The same tools for any AI agent over MCP, read-only and confined to the directories named; `score_agent_output` tells an agent, before it reports, whether its run is a silent error |
 | `courant doctor`, `courant update`, `courant version` | Diagnostics and a support bundle you send yourself; a signed update of the binary |
 
@@ -248,10 +251,11 @@ verify a run. What it reads when it is there:
 | Setting | What it does |
 |---|---|
 | `courant.toml` | For `courant gate` and `courant verify --batch`: `fail-on`, `pack-store`, `courant-version`, and `[[run]]` tables of `paths`, `outputs`, `spec` and `spec-sha256`. An unknown key is an error that names it |
-| `COURANT_GATE_*` | Every `courant gate` option as an environment variable; the Action sets them from its inputs |
-| `COURANT_CACHE_DIR` | Where `--batch` keeps its verdict cache (else `~/.cache/courant/verdicts`); off by default where `CI` is set |
+| `COURANT_GATE_*` | Every `courant gate` option but `--jobs`, `--cache` and `--debug` as an environment variable; the Action sets them from its inputs |
+| `COURANT_CACHE_DIR` | Where `courant verify --batch` and `courant gate --cache` keep the verdict cache (else `$XDG_CACHE_HOME/courant/verdicts`, else `~/.cache/courant/verdicts`); for `--batch`, off by default where `CI` is set; for `courant gate`, off unless `--cache` |
 | `COURANT_DEBUG=1` | Print the traceback of an internal error, as `--debug` does |
 | `COURANT_REQUIRE_SIGNATURE=1` | The installer refuses a binary whose signature it cannot check |
+| `COURANT_SKIP_VERIFY=1` | On a machine with neither `sha256sum` nor `shasum`, the installer installs the binary without comparing its SHA-256 (without it, it refuses) |
 | `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY` | Used only by the commands whose purpose is a model call you name, and `courant doctor` says whether one is set; a paid model is refused unless `COURANT_ALLOW_PAID_LLM=1` is set. A key may also sit in a `.env` file; `COURANT_NO_DOTENV=1` ignores it |
 
 A fixture repository's `courant.toml`, whose check fails on purpose:
@@ -291,12 +295,14 @@ the rates that ship with each version):
 
 - **Detection:** 31 of 31 real runs judged correctly. 0 of 23 wrong results accepted and 0 of 8
   good results rejected.
-- **The wrong problem:** on 20 real runs with the right physics and a wrong input (inlet
-  doubled, viscosity tripled, gravity rotated, geometry scaled, end time cut), the verdict
+- **The wrong problem:** on 20 real runs with the right physics and a wrong input (among them
+  inlet or lid speed doubled, viscosity tripled, gravity rotated, geometry scaled, end time cut,
+  mesh coarsened, turbulence model swapped), the verdict
   without a specification rejected 8 of 20; against the task specification, 20 of 20.
 - **Before the run:** preflight caught 8 of 23 broken setups, and flagged 0 of 8 good ones.
-- **Fixed budgets:** where the answer settled, 1,023 of 1,999 iterations (51.2%, pitzDaily)
-  and 547 of 999 (54.8%, T3A) came after it.
+- **Fixed budgets:** on one run each of two tutorials, made to run a fixed iteration budget
+  (their `residualControl` removed), 1,023 of 1,999 iterations (51.2%, pitzDaily) and 547 of
+  999 (54.8%, T3A) came after the monitored answer settled.
 - **Reproducible:** evidence packs re-derive byte for byte, 31 of 31.
 - **Beside frontier models:** on the same 420 real runs, given the task's specification, Courant
   accepted 0 of 264 wrong runs; Claude Opus 5.5 accepted 69 of 264, Claude Sonnet 5.5 76 of 263
@@ -304,7 +310,8 @@ the rates that ship with each version):
 - **At scale:** on 1,827 real runs, 0 of 609 faulted and 0 of 609 wrong-problem runs were
   accepted with the task's specification.
 
-Every figure, its interval and its pre-registered bar, including the one that missed, are in
+Every figure, its interval and its pre-registered bar, including the two that missed (faulted
+runs accepted blind, 3 of 609; right runs rejected, 34 of 609), are in
 [RESULTS.md](https://github.com/courantdev/courant/blob/main/RESULTS.md).
 
 "Certified" here means measured against a real solver, with the error rate published. It is not
@@ -319,6 +326,7 @@ courant/
   gate/            courant gate, behind the GitHub Action
   case/            an OpenFOAM case as the solver read it: dictionaries, mesh, regime
   watcher/         the log parser: solver output to events
+  events/          the event types the parser emits
   verification/    the physics checks and the grade
   diagnosis/       findings and probable causes
   converge/        where the answer stopped changing

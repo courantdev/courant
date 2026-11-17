@@ -24,9 +24,13 @@ import glob
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 from courant.gate.config import ConfigError, GateConfig, RunGroup
 from courant.verify.outcome import check_fails, first_reason, spec_integrity
+
+if TYPE_CHECKING:
+    from courant.verify.verdict2 import VerdictV2
 
 EXIT_PASS, EXIT_FAIL, EXIT_UNJUDGED = 0, 1, 4
 _LOG_SUFFIXES = (".log", ".log.gz")
@@ -141,7 +145,7 @@ class Judged:
     target: Path
     sidecar: Path | None
     group: RunGroup
-    verdict: object | None = None
+    verdict: VerdictV2 | None = None       # verify_batch's verdict; None exactly when error is set
     error: str | None = None
 
 
@@ -179,11 +183,21 @@ def judge_groups(root: Path, config: GateConfig, *, jobs: int = 1, cache=None
     judged: list[Judged] = []
     problems_all: list[Row] = []
     hits = 0
-    seen: set[Path] = set()
+    seen: dict[Path, RunGroup] = {}
     for group in config.runs:
         runs, problems = _targets(root, group)
+        for label, t, _c in runs:
+            first = seen.get(t)
+            # SEC070-11: a run is judged once, so two groups that would judge it against other
+            # specifications are refused, never settled silently by their order.
+            if first is not None and (first.spec, first.spec_sha256) != (group.spec,
+                                                                       group.spec_sha256):
+                raise ConfigError(
+                    f"{label} is named by two run groups with different specifications "
+                    f"({first.spec or 'none'} and {group.spec or 'none'}); name each run in one "
+                    "group, so it is judged against one specification")
         runs = [(label, t, c) for label, t, c in runs if t not in seen]
-        seen.update(t for _, t, _ in runs)
+        seen.update((t, group) for _, t, _ in runs)
         for p in problems:
             p.failed = True
             p.why = p.error or ""
@@ -218,7 +232,7 @@ def run_gate(root: str | Path, config: GateConfig, *, packs_dir: str | Path | No
             result.rows.append(Row(run=j.label, kind="unreadable", error=j.error, failed=True,
                                    why=j.error))
             continue
-        verdict = j.verdict
+        verdict = cast("VerdictV2", j.verdict)    # error is None, so verify_batch gave a verdict
         reason = first_reason(verdict)
         fails = check_fails(verdict, config.fail_on)
         row = Row(run=j.label, kind="verdict", verdict=verdict.verdict, basis=verdict.basis,

@@ -84,7 +84,9 @@ against what ran:
   at twice it, and neither conforms. When no single scale does it (a mesh moved, snapped or
   rebuilt, a curved edge bulging past its points), the item is not checked.
 
-A mesh that is there but that the reader cannot read whole (binary, past the size bound summed
+A mesh is read ascii or binary (TRD FLD-7: `courant.case.polymesh`, sizes from the header's
+`arch`). A mesh that is there but that the reader cannot read whole (binary in a form it does
+not read, past the size bound summed
 over every rank before any is read, compressed, any rank of a decomposed one) leaves the mesh
 items not checked (VER-5.9), never compared on blockMeshDict alone. A case with no mesh files at
 all is compared with blockMeshDict only when there is no log (`courant spec check` before
@@ -100,6 +102,7 @@ import stat
 from dataclasses import dataclass, field, replace
 from functools import cached_property
 from pathlib import Path
+from typing import cast
 
 from courant.case import reads
 from courant.spec import deck
@@ -113,6 +116,12 @@ _CREATE_MESH = re.compile(r"^Create (?:(?:fluid|solid) mesh for region \S+|mesh(
                           r" for time = (\S+)", re.MULTILINE)
 _SELECTED = re.compile(r"^Selecting (RAS|LES) (?:turbulence |momentum transport )?model (\S+)",
                        re.MULTILINE)
+#: The regime the solver selected from `simulationType`, printed before any model: v2406's
+#: `Selecting turbulence model type <simulationType>` (TurbulenceModel.C's `New`), OpenFOAM.org's
+#: `Selecting momentum transport model type <simulationType>`. A laminar run prints no
+#: `Selecting RAS|LES` line, so this is the log's only word on it (review 0.7.0, A7-4).
+_SELECTED_TYPE = re.compile(r"^Selecting (?:turbulence|momentum transport) model type (\S+)",
+                            re.MULTILINE)
 #: What a solver prints when it ends a run on a criterion of the case's own before `endTime`:
 #: residualControl met (`simpleControl`, `pimpleControl`: "SIMPLE solution converged in 285
 #: iterations"), or a `runTimeControl` function object's conditions met.
@@ -123,6 +132,8 @@ _RUN_TIME_CONTROL = re.compile(r"\btype\s+runTimeControl\s*;")
 _CONTROL = "system/controlDict"
 _TURBULENCE_FILES = ("constant/turbulenceProperties", "constant/momentumTransport")
 _MODEL_KEYS = ("RASModel", "LESModel", "model")
+#: The regimes `simulationType` selects (turbulenceModel.C), the words a note may name.
+_REGIMES = frozenset({"laminar", "RAS", "LES"})
 _SCALE_KEYS = ("scale", "convertToMeters")
 #: The words OpenFOAM's `Switch` reads as false (`Switch.C`).
 _OFF = frozenset({"false", "off", "no", "n", "f", "none", "0"})
@@ -237,6 +248,13 @@ class Run:
         m = _SELECTED.search(self.log_text)
         return (m.group(1), m.group(2)) if m else None
 
+    @cached_property
+    def selected_type(self) -> str | None:
+        """The `simulationType` the solver selected, as its log printed it (`_SELECTED_TYPE`, the
+        first such line), or None when the log does not say."""
+        m = _SELECTED_TYPE.search(self.log_text)
+        return m.group(1) if m else None
+
 
 @dataclass(frozen=True)
 class SolvedMesh:
@@ -275,12 +293,40 @@ def _same_time(a: float, b: float) -> bool:
 class AsRun:
     """`deck.read`'s value for an item, checked against what ran. One per conformance check."""
 
-    def __init__(self, case_dir: str | Path, run: Run | None = None, *, macros: bool = False):
+    def __init__(self, case_dir: str | Path, run: Run | None = None, *, macros: bool = False,
+                 by_solver: bool = False, solver: bool = False,
+                 turbulence_block: bool = False, whole: bool = False,
+                 compressed: bool = False):
         self.case = Path(case_dir)
         self.run = run
         #: `deck.read`'s `macros` (`spec.directives`): a later start time's file read as the
         #: deck reader reads `0/` in the same mode.
         self.macros = macros
+        #: `solver_mesh`'s `by_solver` (`case.regions.whole`, TRD VER-3e): a stray
+        #: `regionProperties` beside a single-region solver's log leaves its mesh named.
+        self.by_solver = by_solver
+        #: `deck.read`'s `solver` (`spec.read_as_solver`, VPA-SPEC-1/3/4/6): a later start time's
+        #: file read as the deck reader reads `0/` in the same mode, and a patch's type read from
+        #: the entry the solver applies to it (`deck.patch_entry`).
+        self.solver = solver
+        #: `spec.read_whole` (deck-oracle DO-3, DO-4): `deck.read`'s `whole`, and system/controlDict
+        #: read as the solver reads it for the entries the end time is judged on (`control_text`).
+        self.whole = whole
+        #: `spec.turbulence_block` (VPA-DRAFT-1): a model item whose block is not the regime that
+        #: ran does not conform (`_model`).
+        self.turbulence_block = turbulence_block
+        #: `deck.read`'s `compressed` (`case.zero_compressed`, TRD VER-3f): a `0/` file or a later
+        #: start time's read from its `.gz` as OpenFOAM opens it, and a patch's type with it.
+        self.compressed = compressed
+        #: Whether the case may have been solved as regions, on the log's solver, else
+        #: `application`: decided here, once (`_foam_reader.regions_not_ruled_out`), and passed
+        #: down to the group lookup and the regime. Asked only under the two names above.
+        self.regions = False
+        if solver or turbulence_block:
+            from courant.case._foam_reader import regions_not_ruled_out
+
+            self.regions = regions_not_ruled_out(self.case,
+                                                 run.executable if run is not None else None)
 
     # ---------------------------------------------------------------- dispatch
     def read(self, item, found: deck.Found, *, rel: float) -> deck.Found:
@@ -304,6 +350,11 @@ class AsRun:
             if (item.file in _TURBULENCE_FILES and len(item.path) == 1
                     and item.path[0] in ("RAS", "LES") and item.key in _MODEL_KEYS):
                 return self._model(item, found)
+            # SPEC-13 (`spec.turbulence_block`): the regime item reads the regime that ran by the
+            # same rule as the model item, never the deck alone (review 0.7.0, A7-4, R2).
+            if (self.turbulence_block and item.file in _TURBULENCE_FILES and not item.path
+                    and item.key == "simulationType"):
+                return self._simulation_type(item, found)
             if item.file.endswith("blockMeshDict") and not item.path and item.key in _SCALE_KEYS:
                 return self._scale(item, found)
         except Exception as exc:                        # noqa: BLE001 - a reader limit, not a verdict
@@ -379,14 +430,20 @@ class AsRun:
                 continue
             path = root / directory / rest
             rel = path.relative_to(self.case).as_posix()
+            if self.compressed:                         # `<time>/T`, else `<time>/T.gz`
+                rel = deck.opened(self.case, rel)
+                path = self.case / rel
             there = reads.kind(path, stat.S_ISREG)
             if there is None:                           # the start time cannot be searched
                 return deck.Found(None, rel,
-                                  note=f"unreadable: {reads.reason(reads.unknown(path))}")
+                                  note=f"unreadable: "    # kind None: unknown has the error
+                                       f"{reads.reason(cast(OSError, reads.unknown(path)))}")
             if not there:
                 continue
             try:
-                got = deck._read_one(self.case, rel, item, self.macros)
+                got = deck._read_one(self.case, rel, item, self.macros, solver=self.solver,
+                                     regions=self.regions, whole=self.whole,
+                                     gunzip=self.compressed)
             except Exception as exc:                    # noqa: BLE001 - a reader limit
                 return deck.Found(None, rel, note=f"unreadable: {reads.reason(exc)}")
             return self._applied(item, replace(got, basis=_join(
@@ -407,13 +464,21 @@ class AsRun:
         if item.patch is None or item.sha256 is not None:
             return found
         try:
-            text, _ = deck._read_text(self.case, found.file)
+            text, _ = deck._read_text(self.case, found.file, gunzip=self.compressed)
             bf = deck.block(text or "", "boundaryField")
-            body = deck.block(bf, item.patch) if bf is not None else None
+            why = None
+            if bf is None:
+                body = None
+            elif self.solver:                           # the entry the solver applies (VPA-SPEC-1)
+                body, _, why = deck.patch_entry(self.case, bf, item.patch, regions=self.regions)
+            else:
+                body = deck.block(bf, item.patch)
             raw = deck.entry(body, "type") if body is not None else None
         except Exception as exc:                        # noqa: BLE001 - a reader limit
             return deck.Found(None, found.file, note=f"the type of {item.patch} in {found.file} "
                                                      f"could not be read: {reads.reason(exc)}")
+        if why is not None:
+            return deck.Found(None, found.file, note=why)
         if body is None:
             return found                                # no such patch: the deck's note stands
         from courant.spec.check import BC_PARAMETERS
@@ -517,26 +582,39 @@ class AsRun:
         end = _number(found.value)
         if end is None:
             return found
-        text, _ = deck._read_text(self.case, _CONTROL)
-        stop = (deck.entry(text or "", "stopAt") or "endTime").strip().strip('"')
+        text = control_text(self.case, self.whole)
+        stop = (deck.entry(text, "stopAt") or "endTime").strip().strip('"')
         if stop.lower() != "endtime":
             how = _STOP_AT.get(stop.lower(), f"as '{stop}' says")
             return deck.Found(f"stopAt {stop}", _CONTROL,
                               note=f"system/controlDict sets stopAt {stop}: the solver stops "
                                    f"{how}, not at its endTime {_fmt(end)}")
-        how, reached, basis = end_against(self.run, end, rel=rel, control_text=text or "")
+        how, reached, basis = end_against(self.run, end, rel=rel, control_text=text)
         if how in ("unknown", "reached"):
             return found
         if how == "own":
             return replace(found, basis=basis)
-        return deck.Found(reached, self.run.log_name,
-                          note=f"the run ended at t = {_fmt(reached)} ({self.run.log_name}), "
+        run = cast(Run, self.run)                   # end_against says "unknown" without a run
+        return deck.Found(reached, run.log_name,
+                          note=f"the run ended at t = {_fmt(reached)} ({run.log_name}), "
                                f"{how} its endTime {_fmt(end)}")
 
     # ---------------------------------------------------------------- the turbulence model
     def _model(self, item, found: deck.Found) -> deck.Found:
         if not isinstance(found.value, str):
             return found
+        if self.turbulence_block:
+            # VPA-DRAFT-1: only the block the regime selects is read by the solver; a model named
+            # in another is not what ran, whatever it says.
+            ran = self._regime_ran(found.file)
+            if ran is not None and ran[0] != item.path[0]:
+                regime, logged_it = ran
+                note = f"the {item.path[0]} block is not the one the case runs ({regime})"
+                if not logged_it:
+                    return deck.Found(f"simulationType {regime}", found.file, note=note)
+                # The log said it, not the file: cite the log (review 0.7.0, A7-4, R1).
+                return deck.Found(f"simulationType {regime}", cast(Run, self.run).log_name,
+                                  note=note, basis=self._logged_regime(regime, found.file))
         text, _ = deck._read_text(self.case, found.file)
         body = deck.block(text or "", item.path[0])
         switch = deck.entry(body, "turbulence") if body is not None else None
@@ -545,12 +623,120 @@ class AsRun:
                               note=f"{item.path[0]}/turbulence is {switch} in {found.file}: no "
                                    f"equation of {found.value} is solved, and the eddy "
                                    "viscosity stays at its initial field")
-        logged = self.run.selected_model if self.run else None
+        if self.turbulence_block:
+            # A log line is the file's only when no region's or phase's could be it (`_logged`):
+            # the regime above and this model read the same lines (recheck A74-RC-1).
+            logged = self._logged(found.file)[0]
+        else:
+            logged = self.run.selected_model if self.run else None
         if logged and logged[0] == item.path[0] and logged[1] != found.value:
-            return deck.Found(logged[1], self.run.log_name,
+            return deck.Found(logged[1], cast(Run, self.run).log_name,   # logged: a run
                               basis=f"the {logged[0]} model the log selected; {found.file} "
                                     f"names {found.value}")
         return found
+
+    def _simulation_type(self, item, found: deck.Found) -> deck.Found:
+        """The "turbulence regime" item (`simulationType`) under `spec.turbulence_block`: the
+        regime that ran, by the one rule the model item reads (`_regime_ran`). A log that selected
+        another regime than the deck names now decides, and is cited (review 0.7.0, A7-4, R2).
+
+        Only when the item's file was read: a file absent or unreadable stays unread, as in
+        `_model`, never filled from the log. Nor when a phase may have read its own file beside it
+        (`_per_phase`: a sibling named for a phase constant/phaseProperties lists, or a list that
+        cannot be read): each `Selecting` line is then one phase's, not this file's (recheck F1,
+        A74-RC-2)."""
+        if not isinstance(found.value, str) or self._per_phase(item.file):
+            return found
+        ran = self._regime_ran(item.file)
+        if ran is None or not ran[1] or ran[0] == found.value:
+            return found
+        return deck.Found(ran[0], cast(Run, self.run).log_name,
+                          basis=self._logged_regime(ran[0], item.file))
+
+    def _logged_regime(self, regime: str, file: str) -> str:
+        """How a regime read from the log is known, and what `file` says beside it."""
+        deck_says = self._deck_regime(file)
+        named = (f"{file} names {deck_says}" if deck_says is not None
+                 else f"{file} names none of laminar, RAS, LES that could be read")
+        return f"the {regime} regime {cast(Run, self.run).log_name} selected; {named}"
+
+    def _regime(self, file: str) -> str | None:
+        """The turbulence regime that ran (`_regime_ran`), without where it was read."""
+        ran = self._regime_ran(file)
+        return ran[0] if ran is not None else None
+
+    def _regime_ran(self, file: str) -> tuple[str, bool] | None:
+        """The turbulence regime that ran, and whether the log said it: the one the log selected
+        (`Selecting RAS ...`, else `Selecting turbulence model type laminar`), else the case's
+        `simulationType` in `file` as the deck reader reads it in this mode; None when neither
+        says, or names none of OpenFOAM's three (whose text is never quoted). The log is what the
+        solver read: a deck whose `simulationType` was edited after the run, or cannot be read,
+        does not decide against it (review 0.7.0, A7-4). Only lines that are `file`'s
+        (`_logged`)."""
+        logged, selected = self._logged(file)
+        if logged:
+            return logged[0], True
+        if selected in _REGIMES:
+            return cast(str, selected), True
+        on_deck = self._deck_regime(file)
+        return (on_deck, False) if on_deck is not None else None
+
+    def _logged(self, file: str) -> tuple[tuple[str, str] | None, str | None]:
+        """The log's `Selecting RAS|LES ... model X` (`Run.selected_model`) and `Selecting
+        turbulence model type X` (`Run.selected_type`), when they are `file`'s; (None, None) when
+        no line is known to be. Not when the case may have been solved as regions (the
+        verdict-path audit's review: a multi-region log prints one per region, in its order), nor
+        when `file` has a phase's file beside it (`_per_phase`), nor when the log names more than
+        one model (two regimes or two models, or a `type` line whose regime is not its model's):
+        each line is then one model's of several, none known to be this file's. The one reading of
+        the log for the model item and the regime item alike (recheck A74-RC-1, A74-RC-2)."""
+        if self.run is None or self.regions or self._per_phase(file):
+            return None, None
+        models = set(_SELECTED.findall(self.run.log_text))
+        types = set(_SELECTED_TYPE.findall(self.run.log_text))
+        if len(models) > 1 or len(types) > 1 or (
+                models and types and next(iter(models))[0] not in types):
+            return None, None
+        return self.run.selected_model, self.run.selected_type
+
+    def _per_phase(self, file: str) -> bool:
+        """Whether a phase may have read its own file beside `file`: a sibling
+        `<file>.<phase>` (`constant/turbulenceProperties.air`, OpenFOAM's `IOobject::groupName`;
+        its `.gz` alike) whose suffix is a phase `constant/phaseProperties` lists
+        (`_foam_reader.read_phase_properties`, what the phase system read). A phase system reads
+        one file per phase and logs `Selecting` lines for each, so no line is the case-level
+        file's. A sibling that names no listed phase (`.bak`, `.orig`), or any sibling of a case
+        with no phaseProperties (no Euler phase system ran; a particle solver's single
+        continuous-phase file logs one model), is a backup: the log stays the case's
+        (recheck A74-RC-2). When the list cannot be read whole, any sibling may be a phase's, and
+        no log line is credited to `file`."""
+        from courant.case._foam_reader import read_phase_properties
+
+        path = self.case / file
+        try:
+            suffixes = {p.name[len(path.name) + 1:].removesuffix(".gz")
+                        for p in path.parent.glob(f"{path.name}.*") if p.is_file()}
+        except OSError:
+            return True
+        if not suffixes:
+            return False
+        try:
+            phases = read_phase_properties(self.case)
+        except (OSError, ValueError):
+            return True
+        return phases is not None and not suffixes.isdisjoint(phases)
+
+    def _deck_regime(self, file: str) -> str | None:
+        """The case's `simulationType` in `file` as the deck reader reads it in this mode; None
+        when it cannot be read or names none of OpenFOAM's three."""
+        from courant.spec.model import SpecItem
+
+        probe = SpecItem(name="turbulence regime", file=file, key="simulationType", value="x")
+        value = deck.read(self.case, probe, macros=self.macros, solver=self.solver,
+                          regions=self.regions, whole=self.whole).value
+        if not isinstance(value, str):
+            return None
+        return value if value in _REGIMES else None
 
     # ---------------------------------------------------------------- the mesh
     @cached_property
@@ -559,14 +745,14 @@ class AsRun:
         metrics' too), or None when the case holds no mesh files at all.
 
         A mesh that cannot be named (a multi-region case, a collated decomposition, a rank
-        missing, ...) or read whole (binary, past the size bound summed over every rank before
-        any is read, compressed, any rank of it) comes back with no count or points and a note:
+        missing, ...) or read whole (binary in a form not read (FLD-7), past the size bound
+        summed over every rank before any is read, compressed, any rank of it) comes back with no count or points and a note:
         the mesh items are then not checked, never compared on blockMeshDict alone."""
         from courant.case import polymesh
         from courant.case.mesh import POLYMESH_MAX_BYTES, solver_mesh
 
         found = solver_mesh(self.case, self.run.log_text if self.run is not None else None,
-                            start=_number(self.start[0]))
+                            start=_number(self.start[0]), by_solver=self.by_solver)
         if found.why:
             return SolvedMesh(found.where, note=found.why)
         if not found.dirs:
@@ -598,16 +784,17 @@ class AsRun:
         where = d.relative_to(self.case).as_posix()
         lists = "its owner and neighbour lists"
         try:
-            owner = polymesh._read(d / "owner", lambda p: polymesh._labels(polymesh._body(p)[0]))
-            neighbour = polymesh._read(d / "neighbour",
-                                       lambda p: polymesh._labels(polymesh._body(p)[0]))
+            # Binary as well as ascii (FLD-7): the tutorials' own `writeFormat binary` writes
+            # a binary polyMesh, and the mesh items are not checked on a mesh left unread.
+            owner = polymesh.read_labels(d / "owner", binary=True)
+            neighbour = polymesh.read_labels(d / "neighbour", binary=True)
             cells = polymesh.cell_count(owner, neighbour, polymesh.noted_cells(d / "owner"))
         except polymesh.UnsupportedFormat as exc:       # "owner is binary: convert it ..."
             return SolvedMesh(where, note=f"{where}/{exc}")
         except (ValueError, OSError) as exc:
             return SolvedMesh(where, note=f"{where} could not be read: {reads.reason(exc)}")
         try:
-            points = polymesh._read(d / "points", polymesh._points)
+            points = polymesh.read_points(d / "points", binary=True)
         except polymesh.UnsupportedFormat as exc:
             return SolvedMesh(where, cells=cells, cells_basis=lists, note=f"{where}/{exc}")
         except (ValueError, OSError) as exc:
@@ -625,7 +812,7 @@ class AsRun:
         if unread is not None:
             return SolvedMesh(where, note=unread.note)
         basis = f"its owner and neighbour lists, summed over its {len(parts)} ranks"
-        cells = sum(p.cells for p in parts)
+        cells = sum(cast(int, p.cells) for p in parts)     # none is None (above)
         unread = next((p for p in parts if p.points is None), None)
         if unread is not None:
             return SolvedMesh(where, cells=cells, cells_basis=basis, note=unread.note)
@@ -654,7 +841,7 @@ class AsRun:
                               basis=f"the cell count of {said}")
         if found.value is None:
             return found
-        written = [float(x) for x in found.value]
+        written = [float(x) for x in cast(list, found.value)]   # a cells item reads a list
         blocks = _cell_total(written)
         asked = ([float(x) for x in item.value] if isinstance(item.value, (list, tuple))
                  else None)
@@ -699,8 +886,8 @@ class AsRun:
         points = _array(mesh.points)
         placed, why = _placed(text, points, [_deck_scale(text)])
         if placed is None:
-            return None, why
-        return _block_counts(text, placed, points, len(found.value) // 3)
+            return None, cast(str, why)                 # _placed gives why with no vertices
+        return _block_counts(text, placed, points, len(cast(list, found.value)) // 3)
 
     def _scale(self, item, found: deck.Found) -> deck.Found:
         """The scale at which blockMeshDict's vertices are points of the solved mesh, and its
@@ -753,6 +940,22 @@ class AsRun:
         return deck.Found(None, mesh.where,
                           note=f"no single scale puts {found.file}'s {n} block vertices on "
                                f"{said} ({how}), so the scale it was solved at is not known")
+
+
+def control_text(case: str | Path, whole: bool = False) -> str:
+    """`system/controlDict`'s comment-stripped text ("" when it cannot be read), for the entries
+    the end time is judged on (`stopAt`, a `runTimeControl` function object). With `whole`
+    (`spec.read_whole`, `--checks next`) read as the solver reads it (`deck.expand`): an
+    `#include`d function object is seen, as simpleCar's `#include "runTimeControls"` (deck-oracle
+    DO-4); without it as 0.7.0 reads it, as written. `#includeFunc` is not followed."""
+    case = Path(case)
+    text, _ = deck._read_text(case, _CONTROL)
+    if text and whole:
+        try:
+            return deck.expand(text, case / _CONTROL, case)
+        except Exception:  # noqa: BLE001 - a reader limit, never a traceback: as written
+            return text
+    return text or ""
 
 
 def end_against(run: Run | None, end: float, *, rel: float,

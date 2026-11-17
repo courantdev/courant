@@ -25,7 +25,6 @@ from __future__ import annotations
 import json
 import os
 import platform
-import shutil
 import stat
 import sys
 import tempfile
@@ -76,8 +75,8 @@ def update(
 ) -> None:
     """Update this Courant binary to the current release, downloaded from github.com.
 
-    The one visible command whose purpose is a network call: a packaged binary downloads the
-    release and its signed checksums from github.com. A pip installation is managed by pip, and this
+    Its purpose is a network call: a packaged binary downloads the release and its signed
+    checksums from github.com. A pip installation is managed by pip, and this
     prints the pip command and contacts nothing.
     """
     console.print(f"This agent: [cyan]{__version__}[/cyan]")
@@ -201,13 +200,10 @@ def _replace(destination: Path, payload: bytes) -> None:
         with os.fdopen(handle, "wb") as fh:
             fh.write(payload)
         os.chmod(staged, os.stat(destination).st_mode | stat.S_IXUSR)
-
-        # Keep the old binary until the new one is proven to start. An update
-        # that leaves a machine with no working agent is worse than a stale one.
-        backup = destination.with_suffix(".old")
-        shutil.copy2(destination, backup)
+        # No `<name>.old` copy: it was deleted straight after the swap, so it kept nothing, and
+        # shutil.copy2 followed a symlink planted at that name and overwrote its target
+        # (security review 0.7.0, SEC070-4). The rename alone is atomic.
         os.replace(staged, destination)
-        backup.unlink(missing_ok=True)
     except Exception:
         Path(staged).unlink(missing_ok=True)
         raise

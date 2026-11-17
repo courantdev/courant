@@ -14,8 +14,12 @@ import argparse
 import contextvars
 import threading
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 from courant.mcp import tools
+
+if TYPE_CHECKING:
+    import os
 
 INSTRUCTIONS = (
     "Courant verifies engineering simulations. After running an OpenFOAM case, call "
@@ -35,6 +39,11 @@ def unconfined_default(roots: list[str]) -> str | None:
     root would let the tools read every file the user can: so in /, in the home directory, and
     in any directory that holds it (/Users, /home), whose root would hold every user's home
     directory, the roots must be named."""
+    if any(not str(r).strip() for r in roots):
+        # SEC070-19: an empty root (an unset variable in a client's config) resolves to the
+        # working directory, which is what this guard is for.
+        return ("an empty --root names no directory (an unset variable?): name each directory "
+                "the tools may read")
     if roots:
         return None
     cwd = Path.cwd().resolve()
@@ -96,7 +105,7 @@ def build(roots: list[str] | None = None, timeout: float | None = TIMEOUT):
 
     from courant import __version__
 
-    confine = tools.Confinement(roots or [])
+    confine = tools.Confinement(cast("list[str | os.PathLike[str]]", roots or []))   # str is a root
     server = MCPServer(name="courant", instructions=INSTRUCTIONS, version=__version__)
     ro = ToolAnnotations(read_only_hint=True, destructive_hint=False,
                          idempotent_hint=True, open_world_hint=False)
@@ -132,7 +141,10 @@ def build(roots: list[str] | None = None, timeout: float | None = TIMEOUT):
         every value it names checked against the case: a run that solved a different problem
         is rejected. A log still being written (no `End` yet and no fatal error) is
         insufficient (`insufficient.truncated_log`), not a crash: verify again once the solver
-        has finished.
+        has finished. `case_json` is the captured-configuration sidecar (`*.case.json`) of a
+        solver log given as `path`; with a case directory it is not read, since the case's own
+        files are, though it must still be inside the roots. A run that cannot be read at
+        `path` is answered with `{"error": ...}`.
         """
         return _guard("verify_run", lambda: tools.verify_run(
             path, case_json, spec, spec_sha256, schema, confine=confine))
@@ -148,8 +160,12 @@ def build(roots: list[str] | None = None, timeout: float | None = TIMEOUT):
         `reported_success` is whether you are about to tell the user the run worked. Returns
         the verdict (courant.verdict/2, or /1 with schema=1), `task_class` (the outcome:
         valid_conformant, invalid, nonconformant, insufficient or did_not_execute),
-        `silent_error` (it executed, you would report success, and it is rejected) and
-        `unverified_success` (the same, with insufficient).
+        `silent_error` (it executed, you would report success, and task_class is invalid or
+        nonconformant: the gate rejects it) and `unverified_success` (it executed, you would
+        report success, and task_class is insufficient: an insufficient verdict, or an accept on
+        any basis but `validity+conformance`, such as a specification not locked by a matching
+        `spec_sha256`). A log with no line `End`, or with a FOAM FATAL error, is did_not_execute
+        and raises neither flag.
         """
         return _guard("score_agent_output", lambda: tools.score_agent_output(
             case, spec, spec_sha256, reported_success, schema, confine=confine))
@@ -161,7 +177,8 @@ def build(roots: list[str] | None = None, timeout: float | None = TIMEOUT):
 
         Read-only. `path` is a case directory with function-object output under
         postProcessing/ (forces, forceCoeffs, surfaceFieldValue, probes), or a solver log.
-        Set transient_average for a transient run whose answer is a time-average.
+        Set transient_average for a transient run whose answer is a time-average. A run that
+        cannot be read at `path` is answered with `{"error": ...}`.
         """
         return _guard("check_convergence", lambda: tools.check_convergence(
             path, transient_average, confine=confine))

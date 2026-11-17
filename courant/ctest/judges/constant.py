@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from courant.ctest.schema import JudgeAnswer, Task
+from typing import cast
+
+from courant.ctest.schema import JudgeAnswer, Task, Verdict
 
 _VALID = ("TRUSTWORTHY", "NOT_TRUSTWORTHY", "NOT_ASSESSABLE")
 
@@ -11,7 +13,7 @@ class ConstantJudge:
     def __init__(self, verdict: str):
         if verdict not in _VALID:
             raise ValueError(f"constant judge verdict must be one of {_VALID}")
-        self.verdict = verdict
+        self.verdict: Verdict = cast(Verdict, verdict)      # checked against _VALID above
         self.name = f"constant:{verdict}"
 
     def judge(self, task: Task) -> JudgeAnswer:

@@ -80,6 +80,9 @@ runs:
       shell: bash
       env:
         COURANT_VERSION: ${{ inputs.courant-version }}
+        # A runner with no verifier refuses rather than installs an unauthenticated binary
+        # (security review 0.7.0, SEC070-2).
+        COURANT_REQUIRE_SIGNATURE: "1"
       # The one step that uses the network for Courant: the installer from this action's own
       # repository and ref (packaging/install.sh) downloads the binary from the releases of
       # github.com/courantdev/courant and checks it against the release's SHA256SUMS, and that

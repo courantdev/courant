@@ -48,6 +48,13 @@ _region_dicts_read = ("Each region's fvSchemes and fvSolution (system/<region>/)
                       "conditions of its start fields (0/<region>/) were read, in place of the "
                       "top level's; its constant/<region>/ dictionaries (the thermophysical model, "
                       "turbulence) were not.")
+#: The same when each region's thermophysicalProperties was read too (`case.regions.whole`, TRD
+#: VER-3e: `CaseConfig.region_thermo` holds every region): an ESI CHT solver's layout.
+_region_dicts_thermo_read = ("Each region's fvSchemes and fvSolution (system/<region>/), its "
+                             "thermophysical model (constant/<region>/thermophysicalProperties) "
+                             "and its start fields (0/<region>/: the boundary conditions, and the "
+                             "fields its solver must read) were read, in place of the top "
+                             "level's; its turbulence dictionary was not.")
 MULTI_REGION_KEYED_READ = ("This is a multi-region log: each residual was read under the region "
                            "the log names for it (field@region). " + _region_dicts_read)
 MULTI_REGION_KEYED_COURANT_READ = ("This is a multi-region log: each residual was read under the "
@@ -58,11 +65,30 @@ MULTI_REGION_KEYED_COURANT_READ = ("This is a multi-region log: each residual wa
 _region_dicts_part = ("The regions' own fvSchemes, fvSolution (system/<region>/) and start fields "
                       "(0/<region>/) were read in place of the top level's, except those named "
                       "as not found or not read; their constant/<region>/ dictionaries were not.")
+_region_dicts_thermo_part = ("The regions' own fvSchemes, fvSolution (system/<region>/), "
+                             "thermophysical models (constant/<region>/thermophysicalProperties) "
+                             "and start fields (0/<region>/) were read in place of the top "
+                             "level's, except those named as not found or not read; their "
+                             "turbulence dictionaries were not.")
 MULTI_REGION_KEYED_PART = ("This is a multi-region log: each residual was read under the region "
                            "the log names for it (field@region). " + _region_dicts_part)
 MULTI_REGION_KEYED_COURANT_PART = ("This is a multi-region log: each residual was read under the "
                                    "region the log names for it (field@region), and the Courant "
                                    "number is the largest region's. " + _region_dicts_part)
+MULTI_REGION_KEYED_THERMO_READ = ("This is a multi-region log: each residual was read under "
+                                  "the region the log names for it (field@region). "
+                                  + _region_dicts_thermo_read)
+MULTI_REGION_KEYED_COURANT_THERMO_READ = (
+    "This is a multi-region log: each residual was read under the region the log names for it "
+    "(field@region), and the Courant number is the largest region's. "
+    + _region_dicts_thermo_read)
+MULTI_REGION_KEYED_THERMO_PART = ("This is a multi-region log: each residual was read under "
+                                  "the region the log names for it (field@region). "
+                                  + _region_dicts_thermo_part)
+MULTI_REGION_KEYED_COURANT_THERMO_PART = (
+    "This is a multi-region log: each residual was read under the region the log names for it "
+    "(field@region), and the Courant number is the largest region's. "
+    + _region_dicts_thermo_part)
 #: Under `case.regions`: some regions have a checkMesh log (`log.checkMesh.<region>`) and not all,
 #: so the metrics are those logs' worst and the other regions' meshes were not checked. Names no
 #: region.
@@ -300,6 +326,23 @@ def keywords_not_evaluated(unevaluated) -> str:
         which="the field was" if len(unevaluated) == 1 else "each field was")
 
 
+def fields_not_found(names) -> str:
+    """The start fields a region's solver must read (`_foam_reader.REGION_FIELDS`; TRD VER-3e)
+    that its `0/<region>/` does not hold (`CaseConfig.missing`, `0/plate/p`). Fields, not
+    dictionaries every solver reads: no setup rule waited on them, and the solver cannot start
+    from this directory without them."""
+    names = list(names)
+    which = f"field {names[0]} was" if len(names) == 1 else f"fields {', '.join(names)} were"
+    return (f"A start {which} not found that the case's solver must read: it cannot start from "
+            "this directory as it is.")
+
+
+def is_field(name: str) -> bool:
+    """Whether a `CaseConfig.missing` entry is a start field (`0/<region>/<field>`), not a
+    dictionary or a directory (`0/<region>/`)."""
+    return name.startswith("0/") and not name.endswith("/")
+
+
 def not_found(names) -> str:
     """The dictionaries every OpenFOAM solver reads that the case directory does not hold
     (`CaseConfig.missing`). A solver cannot start without them, so the directory is not the case
@@ -492,6 +535,8 @@ NOT_CHECKED_CAUSE: dict[str, str] = {
     MULTI_REGION_MERGED: "run", MULTI_REGION_KEYED: "run", MULTI_REGION_KEYED_COURANT: "run",
     MULTI_REGION_KEYED_READ: "run", MULTI_REGION_KEYED_COURANT_READ: "run",
     MULTI_REGION_KEYED_PART: "run", MULTI_REGION_KEYED_COURANT_PART: "run",
+    MULTI_REGION_KEYED_THERMO_READ: "run", MULTI_REGION_KEYED_COURANT_THERMO_READ: "run",
+    MULTI_REGION_KEYED_THERMO_PART: "run", MULTI_REGION_KEYED_COURANT_THERMO_PART: "run",
     MESH_REGIONS_PARTIAL: "run",
     MULTI_REGION_COUPLED: "run", MULTI_REGION_PREFIX_UNREAD: "fork",
     # What the gate does not sum, on a mesh that moves or a non-conformal interface: Courant's.

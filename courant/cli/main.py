@@ -6,9 +6,10 @@ The product:
   convergence  where the engineering answer stopped changing, and what came after
   preflight    a broken setup, caught before the solver spends anything
   audit        what a folder of runs cost, and how much of it bought nothing
+  precheck     every run under a directory, verified here into one archive to send
   watch        a read-only advisory while the solver runs
   test         the Courant Test: score a judge, including an AI model
-  demo         three real runs, offline, in seconds
+  demo         four real runs, offline, in seconds
   mcp          the same tools for an AI agent, over MCP
 
 Every command is local and read-only, and none opens a network connection unless that is its
@@ -25,16 +26,17 @@ from rich.console import Console
 
 from courant.cli.commands import audit as audit_cmds
 from courant.cli.commands import convergence as convergence_cmds
+from courant.cli.commands import ctest as ctest_cmds
 from courant.cli.commands import doctor as doctor_cmds
 from courant.cli.commands import gate as gate_cmds
-from courant.cli.commands import update as update_cmds
-from courant.cli.commands import verify as verify_cmds
-from courant.cli.commands import ctest as ctest_cmds
 from courant.cli.commands import live as live_cmds
 from courant.cli.commands import mcp as mcp_cmds
+from courant.cli.commands import precheck as precheck_cmds
 from courant.cli.commands import preflight as preflight_cmds
 from courant.cli.commands import spec as spec_cmds
 from courant.cli.commands import tour as tour_cmds
+from courant.cli.commands import update as update_cmds
+from courant.cli.commands import verify as verify_cmds
 
 
 class _Guarded(typer.Typer):
@@ -57,7 +59,8 @@ app = _Guarded(
     pretty_exceptions_enable=False,
     add_completion=False,
     help=("Courant: verify engineering simulation results. Is this run trustworthy, did its "
-          "answer converge, and if not, why. Local and read-only."),
+          "answer converge, and if not, why. Local: the commands listed here read runs and never "
+          "edit them, and contact the network only where their help says so."),
     no_args_is_help=True,
 )
 console = Console()
@@ -78,6 +81,7 @@ app.command()(gate_cmds.gate)
 app.command()(convergence_cmds.convergence)
 app.command()(preflight_cmds.preflight)
 app.command()(audit_cmds.audit)
+app.command()(precheck_cmds.precheck)
 app.command()(live_cmds.watch)
 app.command()(tour_cmds.demo)
 app.command()(mcp_cmds.mcp)

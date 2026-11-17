@@ -13,6 +13,7 @@ import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from pydantic import BaseModel, ConfigDict
 
@@ -160,7 +161,8 @@ class MeshQuality(BaseModel):
         bounding_box = None
         if box:
             v = [float(x) for x in box.groups()]
-            bounding_box = (tuple(v[:3]), tuple(v[3:]))
+            bounding_box = cast("tuple[tuple[float, float, float], tuple[float, float, float]]",
+                                (tuple(v[:3]), tuple(v[3:])))  # six groups: 3 + 3
         directions = re.search(
             r"Mesh has \d solution \(non-empty\) directions \(([01]) ([01]) ([01])\)", text)
         volume = re.search(r"Total volume = ([-+\d.eE]+?)\.?\s", text)
@@ -175,7 +177,8 @@ class MeshQuality(BaseModel):
             mesh_ok=mesh_ok,
             bounding_box=bounding_box,
             total_volume=float(volume.group(1)) if volume else None,
-            solution_directions=(tuple(int(x) for x in directions.groups())
+            solution_directions=(cast("tuple[int, int, int]",    # three groups
+                                      tuple(int(x) for x in directions.groups()))
                                  if directions else None),
             zero_area_faces=_ZERO_AREA in text,
             n_zero_area_faces=int(zero_set.group(1)) if zero_set else None,
@@ -298,6 +301,35 @@ class _Hidden(str):
         return out
 
 
+def polymesh_bytes(files) -> int:
+    """The bytes `files` hold as the mesh reader reads them: a plain file's size, a `.gz`'s
+    decompressed length, counted in 1 MiB pieces and stopped once the total passes
+    `POLYMESH_MAX_BYTES`. The bound on a mesh read plain or gzipped, so a mesh is read gzipped
+    exactly when it is read unzipped (T-GZ-CASE round 2). Each file must be regular before it is
+    opened (`reads.regular_file`), so a FIFO raises `NotRegularFile` and never blocks. Raises
+    `OSError` (or a gzip error) for a file that cannot be read."""
+    import gzip
+
+    from courant.case.reads import regular_file
+
+    total = 0
+    for f in files:
+        f = Path(f)
+        regular_file(f)
+        if not f.name.endswith(".gz"):
+            total += f.stat().st_size
+        else:
+            with gzip.open(f, "rb") as fh:
+                while total <= POLYMESH_MAX_BYTES:
+                    piece = fh.read(2**20)
+                    if not piece:
+                        break
+                    total += len(piece)
+        if total > POLYMESH_MAX_BYTES:
+            break
+    return total
+
+
 def is_time(name: str) -> bool:
     """Whether a directory name is a time: a finite number. The one rule (`time_dirs`, the heat
     reader's tables)."""
@@ -305,6 +337,20 @@ def is_time(name: str) -> bool:
         return math.isfinite(float(name))
     except ValueError:
         return False
+
+
+# The directories directly in a case that its readers read, besides a time (`is_time`) and a
+# collated decomposition (`_COLLATED`): the one list (`is_read_by_its_case`).
+CASE_READ_DIRS = frozenset({"constant", "system", "postProcessing", "0.orig"})
+
+
+def is_read_by_its_case(name: str) -> bool:
+    """Whether a directory of this name, directly in a case directory, is one the case's own
+    readers read: `constant` (and its regions and `polyMesh`), `system`, `postProcessing`,
+    `0.orig`, a time (`is_time`, `0` included) or a collated `processors<N>`. Everything below
+    it is the case's too. A numeric name cannot be told from a time by its name alone, so a
+    directory named `100` directly in a case is taken for a time (GATE-14, T-PRECHECK-2)."""
+    return name in CASE_READ_DIRS or is_time(name) or bool(_COLLATED.fullmatch(name))
 
 
 def time_dirs(root: Path) -> list[str]:
@@ -344,7 +390,8 @@ def _instance(root: Path, start: float | None,
     timed = [n for n, there in found if there]
     if timed and start is None:
         return None, f"time {timed[0]} carries its own polyMesh, and the run's start is not known"
-    before = [n for n in timed if float(n) <= start + 1e-12] if timed else []
+    # `timed` with `start` None returned above
+    before = [n for n in timed if float(n) <= cast(float, start) + 1e-12] if timed else []
     if before:
         d = root.joinpath(before[-1], *sub, "polyMesh")
         if _has_owner(d):
@@ -388,13 +435,18 @@ def rank_dirs(case: Path) -> list[Path]:
 
 
 def solver_mesh(case_dir: str | Path, log_text: str | None = None, *,
-                start: float | None = None, region: str | None = None) -> SolverMesh:
+                start: float | None = None, region: str | None = None,
+                by_solver: bool = False) -> SolverMesh:
     """The mesh the solver read, or why it cannot be named: the one rule, for the mesh metrics
     (`solver_polymesh`, VER-7a) and for conformance's mesh items (`courant.spec.as_run`,
     SPEC-13). `log_text` is the run's log, `start` the time it started from (None: not known).
 
     - A case holding `constant/regionProperties` (a multi-region case reads
-      `constant/<region>/polyMesh`, one per region): not named.
+      `constant/<region>/polyMesh`, one per region): not named. With `by_solver`
+      (`case.regions.whole`, `--checks next`, TRD VER-3e) unless the solver (the log's, else
+      `controlDict`'s `application`, as the case reader takes it) is a known single-region one
+      (`_foam_reader.single_region_solver`): such a solver beside a stray `regionProperties` read
+      its own mesh; an unknown or in-house solver keeps the mesh unnamed.
     - A parallel run (`ran_parallel`, either signal) read its ranks: `processor<N>/`, each at its
       instance (`_instance`), all of them present and, when its banner gives `nProcs`, as many.
       A collated decomposition (`processors<N>/`), no rank directories, a rank without a mesh,
@@ -421,20 +473,21 @@ def solver_mesh(case_dir: str | Path, log_text: str | None = None, *,
         collated = []
     decomposed = bool(collated) or any(is_dir(r.joinpath("constant", *sub, "polyMesh"))
                                        for r in rank_dirs(case))
-    # Any regionProperties leaves the mesh not named, whatever the solver: the conservative side
-    # of `_foam_reader.multi_region` (which also asks the solver, for the case reader). A mesh not
-    # named is not checked and the verdict says so; a single-region solver beside a stray file
-    # did read constant/polyMesh, but the committed tests hold this reading
-    # (test_mesh_polymesh_aspect `regions`, test_conformance_what_the_solver_read), and changing
-    # it is left to the orchestrator (T-MULTI-REGION's review, B1).
-    from courant.case._foam_reader import REGION_PROPERTIES
+    # A regionProperties leaves the mesh not named: under the default whatever the solver (the
+    # conservative side 0.7.0 ships, which test_mesh_polymesh_aspect `regions` and
+    # test_conformance_what_the_solver_read hold); with `by_solver` (VER-3e) unless the solver is
+    # a known single-region one (`_foam_reader.single_region_solver`, on the case reader's
+    # predicate). A mesh not named is not checked and the verdict says so.
+    from courant.case._foam_reader import REGION_PROPERTIES, single_region_solver
 
-    if region is None and is_file(case / REGION_PROPERTIES):
+    ran = solver_exec(log_text) if log_text else None
+    if region is None and is_file(case / REGION_PROPERTIES) and (
+            not by_solver or not single_region_solver(case, ran.program if ran else None)):
         return SolverMesh(why="a multi-region case (constant/regionProperties): each region reads "
                               "its own constant/<region>/polyMesh, which the reader does not read",
                           decomposed=decomposed)
     parallel = ran_parallel(log_text)
-    ex = solver_exec(log_text) if log_text else None
+    ex = ran
 
     mesh_dir = "/".join(("constant", *sub, "polyMesh"))
 
@@ -489,13 +542,14 @@ def solver_mesh(case_dir: str | Path, log_text: str | None = None, *,
                           "whether the solver read its ranks", decomposed=True)
 
 
-def _not_what_the_solver_read(case: Path, log_text: str | None) -> str | None:
+def _not_what_the_solver_read(case: Path, log_text: str | None, *,
+                              by_solver: bool = False) -> str | None:
     """Why `constant/polyMesh` may not be the mesh the metrics should read, or None: the mesh the
     solver read is not that one (`solver_mesh`, the one rule: parallel on either signal,
     multi-region, a time directory carrying its own polyMesh, the start not being known here),
     or the case is decomposed at all. The metrics keep v0.5.0's narrower reading (GATE-13): any
     decomposition leaves them unread, even beside a serial run's own mesh."""
-    found = solver_mesh(case, log_text)
+    found = solver_mesh(case, log_text, by_solver=by_solver)
     if found.why:
         return found.why
     if found.decomposed:
@@ -505,30 +559,38 @@ def _not_what_the_solver_read(case: Path, log_text: str | None) -> str | None:
     return None
 
 
-def solver_polymesh(case_dir: str, *, log_text: str | None = None, wedge: bool = False):
+def solver_polymesh(case_dir: str, *, log_text: str | None = None, wedge: bool = False,
+                    by_solver: bool = False):
     """`constant/polyMesh` as `courant.case.polymesh` reads it, or None: missing, not the mesh the
     solver read (`_not_what_the_solver_read`), above the cost bounds, binary or malformed, or a
     wedge mesh (read with `wedge`: VER-7d's skewness, which does not need the mesh's geometric
     directions). The one gate on reading the mesh files: `polymesh_quality` (VER-7a), the case
     reader's held wall temperatures (VER-17) and `skewness_of_faces_with_area` (VER-7d) ask it.
-    Notes each file it read (VER-14)."""
-    from courant.case.polymesh import FILES, read_polymesh
-    from courant.case.reads import refuse_outside
+    Each file is plain or `.gz` (`reads.plain_or_gz`, the one rule: the plain file first), as
+    OpenFOAM writes it with `writeCompression on` (T-GZ-CASE C5); a `.gz` is bounded decompressed
+    by `polymesh`. Notes each file it read under its own name (VER-14)."""
+    import gzip
+
+    from courant.case.polymesh import FILES, read_polymesh_dir
+    from courant.case.reads import plain_or_gz, refuse_outside
 
     case = Path(case_dir)
     d = case / "constant" / "polyMesh"
-    if not all(is_file(d / n) for n in FILES) or _not_what_the_solver_read(case, log_text):
+    files = {n: Path(plain_or_gz(str(d / n))) for n in FILES}
+    if not all(is_file(f) for f in files.values()) or _not_what_the_solver_read(
+            case, log_text, by_solver=by_solver):
         return None
     try:
-        for n in FILES:                 # MCP-3: sized and read only inside the roots
-            refuse_outside(d / n)
-        if sum((d / n).stat().st_size for n in FILES) > POLYMESH_MAX_BYTES:
+        for f in files.values():        # MCP-3: sized and read only inside the roots
+            refuse_outside(f)
+        if polymesh_bytes(files.values()) > POLYMESH_MAX_BYTES:
             return None
-        with open(d / "owner", "rb") as fh:
+        owner = files["owner"]
+        with (gzip.open(owner, "rb") if owner.name.endswith(".gz") else open(owner, "rb")) as fh:
             m = re.search(rb"nFaces:[ \t]*(\d{1,12})", fh.read(4096))
         if m and int(m.group(1)) > POLYMESH_MAX_FACES:
             return None
-        mesh = read_polymesh(case, max_faces=POLYMESH_MAX_FACES)   # notes each file (VER-14)
+        mesh = read_polymesh_dir(d, max_faces=POLYMESH_MAX_FACES)  # notes each file (VER-14)
     except Exception:  # noqa: BLE001 — binary, partial or malformed: no metrics, as no log
         return None
     if len(mesh.faces) > POLYMESH_MAX_FACES or \
@@ -548,7 +610,8 @@ VSMALL = 1.0e-300
 
 
 def skewness_of_faces_with_area(case_dir: str, quality: "MeshQuality", *,
-                                log_text: str | None = None) -> "MeshQuality":
+                                log_text: str | None = None,
+                                by_solver: bool = False) -> "MeshQuality":
     """`quality` with VER-7d's reading added when it applies, else `quality` itself.
 
     checkMesh reports faces of zero area and a maximum skewness above 4. v2406 computes a zero-
@@ -564,7 +627,8 @@ def skewness_of_faces_with_area(case_dir: str, quality: "MeshQuality", *,
     (|area| below VSMALL, `checkFaceAreas`) and of faces above the threshold of 4. Nothing
     applies, and checkMesh's maximum stands, for a mesh with a negative-volume cell, a patch type
     outside `_UNCOUPLED`, a zero-area face off an `empty` patch, a count that differs, or mesh
-    files `solver_polymesh` does not read."""
+    files `solver_polymesh` does not read (a parallel or multi-region run, binary, past the cost
+    bounds; a mesh written compressed is read, T-GZ-CASE)."""
     import numpy as np
 
     if not (quality.zero_area_faces and quality.max_skewness is not None
@@ -573,7 +637,7 @@ def skewness_of_faces_with_area(case_dir: str, quality: "MeshQuality", *,
             and quality.n_negative_volume_cells == 0 and quality.source is None):
         return quality
     try:
-        mesh = solver_polymesh(case_dir, log_text=log_text, wedge=True)
+        mesh = solver_polymesh(case_dir, log_text=log_text, wedge=True, by_solver=by_solver)
     except Exception:  # noqa: BLE001 — a directory that cannot be searched: v0.5.0's reading
         # `Path.is_file` raises on EACCES (Python 3.11 ignores ENOENT, ENOTDIR, EBADF and ELOOP
         # alone), and `read_mesh_quality`, which never raises, ended `courant verify` and
@@ -619,7 +683,8 @@ def solved_directions(empty):
     return np.ones(3, dtype=bool)
 
 
-def polymesh_quality(case_dir: str, *, log_text: str | None = None) -> "MeshQuality | None":
+def polymesh_quality(case_dir: str, *, log_text: str | None = None,
+                     by_solver: bool = False) -> "MeshQuality | None":
     """checkMesh's cell aspect ratio, from `constant/polyMesh` as the solver read it, or None.
 
     The definition is checkMesh's (`primitiveMeshTools::cellClosedness`, called by
@@ -640,7 +705,7 @@ def polymesh_quality(case_dir: str, *, log_text: str | None = None) -> "MeshQual
 
     from courant.case.polymesh import ROOTVSMALL
 
-    mesh = solver_polymesh(case_dir, log_text=log_text)
+    mesh = solver_polymesh(case_dir, log_text=log_text, by_solver=by_solver)
     if mesh is None:
         return None
     try:
@@ -669,6 +734,14 @@ def polymesh_quality(case_dir: str, *, log_text: str | None = None) -> "MeshQual
         return None
     return MeshQuality(n_cells=int(mesh.n_cells), max_aspect_ratio=float(ratio.max()),
                        source=POLYMESH_SOURCE, **extent)
+
+
+def regions_checkmesh_partial(case_dir: str, regions) -> bool:
+    """Whether some regions of a multi-region case have a checkMesh log and not all, so the mesh
+    reader read those alone (`read_mesh_quality`): the one predicate verify's and preflight's
+    `MESH_REGIONS_PARTIAL` ask (VER-3d, VER-3e). Nothing is opened."""
+    logs, absent = region_checkmesh_logs(case_dir, regions)
+    return bool(logs) and bool(absent)
 
 
 def region_checkmesh_logs(case_dir: str, regions) -> tuple[dict[str, Path], list[str]]:
@@ -713,7 +786,7 @@ def _regions_quality(logs: dict[str, Path]) -> MeshQuality | None:
 
     cells = total("n_cells")
     averages = [(q.average_non_orthogonality, q.n_cells) for q in parts]
-    average = (sum(a * n for a, n in averages) / cells
+    average = (sum(a * n for a, n in averages) / cells  # pyright: ignore[reportOperatorIssue]  (all() below: no None)
                if cells and all(a is not None and n for a, n in averages) else None)
     return MeshQuality(
         n_cells=cells, max_non_orthogonality=worst("max_non_orthogonality"),
@@ -728,7 +801,7 @@ def _regions_quality(logs: dict[str, Path]) -> MeshQuality | None:
 
 
 def read_mesh_quality(case_dir: str, *, polymesh: bool = False, log_text: str | None = None,
-                      regions=None) -> "MeshQuality | None":
+                      regions=None, by_solver: bool = False) -> "MeshQuality | None":
     """Mesh metrics from a checkMesh log already sitting in the case, or None.
 
     With `polymesh`, a case with no checkMesh log gets the aspect ratio computed from its mesh
@@ -754,6 +827,10 @@ def read_mesh_quality(case_dir: str, *, polymesh: bool = False, log_text: str | 
     `case.regions`): the regions' own checkMesh logs (`region_checkmesh_logs`) are the reading
     (`_regions_quality`), the worst of each metric; with some and not all, the counts that need
     every region are not given; with none, the case is read as without them.
+
+    `by_solver` (`case.regions.whole`, `--checks next`, TRD VER-3e): the mesh files are read for
+    a case beside a stray `regionProperties` whose log names a single-region solver
+    (`solver_mesh`'s `by_solver`).
     """
 
     from courant.case.reads import reading
@@ -784,5 +861,7 @@ def read_mesh_quality(case_dir: str, *, polymesh: bool = False, log_text: str | 
             return None
         # VER-7d: a zero-area face's skewness is not a measurement. Reads the mesh files (and
         # lists them, VER-14) only for a log that reports zero-area faces above the threshold.
-        return skewness_of_faces_with_area(case_dir, quality, log_text=log_text)
-    return polymesh_quality(case_dir, log_text=log_text) if polymesh else None
+        return skewness_of_faces_with_area(case_dir, quality, log_text=log_text,
+                                           by_solver=by_solver)
+    return polymesh_quality(case_dir, log_text=log_text, by_solver=by_solver) if polymesh \
+        else None

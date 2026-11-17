@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 from html import escape
+from typing import cast
 
 from courant.verify import about
 from courant.verify.verdict2 import AnyVerdict, VerdictV2
@@ -137,7 +138,7 @@ def _chart(series: dict[str, list[tuple[float, float]]], *, log_y: bool, title: 
     desc = (f"Line chart of {len(names)} series ({', '.join(names)}) against step, from step "
             f"{round(x0):,} to step {round(x1):,}"
             + ("; the vertical axis is the base-10 logarithm of the value" if log_y else "")
-            + (f"; the answer stopped changing at step {round(marker):,}" if marked else "") + ".")
+            + (f"; the answer stopped changing at step {round(cast(float, marker)):,}" if marked else "") + ".")
     parts = [f'<svg viewBox="0 0 {W} {H}" role="img" aria-labelledby="{cid}-t {cid}-d">',
              f'<title id="{cid}-t">{escape(title)}</title>',
              f'<desc id="{cid}-d">{escape(desc)}</desc>']
@@ -171,7 +172,7 @@ def _chart(series: dict[str, list[tuple[float, float]]], *, log_y: bool, title: 
 
 def _series_from_inputs(inputs) -> tuple[dict, dict, dict, int | None, str | None]:
     """Residuals, Courant number and the binding monitor's series, from the run's own files."""
-    from courant.events.core import EventKind
+    from courant.events.core import EventKind, ResidualPayload
     from courant.watcher.exitcode import verdict_exit_code
     from courant.watcher.parser import LogParser
 
@@ -184,10 +185,11 @@ def _series_from_inputs(inputs) -> tuple[dict, dict, dict, int | None, str | Non
         if e.kind is not EventKind.RESIDUAL:
             continue
         step = step + 1
-        for name, v in e.payload.initial_residuals.items():
+        p = cast(ResidualPayload, e.payload)     # a RESIDUAL event's payload (Event validator)
+        for name, v in p.initial_residuals.items():
             res.setdefault(name, []).append((float(step), v))
-        if e.payload.courant_max is not None:
-            co.setdefault("Courant max", []).append((float(step), e.payload.courant_max))
+        if p.courant_max is not None:
+            co.setdefault("Courant max", []).append((float(step), p.courant_max))
     mon: dict[str, list] = {}
     stop, binding = None, None
     if inputs.case_dir:

@@ -58,7 +58,8 @@ class SpecJudge(LLMJudge):
     """A model judging with judge/2: judge/1's door, answer, records and stops (``LLMJudge``),
     asked whether the run is a valid result of the specified problem."""
 
-    def _complete(self, task: SpecTask) -> str:
+    # A SpecJudge is only ever handed SpecTasks (scripts/run_rm36.py), which carry ``spec``.
+    def _complete(self, task: SpecTask) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
         if self._client is not None:
             return self._client(render_prompt_2(task))
         return self._ask(spec_judge_request(task))

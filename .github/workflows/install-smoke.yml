@@ -1,0 +1,73 @@
+name: install-smoke
+
+# GATE-9, installed in a minute: on clean runners, every published install route of a release
+# (pip install 'courant-dev[mcp]', pipx install courant-dev, uvx --from courant-dev, the
+# installer from releases/latest, and the binary with its checksum) from nothing to a verdict on the demo, three times each, every step timed
+# (scripts/install_smoke.sh). The job fails unless every run of every route is under 60 s, and
+# uploads the record, courant.install-smoke/1 JSON, either way: the harness writes it after
+# each route, and a step stops after 120 s, so even a hung download leaves what was measured.
+# The records are what the gate G-INSTALL checks (install_smoke.sh --check), once copied into
+# research/notes/gate-install/ci/ of the private repository.
+#
+# It runs after the release workflow has finished on a tag push (PyPI is that workflow's last
+# job, so a release's `published` event comes before the wheel exists), and by hand for any
+# published version. It reads public releases and PyPI and publishes nothing: no secret, no
+# write permission. pipx and uv come from packaging/requirements-install-smoke.lock with
+# --require-hashes; their bootstrap is not part of any route's time.
+
+on:
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "The published version to measure, e.g. 0.7.0 (default: this checkout's)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+# One group per measured version (a dispatch without one, or a skipped run, gets its own), so a
+# skipped or manual run never cancels a release's pending measurement.
+concurrency:
+  group: install-smoke-${{ inputs.version || github.event.workflow_run.head_branch || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  install:
+    name: install in a minute (${{ matrix.os }})
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        # linux x86_64 and macOS arm64, the platforms GATE-9 names
+        os: [ubuntu-latest, macos-14]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # the job runs code it downloads; it needs no git credentials
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: Bootstrap pipx and uv (every file checked by hash; not timed)
+        run: |
+          python -m venv "$RUNNER_TEMP/tools"
+          "$RUNNER_TEMP/tools/bin/python" -m pip install --require-hashes -r packaging/requirements-install-smoke.lock
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
+      - name: Measure every route, three runs each
+        env:
+          SMOKE_VERSION: ${{ inputs.version || github.event.workflow_run.head_branch }}
+        run: |
+          bash scripts/install_smoke.sh --runs 3 --step-timeout 120 --out "$RUNNER_TEMP/install-smoke.json" ${SMOKE_VERSION:+--version "$SMOKE_VERSION"}
+      - name: Upload the record
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: install-smoke-${{ matrix.os }}
+          path: ${{ runner.temp }}/install-smoke.json
+          if-no-files-found: warn

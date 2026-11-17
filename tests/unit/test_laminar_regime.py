@@ -769,9 +769,10 @@ def test_a_block_every_patch_shares_is_read_once(tmp_path, monkeypatch):
     got = reynolds_number(case, cfg, run)
     assert time.perf_counter() - t < 3.0
     assert got is not None and got.lower == pytest.approx(1.0 * (2 / 13) / 2e-3)    # 2 cells
-    # U's internalField (2 calls), the shared block once (3), p's internalField (1); read once a
-    # patch, 13 inlets would make it 42
-    assert len(calls) == 6
+    # Calls from the reader, not the resolver's own recursion (`deck._resolved`, since the
+    # security review's memo): U's internalField, the shared block once, p's internalField. Read
+    # once a patch, the 13 inlets would make it 15.
+    assert len(calls) == 3
 
 
 def test_past_the_readings_rank_or_byte_bound_there_is_no_number(tmp_path, monkeypatch):

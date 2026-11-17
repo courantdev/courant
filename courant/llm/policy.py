@@ -12,6 +12,7 @@ import re
 from collections.abc import Iterable, Mapping
 from datetime import date, datetime
 from types import MappingProxyType
+from typing import cast
 
 from courant.llm.errors import Refused
 
@@ -166,7 +167,7 @@ def allowlisted(provider: str, model_id: str, allowlist: Mapping | None = None) 
 def expired(entry: Mapping, today: date) -> bool:
     """Past its ``expires`` date: not before ``today``, so the last day is still usable."""
     end = _as_date(entry.get("expires"))
-    return end is not None and end < _as_date(today)
+    return end is not None and end < cast(date, _as_date(today))     # today is a date
 
 
 def why_not(entry: Mapping | None, *, task: str, data: str, capability: str | None = None,
@@ -248,7 +249,7 @@ def refresh(entries: Iterable[Mapping], listing, today: date) -> tuple[list[dict
             dropped.append((dict(entry), "not listed"))
             continue
         ends = [_as_date(model.get("expiration_date")), _as_date(entry.get("expires"))]
-        if any(end is not None and end < _as_date(today) for end in ends):
+        if any(end is not None and end < cast(date, _as_date(today)) for end in ends):
             dropped.append((dict(entry), "expired"))
             continue
         kept.append(dict(entry))

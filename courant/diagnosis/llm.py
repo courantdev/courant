@@ -27,8 +27,8 @@ A stop (``courant.llm.stops_batch``) is raised so the batch stops, and a model's
 failure on one log is an empty diagnosis with ``last_error`` saying why. A model
 that answers an empty list of hypotheses has answered (nothing is wrong): that is
 an empty diagnosis with no ``last_error`` (ARC-20). ``batch_identity`` is what such
-a batch is: the measurement, the models the door would ask, and the prompt's
-version; each item is keyed by ``diagnosis_request(bundle)``, the request it sends.
+a batch is: the measurement, the data class, the models the door would ask, the
+prompt's version and the ``max_tokens`` each request is sent with (ARC-22); each item is keyed by ``diagnosis_request(bundle)``, the request it sends.
 
 Single-shot over the bundle (which already carries det_findings + kb_matches);
 the read_file/query_kb/run_probe tool loop (§5.3) is a live-mode enhancement
@@ -177,15 +177,15 @@ class LLMDiagnoser:
 
     def batch_identity(self) -> dict:
         """What a measured batch of this diagnoser's calls is (ARC-20): the measurement, the
-        data class, the models the door would ask for it in order, and the prompt's version.
-        Each item's own content is its request (``diagnosis_request``). Asks the door
-        nothing over the network."""
+        data class, the models the door would ask for it in order, the prompt's version, and
+        the ``max_tokens`` every request is sent with (ARC-22). Each item's own content is its
+        request (``diagnosis_request``). Asks the door nothing over the network."""
         models = self.door.eligible(task=DIAGNOSIS_CALL["task"], data=self.data,
                                     capability=DIAGNOSIS_CALL["capability"],
                                     measurement=self.measurement)
         return {"measurement": self.measurement, "data": self.data,
                 "models": [f"{c.provider}:{c.id}" for c in models],
-                "prompt": PROMPT_VERSION}
+                "prompt": PROMPT_VERSION, "max_tokens": self.max_tokens}
 
     @property
     def model(self) -> str | None:

@@ -26,6 +26,8 @@ of ``errors.REJECTION_REASONS``; never the provider's message, which may quote t
 
 from __future__ import annotations
 
+from typing import Any
+
 from courant.llm.errors import REJECTION_REASONS, TransportError
 from courant.llm.transport import RawResponse
 
@@ -93,8 +95,10 @@ class AnthropicTransport:
             # max_retries=0: the door's retry policy is the only one, so every attempt is
             # reserved in the ledger (and under a spend cap, bounded) before it leaves (ARC-18,
             # ARC-21). The SDK's own retries would send requests the ledger never saw.
-            self._client = anthropic.Anthropic(api_key=self.api_key or None,
-                                               default_headers=self.headers(), max_retries=0)
+            # pyright resolves the bare import to this module (courant/llm/anthropic.py); at
+            # runtime an absolute import is the SDK package.
+            self._client = anthropic.Anthropic(  # pyright: ignore[reportAttributeAccessIssue]
+                api_key=self.api_key or None, default_headers=self.headers(), max_retries=0)
         return self._client
 
 
@@ -189,7 +193,7 @@ def _reason(exc: Exception) -> str | None:
 
 
 def _openai_shape(response, model: str) -> dict:
-    stop = getattr(response, "stop_reason", None)
+    stop: Any = getattr(response, "stop_reason", None)
     if stop == "refusal":
         details = getattr(response, "stop_details", None)
         category = getattr(details, "category", None) if details else None

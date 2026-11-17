@@ -36,7 +36,8 @@ def doctor(
         help="with --bundle: replace the run id, patch names, file names and item names with "
              "stable pseudonyms and strip paths and hosts, so the bundle can be shared"),
 ) -> None:
-    """Diagnose this installation, the first thing to run when something is off. Offline;
+    """Diagnose this installation, the first thing to run when something is off. Offline,
+    apart from asking the Docker daemon (its socket, or DOCKER_HOST if set) whether it runs;
     only --models contacts OpenRouter."""
     if bundle:
         import sys
@@ -134,7 +135,7 @@ def _show_models() -> None:
                       f"({exc.message}); showing the committed allowlist only.\n")
     if live:
         today = datetime.now(UTC).date()
-        _, gone = refresh(ALLOWLIST.get("openrouter", []), listing, today)
+        _, gone = refresh(ALLOWLIST.get("openrouter", []), listing, today)  # pyright: ignore[reportPossiblyUnboundVariable]  # bound when live
         dropped = {entry["id"]: reason for entry, reason in gone}
 
     table = Table(box=None, padding=(0, 2, 0, 0))

@@ -18,10 +18,14 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import typer
 
 from courant.cli.guard import guarded
+
+if TYPE_CHECKING:
+    from courant.verify.verdict2 import AnyVerdict
 
 #: Either major's answer to its exit code (GATE-1: the same three codes).
 EXIT = {"TRUSTWORTHY": 0, "NOT_TRUSTWORTHY": 2, "NOT_ASSESSABLE": 3,
@@ -56,7 +60,7 @@ def verify(
     spec: str = typer.Option(None, "--spec", help="The task specification (courant.spec/1) the run was asked to satisfy; every value it names is checked against the case."),
     spec_sha256: str = typer.Option(None, "--spec-sha256", help="The hash the specification was locked at before the run (courant spec hash). A specification that no longer matches it makes the verdict insufficient."),
     jobs: int = typer.Option(1, "--jobs", min=1, help="With --batch: verify this many runs at once (default 1). The results are identical to a serial run."),
-    no_cache: bool = typer.Option(False, "--no-cache", help="With --batch: do not read or write the verdict cache ($COURANT_CACHE_DIR, else ~/.cache/courant/verdicts)."),
+    no_cache: bool = typer.Option(False, "--no-cache", help="With --batch: do not read or write the verdict cache ($COURANT_CACHE_DIR, else $XDG_CACHE_HOME/courant/verdicts, else ~/.cache/courant/verdicts)."),
     cache_on: bool = typer.Option(False, "--cache", help="With --batch: use the verdict cache even where CI is set (it is off there by default)."),
     checks: str = typer.Option("default", "--checks", help="'next' also runs the checks that ship behind this flag for one minor release before they are on by default (GATE-13); the verdict records it. One run at a time: not with --batch, --pack or --record."),
     schema: int = typer.Option(2, "--schema", help="The verdict schema to write: 2 (courant.verdict/2, the default) or 1 (courant.verdict/1, the previous major, kept for one minor release)."),
@@ -70,7 +74,8 @@ def verify(
         print(f"courant verify: --schema must be 1 or 2, not {schema}", file=sys.stderr)
         raise typer.Exit(4)
 
-    from courant.verify.checks import MODES
+    from courant.verify.checks import CLI_OPTIONS_STRICT, MODES, enabled
+    from courant.verify.ingest import lock_of
 
     if checks not in MODES:
         print(f"courant verify: --checks must be one of {', '.join(MODES)}, not {checks}",
@@ -80,6 +85,23 @@ def verify(
         print("courant verify: --checks next verifies one run; packs, records and batches use "
               "the default checks", file=sys.stderr)
         raise typer.Exit(4)
+    # VPA-CLI-5: an option that does nothing here. Refused under `cli.options_strict`; under the
+    # default one warning on stderr, and the verdict and its exit code stand (GATE-13).
+    unused = []
+    if report is not None and report not in ("md", "html"):
+        unused.append(f"--report must be md or html, not {report!r}")
+    if junit and not batch:
+        unused.append("--junit needs --batch (it writes one test per run)")
+    for line in unused:
+        if enabled(CLI_OPTIONS_STRICT, checks):
+            print(f"courant verify: {line}", file=sys.stderr)
+            raise typer.Exit(4)
+        print(f"courant verify: warning: {line}; ignored", file=sys.stderr)
+    try:
+        lock_of(spec_sha256, checks)                    # VPA-ORDER-1, SEC070-18: `spec.lock_strict`
+    except InputError as exc:
+        print(f"courant verify: {exc}", file=sys.stderr)
+        raise typer.Exit(4) from exc
 
     if about:
         from courant.verify import about as _about
@@ -115,6 +137,14 @@ def verify(
     if batch:
         from courant.verify.batch import summarise, verify_batch
         from courant.verify.cache import VerdictCache
+
+        # SEC070-12: a root that is not a directory, or a path beside it, is not a batch of runs.
+        if path:
+            print("courant verify: give a case or log, or --batch DIR, not both", file=sys.stderr)
+            raise typer.Exit(4)
+        if not Path(batch).is_dir():
+            print(f"courant verify: --batch {batch} is not a directory", file=sys.stderr)
+            raise typer.Exit(4)
 
         if cache_on and no_cache:
             print("courant verify: --cache and --no-cache contradict each other", file=sys.stderr)
@@ -157,11 +187,14 @@ def verify(
                 print(f"cache: {done.hits} of {done.hits + done.misses} runs served from the "
                       "cache", file=sys.stderr)
         base = Path(batch).resolve() if settings.is_file() else Path(batch)
-        for target, v, err in results:
+        for target, v_or_none, err in results:
+            v = cast("AnyVerdict", v_or_none)      # read only when err is empty: a verdict is set
             rel = target.relative_to(base) if target.is_relative_to(base) else target
             print(f"{'ERROR' if err else v.verdict:16s} {'' if err else v.rule:8s} "
                   f"{'-' if err or not v.grade else v.grade}  {rel}" + (f"  ({err})" if err else ""))
         line, code = summarise(results, schema)
+        if not results:                                 # SEC070-12: no run is not a pass
+            line, code = f"{line} (no run found under {batch}: nothing was judged)", 4
         print(line)
         if junit:
             from courant.verify.junit import render_junit
@@ -181,14 +214,20 @@ def verify(
         inputs = from_path(path, case_json, checks=checks)        # what is read depends on it
         if spec:
             inputs = with_spec(inputs, spec, spec_sha256)
-        verdict = in_schema(verify_inputs(inputs), schema)
+        v2 = verify_inputs(inputs)                      # the record keeps it (VPA-CLI-1)
     except InputError as exc:
         print(f"courant verify: {exc}", file=sys.stderr)
         raise typer.Exit(4) from exc
+    verdict = in_schema(v2, schema)                     # what is shown, packed and reported
     if html:
         from courant.verify.html import render_html
 
-        Path(html).write_text(render_html(verdict, inputs))
+        try:
+            Path(html).write_text(render_html(verdict, inputs))
+        except OSError as exc:                          # VPA-CLI-5: one line, not a traceback
+            print(f"courant verify: cannot write {html}: {exc} (the verdict was "
+                  f"{verdict.verdict}; nothing else was written)", file=sys.stderr)
+            raise typer.Exit(4) from exc
         print(f"report written: {html}", file=sys.stderr)
 
     if pack:
@@ -202,7 +241,7 @@ def verify(
     if record:
         from courant.record import write_record
 
-        out = write_record(verdict, record, target_name=Path(path).name,
+        out = write_record(v2, record, target_name=Path(path).name,
                            case_json_name=Path(case_json).name if case_json else None,
                            spec_path=spec, spec_locked_sha256=spec_sha256,
                            producer=producer, requester=requester)

@@ -106,30 +106,74 @@ def test_every_runnable_command_is_a_courant_command():
                 "<!-- docs-skip: why --> if it cannot run in CI")
 
 
-@pytest.mark.parametrize("block", [b for b in ALL if b.skip is None], ids=_id)
-def test_a_documented_block_runs_with_its_documented_exit_codes(block, workdir, monkeypatch):
-    monkeypatch.chdir(workdir)
+@dataclass(frozen=True)
+class Ran:
+    cmd: str
+    expected: int
+    exit_code: int | None
+    exception: BaseException | None
+    output: str
+    lock_missing: bool = False
+
+
+@pytest.fixture(scope="module")
+def ran(workdir, tmp_path_factory) -> dict[str, list[Ran]]:
+    """Every runnable block, run once in document order in the one scratch directory: a reader
+    follows the documents top to bottom, and a later block may read what an earlier one wrote
+    (GETTING-STARTED's `doctor --bundle` reads the `evidence/` a `verify --pack` made). Run here,
+    not test by test, so that order holds whatever order the tests run in (test hygiene, 4 Nov
+    2026: in reverse order 2 tests failed, the `doctor` block and the JUnit check)."""
     runner = CliRunner()
-    lock = None
-    for cmd, expected in block.commands:
-        args = shlex.split(cmd)[1:]
-        if "<hash>" in args:
-            assert lock, f"{_id(block)}: <hash> before any `courant spec hash`"
-            args = [lock if a == "<hash>" else a for a in args]
-        result = runner.invoke(app, args)
-        assert not isinstance(result.exception, Exception) or isinstance(
-            result.exception, SystemExit), f"{cmd!r} raised {result.exception!r}"
-        assert "Traceback" not in result.output, cmd
-        assert result.exit_code == expected, (
-            f"{_id(block)}: `{cmd}` exited {result.exit_code}, the document says {expected}\n"
-            f"{result.output[-1500:]}")
-        if args[:2] == ["spec", "hash"]:
-            lock = result.output.strip().split()[-1]
-            assert re.fullmatch(r"[0-9a-f]{64}", lock)
+    out: dict[str, list[Ran]] = {}
+    with pytest.MonkeyPatch.context() as mp:
+        mp.chdir(workdir)
+        # A module fixture runs before conftest's function-scoped `_isolated_environment`, so it
+        # holds the same rule itself: the documents never touch the developer's ~/.cache.
+        cache = tmp_path_factory.mktemp("verdict-cache")
+        mp.setenv("COURANT_CACHE_DIR", str(cache))
+        mp.setenv("COURANT_CACHE_KEY_FILE", str(tmp_path_factory.mktemp("cache-key") / "cache.key"))
+        mp.delenv("CI", raising=False)
+        out["__cache_dir__"] = [Ran("env", 0, 0, None, str(cache))]
+        for block in (b for b in ALL if b.skip is None):
+            lock, rows = None, []
+            for cmd, expected in block.commands:
+                args = shlex.split(cmd)[1:]
+                if "<hash>" in args:
+                    if not lock:
+                        rows.append(Ran(cmd, expected, None, None, "", lock_missing=True))
+                        break
+                    args = [lock if a == "<hash>" else a for a in args]
+                result = runner.invoke(app, args)
+                rows.append(Ran(cmd, expected, result.exit_code, result.exception,
+                                result.output))
+                if result.exit_code != expected:
+                    break                       # the block stops where a reader's would
+                if args[:2] == ["spec", "hash"]:
+                    lock = result.output.strip().split()[-1]
+                    if not re.fullmatch(r"[0-9a-f]{64}", lock):
+                        break
+            out[_id(block)] = rows
+    return out
 
 
-def test_the_batch_example_writes_its_junit_file(workdir, monkeypatch):
-    monkeypatch.chdir(workdir)
+@pytest.mark.parametrize("block", [b for b in ALL if b.skip is None], ids=_id)
+def test_a_documented_block_runs_with_its_documented_exit_codes(block, ran):
+    rows = ran[_id(block)]
+    assert len(rows) >= 1 or not block.commands
+    for row in rows:
+        assert not row.lock_missing, f"{_id(block)}: <hash> before any `courant spec hash`"
+        assert not isinstance(row.exception, Exception) or isinstance(
+            row.exception, SystemExit), f"{row.cmd!r} raised {row.exception!r}"
+        assert "Traceback" not in row.output, row.cmd
+        assert row.exit_code == row.expected, (
+            f"{_id(block)}: `{row.cmd}` exited {row.exit_code}, the document says "
+            f"{row.expected}\n{row.output[-1500:]}")
+        if shlex.split(row.cmd)[1:3] == ["spec", "hash"]:
+            assert re.fullmatch(r"[0-9a-f]{64}", row.output.strip().split()[-1])
+    assert len(rows) == len(block.commands), f"{_id(block)}: stopped early"
+
+
+def test_the_batch_example_writes_its_junit_file(workdir, ran):
     for b in ALL:
         if any("--junit" in c for c, _ in b.commands) and b.skip is None:
             assert (workdir / "courant.xml").exists()
@@ -160,3 +204,10 @@ def test_the_version_the_documents_name_is_the_release():
     assert pins, "no document pins the Action to a release: the README's example is gone"
     assert all(v == courant.__version__ for _, v in pins), (
         f"a document pins the Action to another release than {courant.__version__}: {pins}")
+
+
+def test_the_documents_ran_with_the_verdict_cache_outside_home(ran):
+    """The batch block writes to a temporary cache, not to the developer's ~/.cache (GATE-11)."""
+    cache = Path(ran["__cache_dir__"][0].output)
+    assert not cache.is_relative_to(Path.home() / ".cache")
+    assert any(cache.rglob("*")), "the documented batch block wrote nothing to the fixture's cache"

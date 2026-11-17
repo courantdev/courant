@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 from functools import lru_cache
+from typing import TYPE_CHECKING, cast
 
 from courant import forks
 from courant.case import wordre
@@ -19,6 +20,7 @@ from courant.case.reads import Reads, recording
 from courant.events import EventKind
 from courant.events.diverged import divergences, is_divergence
 from courant.verify import checks, policy, sentences
+from courant.verify.outcome import SPEC_INTEGRITY_RULES
 from courant.verify.schema import (
     InputFile,
     ProbableCause,
@@ -35,6 +37,10 @@ from courant.verify.schema import (
 from courant.verify.verdict2 import VerdictV2, extracted_unconfirmed, to_v2
 
 from courant.case.solvers import solver_exec  # noqa: E402 - one Exec reading, conformance's too
+
+if TYPE_CHECKING:
+    from courant.verification.grade import TrustReport as _TrustReport
+    from courant.verify.schema import VerdictValue
 
 #: What each checker reads when it is not the log (INV-2: a reason names its input).
 _CHECKER_INPUT = {
@@ -317,16 +323,20 @@ def verify_inputs_v1(inputs: RunInputs) -> Verdict:
 
 @wordre.bounded                                     # the case's keyword patterns (SPEC-2)
 def _decided(inputs: RunInputs) -> tuple[Verdict, forks.SolverVersion]:
+    from courant.case.foamguard import guarded
+
     if not inputs.case_dir:
         return _verify(inputs, None)
-    with recording(inputs.case_dir) as reads:
+    with recording(inputs.case_dir) as reads, guarded(checks.enabled(checks.FOAM_GUARD,
+                                                                     inputs.checks)):
         return _verify(inputs, reads)
 
 
 def _manifest(inputs: RunInputs, reads: Reads | None) -> tuple[InputFile, ...]:
     if reads is None:
         return inputs.inputs
-    return merge(inputs.inputs, manifest(inputs.case_dir, reads.paths()))
+    # reads is recorded only for a case directory (_decided), so case_dir is set here.
+    return merge(inputs.inputs, manifest(cast(str, inputs.case_dir), reads.paths()))
 
 
 def _verify(inputs: RunInputs, reads: Reads | None) -> tuple[Verdict, forks.SolverVersion]:
@@ -357,7 +367,16 @@ def _verify(inputs: RunInputs, reads: Reads | None) -> tuple[Verdict, forks.Solv
     if config is None or config.nothing_read():         # a directory with no dictionary in it
         not_assessed.append(sentences.NO_CONFIG)
     elif config.missing:
-        not_assessed.append(sentences.not_found(config.missing))
+        # A start field a region's solver must read (VER-3e) is not a dictionary every solver
+        # reads: said apart (the review of T-MULTI-REGION-2, M3).
+        # Under `case.regions.whole` only: a view's `missing` keeps 0.7.0's words by default.
+        apart = checks.enabled(checks.REGIONS_WHOLE, inputs.checks)
+        dicts = [n for n in config.missing if not (apart and sentences.is_field(n))]
+        fields = [n for n in config.missing if apart and sentences.is_field(n)]
+        if dicts:
+            not_assessed.append(sentences.not_found(dicts))
+        if fields:
+            not_assessed.append(sentences.fields_not_found(fields))
     if mesh is None:
         not_assessed.append(sentences.NO_MESH)
     elif mesh.source is not None:                       # the aspect ratio only (RM-35 dev)
@@ -390,7 +409,11 @@ def _verify(inputs: RunInputs, reads: Reads | None) -> tuple[Verdict, forks.Solv
         # the default read as v0.5.0 read them, and the verdict says which.
         keyed = checks.enabled("log.regions", inputs.checks)
         multirun = is_multi_run(_solver(inputs, config))
-        parser = LogParser(run_id=inputs.run_id, regions=keyed, multirun=multirun)
+        # VER-20 (`log.regions.courant`, behind `--checks next`; review of 0.7.0, A5-1): a
+        # `Region: fluid1 Courant Number` line is its region's, whatever the name ends in.
+        parser = LogParser(run_id=inputs.run_id, regions=keyed, multirun=multirun,
+                           region_courant_first=checks.enabled(checks.REGION_COURANT,
+                                                               inputs.checks))
         events = list(parser.parse_text(inputs.log_text, return_code=exit_code))
         # VER-3d (`case.regions`): the regions' own dictionaries were read from this directory.
         # "whole" when no region dictionary or 0/<region>/ was missing or unread (the review, m2).
@@ -398,6 +421,11 @@ def _verify(inputs: RunInputs, reads: Reads | None) -> tuple[Verdict, forks.Solv
         if (inputs.source == "case_dir" and config is not None and config.regions
                 and checks.enabled("case.regions", inputs.checks)):
             read = "whole" if config.regions_read_whole() else "part"
+            # VER-3e: each region's thermophysicalProperties read (`case.regions.whole`), so the
+            # sentence claims it; a region in another layout keeps 0.7.0's clause.
+            if (checks.enabled(checks.REGIONS_WHOLE, inputs.checks)
+                    and len(config.region_thermo) == len(config.regions)):
+                read += "+thermo"
         not_assessed.extend(_region_sentences(inputs.log_text, parser, keyed=keyed,
                                               multirun=multirun, read=read))
     from courant.spec.as_run import Run
@@ -555,16 +583,17 @@ def _verify(inputs: RunInputs, reads: Reads | None) -> tuple[Verdict, forks.Solv
                                    + _conformance_reasons(conformance, extracted=extracted))
     causes = tuple(_cause(i + 1, code)
                    for i, code in enumerate(_listed_causes(diagnosis, reasons)))
-    grade = trust.grade.value if graded else None
+    grade = cast("_TrustReport", trust).grade.value if graded else None   # graded => trust
 
     return (Verdict(
         tool=ToolInfo(version=__version__, checks="next" if inputs.checks == "next" else None),
         run=RunInfo(id=inputs.run_id, source=inputs.source,
                     solver=_solver(inputs, config), inputs=_manifest(inputs, reads)),
-        verdict=verdict, rule=rule, grade=grade,
+        verdict=cast("VerdictValue", verdict), rule=rule, grade=grade,   # policy's own words
         reasons=reasons, probable_causes=causes,
         not_assessed=_dedupe(not_assessed),
-        next_action=(_conformance_action(conformance, extracted=extracted)
+        next_action=((_conformance_action(conformance, extracted=extracted)
+                      if rule in _SPEC_RULES else None)
                      or _next_action(verdict, rule, causes, events, inputs.log_name)),
         stats=_stats(events, findings),
         convergence=convergence,
@@ -625,6 +654,13 @@ def _conformance_reasons(block, *, extracted: bool = False) -> list[Reason]:
             method="deck-versus-spec conformance (courant.spec/1)",
             threshold=f"{item.specified} ({item.tolerance})", value=item.found))
     return out
+
+
+#: The rules a specification decides (VPA-ORDER-3): GATE-4's integrity rules, a hash mismatch
+#: (VER-5.8) and a mismatch (VER-5.7). Only a verdict one of them decided is given the
+#: specification's advice; a crash (VER-5.2) or a log whose end is unknown (VER-5.16) keeps its
+#: own, whatever the specification had to say.
+_SPEC_RULES = SPEC_INTEGRITY_RULES | {"VER-5.7", "VER-5.8"}
 
 
 def _conformance_action(block, *, extracted: bool = False) -> str | None:
@@ -693,14 +729,14 @@ def _ended_elsewhere(inputs: RunInputs, config, run, conformance=None) -> str | 
         return None
     from pathlib import Path
 
-    from courant.spec import as_run, deck
+    from courant.spec import as_run
     from courant.spec.model import DEFAULT_REL_TOL
 
     how, reached, _ = as_run.end_against(run, end, rel=DEFAULT_REL_TOL)
     if how in ("before", "past") and inputs.case_dir:     # a runTimeControl may have ended it
-        text, _ = deck._read_text(Path(inputs.case_dir), "system/controlDict")
-        how, reached, _ = as_run.end_against(run, end, rel=DEFAULT_REL_TOL,
-                                             control_text=text or "")
+        text = as_run.control_text(Path(inputs.case_dir),
+                                   checks.enabled(checks.SPEC_READ_WHOLE, inputs.checks))
+        how, reached, _ = as_run.end_against(run, end, rel=DEFAULT_REL_TOL, control_text=text)
     if how not in ("before", "past"):
         return None
     return sentences.ENDED_SHORT.format(reached=as_run._fmt(reached), log=run.log_name,
@@ -772,10 +808,9 @@ def _regions_checkmesh_partial(inputs, config) -> bool:
     if not (inputs.source == "case_dir" and inputs.case_dir and config is not None
             and config.regions and checks.enabled("case.regions", inputs.checks)):
         return False
-    from courant.case.mesh import region_checkmesh_logs
+    from courant.case.mesh import regions_checkmesh_partial
 
-    logs, absent = region_checkmesh_logs(inputs.case_dir, config.regions)
-    return bool(logs) and bool(absent)
+    return regions_checkmesh_partial(inputs.case_dir, config.regions)
 
 
 def _region_sentences(text: str, parser, *, keyed: bool, multirun: bool,
@@ -792,7 +827,13 @@ def _region_sentences(text: str, parser, *, keyed: bool, multirun: bool,
         return [sentences.MULTI_REGION_PREFIX_UNREAD] if multirun and not keyed else []
     if not keyed:
         return [sentences.MULTI_REGION_MERGED]
-    if read == "whole":
+    if read == "whole+thermo":
+        out = [sentences.MULTI_REGION_KEYED_COURANT_THERMO_READ if parser.region_courant
+               else sentences.MULTI_REGION_KEYED_THERMO_READ]
+    elif read == "part+thermo":
+        out = [sentences.MULTI_REGION_KEYED_COURANT_THERMO_PART if parser.region_courant
+               else sentences.MULTI_REGION_KEYED_THERMO_PART]
+    elif read == "whole":
         out = [sentences.MULTI_REGION_KEYED_COURANT_READ if parser.region_courant
                else sentences.MULTI_REGION_KEYED_READ]
     elif read == "part":

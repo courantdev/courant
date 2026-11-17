@@ -13,10 +13,10 @@ keeps the facts trustworthy.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Protocol
+from typing import Protocol, cast
 
 from courant.case.config import PRESSURE_FIXING, CaseConfig
 from courant.case.schemes import unbounded_convection_schemes
@@ -33,6 +33,12 @@ from courant.case.regime import (
 )
 from courant.diagnosis.findings import Finding, FindingSet, FindingSeverity
 from courant.events import Event, EventKind
+from courant.events.core import (
+    CrashPayload,
+    DivergencePayload,
+    ResidualPayload,
+    StallPayload,
+)
 from courant.events.diverged import diverged, is_divergence, is_residual_climb
 from courant.verification.convergence import (
     RESIDUAL_TARGET,
@@ -207,8 +213,12 @@ class CourantChecker:
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         residuals = ctx.events_of(EventKind.RESIDUAL)
-        cos = [(r.payload.courant_max, r.payload.time)
-               for r in residuals if r.payload.courant_max is not None]
+        # `events_of(kind)` keeps only that kind, and `Event` rejects a payload of another kind.
+        # The filter keeps a Courant number, so each pair's first member is a float.
+        cos = cast("list[tuple[float, float | None]]",
+                   [(cast(ResidualPayload, r.payload).courant_max,
+                     cast(ResidualPayload, r.payload).time)
+                    for r in residuals if cast(ResidualPayload, r.payload).courant_max is not None])
         # Did the Courant series start with the run? "The first number we saw"
         # and "the number on the first step" are the same thing for every real
         # transient solver, which prints it every step — but not for a log that
@@ -216,7 +226,7 @@ class CourantChecker:
         # `cfl.absurd_at_start` fire on a run whose Courant number climbed
         # normally from a section of log that simply had no Courant lines in it.
         starts_at_run_start = bool(residuals) and (
-            residuals[0].payload.courant_max is not None)
+            cast(ResidualPayload, residuals[0].payload).courant_max is not None)
         if not cos:
             return []
         # **Not on a declared steady solve, under `--checks next`** (TRD VER-13a, `cfl.steady`):
@@ -462,19 +472,21 @@ class ResidualAnalyzer:
         nan_divs = [d for d in divs if is_divergence(d)]
         if nan_divs:
             d = nan_divs[0]
+            dp = cast(DivergencePayload, d.payload)   # `events_of` kept DIVERGENCE only
             out.append(Finding(
                 id="residual.nan", checker=self.name, title="Residual reached NaN/Inf",
-                severity=CRIT, field=d.payload.field, log_offset=d.log_offset,
-                detail=f"field {d.payload.field} residual became "
-                       f"{'NaN' if d.payload.is_nan else 'Inf'}",
+                severity=CRIT, field=dp.field, log_offset=d.log_offset,
+                detail=f"field {dp.field} residual became "
+                       f"{'NaN' if dp.is_nan else 'Inf'}",
             ))
-        slope_divs = [d for d in divs if d.payload.slope is not None]
+        slope_divs = [d for d in divs if cast(DivergencePayload, d.payload).slope is not None]
         if slope_divs:
-            d = max(slope_divs, key=lambda e: e.payload.slope)
+            d = max(slope_divs, key=lambda e: cast(float, cast(DivergencePayload, e.payload).slope))
+            dp = cast(DivergencePayload, d.payload)
             out.append(Finding(
                 id="residual.growth", checker=self.name, title="Residuals growing monotonically",
-                severity=WARN, field=d.payload.field, value=d.payload.slope,
-                detail=f"log10-residual slope {d.payload.slope:.2f}/step on {d.payload.field}",
+                severity=WARN, field=dp.field, value=dp.slope,
+                detail=f"log10-residual slope {dp.slope:.2f}/step on {dp.field}",
                 # Only where over-relaxation is actually a candidate.
                 #
                 # Growing residuals *are* divergence — naming a cause for them
@@ -488,7 +500,7 @@ class ResidualAnalyzer:
                 # factors are high — and not otherwise.
                 suggests=_growth_suggests(ctx.config, ctx.checks),
             ))
-        if any(s.payload.reason == "residual_plateau" for s in stalls):
+        if any(cast(StallPayload, s.payload).reason == "residual_plateau" for s in stalls):
             out.append(Finding(
                 id="residual.plateau", checker=self.name,
                 title="Residuals plateaued above tolerance", severity=WARN,
@@ -713,7 +725,7 @@ def _damps_nothing(name: str) -> bool:
     return name.partition("@")[0] in RELAXATION_NOT_DAMPING
 
 
-def undamped_relaxation(factors: dict[str, float | None]) -> dict[str, float]:
+def undamped_relaxation(factors: Mapping[str, float | None]) -> dict[str, float]:
     """The factors that leave nothing to damp: at `RELAXATION_UNDAMPED` or above, less those
     that damp no equation (`RELAXATION_NOT_DAMPING`). The one test, for `scheme.relaxation`
     and the knowledge base's `relaxation_high` predicate."""
@@ -1011,7 +1023,7 @@ class CrashSignatureChecker:
             out.append(Finding(
                 id="crash.fatal", checker=self.name, title="Solver crashed",
                 severity=CRIT, log_offset=c.log_offset,
-                detail=f"solver exited abnormally (tag={c.payload.tag})",
+                detail=f"solver exited abnormally (tag={cast(CrashPayload, c.payload).tag})",
             ))
         # dedupe by id (a signature may match twice)
         seen: dict[str, Finding] = {}
@@ -1042,12 +1054,22 @@ class MeshChecker:
             ))
         if m.max_non_orthogonality is not None and m.max_non_orthogonality > 70:
             corr = ctx.config.n_non_orthogonal_correctors if ctx.config else None
+            # A multi-region case's correctors are its regions' (TRD VER-3e, read under
+            # `case.regions.whole`), each named by its place.
+            from courant.case.config import region_place
+            from courant.verify.checks import REGIONS_WHOLE, enabled
+
+            per = {region_place(ctx.config.regions, t): c.get("n_non_orthogonal_correctors")
+                   for t, c in ctx.config.region_correctors.items()} \
+                if ctx.config is not None and enabled(REGIONS_WHOLE, ctx.checks) else {}
+            said = ("nNonOrthogonalCorrectors " + ", ".join(
+                f"{t} {c if c is not None else 'not set (0)'}" for t, c in per.items())
+                if per else f"nNonOrthogonalCorrectors={corr}")
             out.append(Finding(
                 id="mesh.non_orthogonality", checker=self.name,
                 title="High mesh non-orthogonality", severity=WARN,
                 value=m.max_non_orthogonality, threshold=70.0,
-                detail=f"max non-orthogonality {shown(m.max_non_orthogonality, 1)} deg, "
-                       f"nNonOrthogonalCorrectors={corr}",
+                detail=f"max non-orthogonality {shown(m.max_non_orthogonality, 1)} deg, {said}",
                 suggests=["MESH.SKEWNESS"],
             ))
         # VER-7d: on faces with an area, when checkMesh's maximum is a zero-area face's quotient
@@ -1376,7 +1398,9 @@ def laminar_spared_sentence(reading: LaminarReading | None) -> str | None:
     spared = reading.spared if reading is not None else ()
     if not spared:
         return None
-    what = ("residuals that end above the flat 1e-3 bar" if reading.stalled_high
+    # `spared` is non-empty, so `reading` is not None.
+    what = ("residuals that end above the flat 1e-3 bar"
+            if cast(LaminarReading, reading).stalled_high
             else "residuals that oscillate or grow")
     numbers = "; ".join(f"its {n.name} number is at most {n.upper:.3g} "
                         f"({_basis(n, n.upper_on)}), below {_bound(n.laminar)}, "
@@ -1398,7 +1422,9 @@ def _nu_words(v: Viscosity) -> str:
     is the case author's, and a finding reaches the Evidence Bundle."""
     if v.source == "mu":
         spread = f"{v.lo:.3g}" if v.lo == v.hi else f"{v.lo:.3g} to {v.hi:.3g}"
-        return (f"mu={v.mu:g} Pa s gives nu {spread} m^2/s ({v.basis}), "
+        where = (f"{v.region} mu (constant/{v.region}/thermophysicalProperties, {v.region} by "
+                 "its place in constant/regionProperties)" if v.region is not None else "mu")
+        return (f"{where}={v.mu:g} Pa s gives nu {spread} m^2/s ({v.basis}), "
                 f"outside typical fluid range [{NU_MIN:g}, {NU_MAX:g}]")
     if v.phase is not None:
         alias = v.alias or "a phase"
@@ -1471,7 +1497,8 @@ def _courant_within(ctx: CheckContext) -> bool:
     residuals = ctx.events_of(EventKind.RESIDUAL)
     if steady_courant(ctx.config, ctx.log_text, ctx.checks) is None:   # VER-13a, under next
         limit, _ = courant_limit(ctx.config)
-        if any(e.payload.courant_max is not None and e.payload.courant_max > limit
+        if any(cast(ResidualPayload, e.payload).courant_max is not None
+               and cast(float, cast(ResidualPayload, e.payload).courant_max) > limit
                for e in residuals):
             return False
     return True

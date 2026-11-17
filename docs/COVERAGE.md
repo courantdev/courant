@@ -15,8 +15,9 @@ produced**, replayed through the shipping parser, checkers and knowledge base.
 This is the only tier that is evidence rather than intent.
 
 Measured over the 31-log corpus in `certification/corpus`: **top-1 19/24
-(79%), top-2 24/24 (100%)**, and no ranked cause on any of the 7
-unmodified tutorials.
+(79%), top-2 24/24 (100%)**. On the 7 unmodified
+tutorials a cause is ranked on 4 of 7; 7 of 7 pass the replay (no critical
+finding, crash or divergence).
 
 - `BC.OVERCONSTRAINED_PU` — Pressure-velocity coupling over/under specified at boundaries.
 - `CONV.RESIDUAL_PLATEAU` — Residuals flatten above the convergence criterion; not converged.

@@ -71,6 +71,7 @@ from __future__ import annotations
 import glob
 import os
 import sys
+from typing import Any, cast
 
 import numpy as np
 
@@ -82,7 +83,8 @@ _SCALARS = ("p", "k", "epsilon", "omega", "T", "nut")
 
 #: `phi`'s dimensions as OpenFOAM writes them, (mass length time temperature moles current
 #: luminous intensity), and the flux each one is.
-_FLUX_KINDS = {(1, 0, -1, 0, 0, 0, 0): "mass", (0, 3, -1, 0, 0, 0, 0): "volume"}
+_FLUX_KINDS: dict[tuple[float, ...], str] = {(1, 0, -1, 0, 0, 0, 0): "mass",
+                                             (0, 3, -1, 0, 0, 0, 0): "volume"}
 #: A patch type holding one of these names couples two sets of interior faces (VER-18).
 _COUPLED = ("cyclic", "processor")
 #: Where a case declares its own sources, as the solver reads them: OpenFOAM.org's
@@ -175,9 +177,10 @@ def _binary_as_read(arch) -> None:
         raise ValueError(f"binary field on a {sys.byteorder}-endian host")
     if arch is None:
         return
-    parts = [p.strip() for p in str(arch).strip().strip('"').split(";") if p.strip()]
-    order = [p for p in parts if "=" not in p]
-    sizes = dict(p.split("=", 1) for p in parts if "=" in p)
+    # The one reading of the line, the mesh reader's (FLD-7).
+    from courant.case.polymesh import parse_arch
+
+    order, sizes = parse_arch(arch)
     if order != ["LSB"] or sizes.get("scalar", "64") != "64" or not set(sizes) <= {"label", "scalar"}:
         raise ValueError(f"binary field written as {arch!r}; read only as LSB;scalar=64")
 
@@ -188,9 +191,13 @@ def _internal(path: str, vector: bool) -> np.ndarray | None:
     shape (a collated `decomposedBlockData`, a tensor, a region directory's stray file)."""
     from foamlib import FoamFieldFile
 
+    from courant.case import foamguard
+
+    foamguard.check_path(path)          # a field cut mid-write: refused, never parsed for ever
     f = FoamFieldFile(path)
     if str(f.format) == "binary":
-        _binary_as_read(f["FoamFile"].get("arch"))
+        # a header that is not a dictionary raises here, which the caller reports as not read
+        _binary_as_read(cast(Any, f["FoamFile"]).get("arch"))
     values = np.asarray(f.internal_field, dtype=float)
     if vector:
         if values.shape == (3,):
@@ -279,6 +286,8 @@ def _flux_sources(case: str) -> str | None:
 
     from foamlib import FoamFile
 
+    from courant.case import foamguard
+
     for where, name in _SOURCE_FILES:
         path = _field_file(case, where, name)
         if not os.path.isfile(path):
@@ -286,6 +295,7 @@ def _flux_sources(case: str) -> str | None:
         shown = os.path.relpath(path, case).replace(os.sep, "/")
         try:
             with reading(path):
+                foamguard.check_path(path)
                 d = FoamFile(path)
                 declared = [(str(k), v.get("type")) for k, v in d.items()
                             if isinstance(v, Mapping)]      # `libs (...)` is not an entry
@@ -322,6 +332,8 @@ def _boundary_flux(case: str, time: str) -> tuple[dict[str, float], FluxSource]:
     Raises `_NotRead` with the reason when it cannot be summed as written."""
     from foamlib import FoamFieldFile
 
+    from courant.case import foamguard
+
     path = _field_file(case, time, "phi")
     shown = os.path.relpath(path, case).replace(os.sep, "/")
     if not os.path.isfile(path):
@@ -330,10 +342,11 @@ def _boundary_flux(case: str, time: str) -> tuple[dict[str, float], FluxSource]:
         raise _NotRead(f"no {time}/phi (the face flux at the latest time) was found")
     try:
         with reading(path):
+            foamguard.check_path(path)
             f = FoamFieldFile(path)
             if str(f.format) != "ascii":
                 raise _NotRead(f"{shown} is written {f.format}; only an ASCII phi is read")
-            cls = str(f["FoamFile"].get("class", ""))
+            cls = str(cast(Any, f["FoamFile"]).get("class", ""))  # not a dict: `could not be read`
             if cls != "surfaceScalarField":
                 raise _NotRead(f"{shown} is a {cls or 'file of no class'}, not a face flux")
             try:
@@ -345,7 +358,8 @@ def _boundary_flux(case: str, time: str) -> tuple[dict[str, float], FluxSource]:
                 raise _NotRead(f"{shown} has dimensions {list(dims) or 'none'}: neither a mass "
                                f"flux nor a volume flux")
             internal = np.abs(np.atleast_1d(np.asarray(f.internal_field, dtype=float)))
-            patches = {str(k): dict(v) for k, v in f.boundary_field.items()}
+            patches: dict[str, dict[str, Any]] = {
+                str(k): dict(cast(Any, v)) for k, v in f.boundary_field.items()}
     except _NotRead:
         raise
     except Exception as exc:                            # noqa: BLE001

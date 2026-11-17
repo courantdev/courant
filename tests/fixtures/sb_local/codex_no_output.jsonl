@@ -1,0 +1,3 @@
+# SOURCE: synthetic, not a real run. Written 2026-11-08 from OpenAI's Codex CLI documentation (exec mode with `--json`). The stream stops after turn.started, before any item: the CLI died before the model produced anything.
+{"type":"thread.started","thread_id":"0199a213-81c0-7800-8aa1-bbab2a035a56"}
+{"type":"turn.started"}

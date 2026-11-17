@@ -69,7 +69,7 @@ pass=$((pass + 1))
 cd "$WORK"
 check "--about reads the packaged certification" \
     bash -c "env -i HOME='$WORK' PATH=/usr/bin:/bin '$BINARY' verify --about | grep -q 'false accepts 0 of 23'"
-check "demo verifies three real runs offline" \
+check "demo verifies four real runs offline" \
     bash -c "env -i HOME='$WORK' PATH=/usr/bin:/bin '$BINARY' demo --keep '$WORK/demo' > '$WORK/demo.out' && grep -q '1,023 of 1,999 past convergence' '$WORK/demo.out'"
 # (Not `demo | grep -q`: grep exits at the first match and the demo, still writing, dies of
 # SIGPIPE before it writes the report the next check reads. That raced on CI's macOS runners.)

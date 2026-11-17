@@ -28,8 +28,10 @@ uploaded events on.
 
 from __future__ import annotations
 
+import gzip
 import re
 import time
+import zlib
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -276,13 +278,36 @@ def _utilities(checks: str = "default") -> frozenset[str]:
     return _UTILITIES | _POST_PROCESS if enabled("log.post_process", checks) else _UTILITIES
 
 #: A solver iterates; a utility does not. Either marker is decisive.
-_TIME_LOOP = re.compile(r"^(?:Starting time loop|Time = )", re.M)
+_TIME_LOOP = re.compile(r"^(?:Starting time loop|Time = )", re.MULTILINE)
 
 #: Every OpenFOAM log opens with a banner naming what produced it.
-_EXEC_LINE = re.compile(r"^Exec\s*:\s*(\S+)", re.M)
+_EXEC_LINE = re.compile(r"^Exec\s*:\s*(\S+)", re.MULTILINE)
 
 
-def _log_rank(path: Path, utilities: frozenset[str] = _UTILITIES) -> int:
+def _by_exec_lines(head: str, utilities: frozenset[str]) -> int | None:
+    """Under `--checks next` (`log.post_process`; the verdict-path audit, VPA-INGEST-1): the rank
+    from every `Exec :` line of the head, not its first. A program that is a solver
+    (`solvers.names_a_solver`, the one reading) run without `-postProcess` is a solve; a solver run
+    with `-postProcess` (`buoyantSimpleFoam -postProcess -func wallHeatFlux`) only post-processes
+    the times on disk, printing `Time = ` for each and, with a function that solves an equation,
+    residuals, so it is a utility's log, as `postProcess` is; so is a known utility. A log that
+    opens with a utility and then runs the solver (`(blockMesh; simpleFoam) > log.run`) is the
+    solve's. None when no Exec line was read."""
+    from courant.case.solvers import exec_lines, names_a_solver
+
+    execs = exec_lines(head)
+    if not execs:
+        return None
+    if any(names_a_solver(e.program) and "-postProcess" not in e.args
+           and e.program not in utilities for e in execs):
+        return 2 if _TIME_LOOP.search(head) else 1
+    if all(e.program in utilities or "-postProcess" in e.args for e in execs):
+        return 0
+    return 2 if _TIME_LOOP.search(head) else 1
+
+
+def _log_rank(path: Path, utilities: frozenset[str] = _UTILITIES, *,
+              every_exec: bool = False) -> int:
     """2 = a solve · 1 = unknown · 0 = a known utility.
 
     THE BANNER WINS, and this order is the whole point. The obvious rule —
@@ -296,11 +321,15 @@ def _log_rank(path: Path, utilities: frozenset[str] = _UTILITIES) -> int:
     list, where evidence of a time loop is the best signal available.
     """
     try:                                # VER-14: this head decided which log is the solve's
-        with reading(path), open(path, "rb") as fh:
-            head = fh.read(64 * 1024).decode("utf-8", "replace")
-    except OSError:
-        return 1
+        with reading(path):
+            head = _head(path).decode("utf-8", "replace")
+    except OSError:                     # unread: its name is all there is to go by (T-MANIFEST-3)
+        return 0 if _named_utility(path, utilities) else 1
 
+    if every_exec:
+        ranked = _by_exec_lines(head, utilities)
+        if ranked is not None:
+            return ranked
     exec_match = _EXEC_LINE.search(head)
     if exec_match:
         app = exec_match.group(1).rsplit("/", 1)[-1]
@@ -314,11 +343,34 @@ def _log_rank(path: Path, utilities: frozenset[str] = _UTILITIES) -> int:
         return 2
 
     # No banner: not an OpenFOAM log, or truncated before the header was written.
-    stem = path.name[4:] if path.name.startswith("log.") else path.stem
-    return 0 if stem in utilities else 1
+    return 0 if _named_utility(path, utilities) else 1
 
 
-def find_log(case_dir: str | Path, *, checks: str = "default") -> Path | None:
+def _head(path: Path, size: int = 64 * 1024) -> bytes:
+    """The first `size` bytes of a log, decompressed when its name ends `.gz` (T-GZ-CASE C3). A
+    `.gz` head that cannot be decompressed (`EOFError`, `zlib.error`) raises `OSError`, as a file
+    that cannot be opened does, so `reading` does not note it and the log is ranked by its name."""
+    if path.name.endswith(".gz"):
+        try:
+            with gzip.open(path, "rb") as fh:
+                return fh.read(size)
+        except (EOFError, zlib.error) as exc:
+            raise OSError(f"{path.name}: {exc}") from exc
+    with open(path, "rb") as fh:
+        return fh.read(size)
+
+
+def _named_utility(path: Path, utilities: frozenset[str] = _UTILITIES) -> bool:
+    """Whether the log's name is a known utility's (`log.checkMesh`, `checkMesh.log`, and either
+    with `.gz`): the one name rule for a log with no banner, a log that cannot be read, and
+    `utility_logs`."""
+    name = path.name.removesuffix(".gz")
+    stem = name[4:] if name.startswith("log.") else Path(name).stem
+    return stem in utilities
+
+
+def find_log(case_dir: str | Path, *, checks: str = "default",
+             finished: bool = False) -> Path | None:
     """Guess the log an OpenFOAM run is writing to.
 
     Convention is ``log.<solver>`` in the case directory — near-universal, and
@@ -341,6 +393,12 @@ def find_log(case_dir: str | Path, *, checks: str = "default") -> Path | None:
     log, and None says so; `utility_logs` names what was there. Returning
     `log.checkMesh` made `courant verify` judge a mesh report as the run
     (insufficient, VER-5.5) on a case whose solver had run, without saying why.
+
+    `finished` (the readers of a finished case: `courant verify`, packs, the pre-check; T-GZ-CASE
+    C1-C3): when no plain candidate shows a solve (rank 2), each `log.X.gz` whose plain `log.X`
+    is absent is ranked with the plain ones on its decompressed head, as the case's unzipped
+    copy ranks them, so a plain log that ranks 1 (`log.potentialFoam`) does not hide a gzipped
+    solve or a gzipped crash. A plain log that shows a solve is judged as before. Without `finished` (`courant watch`, live) a `.gz` is never followed.
     """
     case = Path(case_dir)
     candidates = [
@@ -348,16 +406,42 @@ def find_log(case_dir: str | Path, *, checks: str = "default") -> Path | None:
         if p.is_file() and not p.name.endswith((".gz", ".bak"))
     ]
     candidates += [p for p in case.glob("*.log") if p.is_file()]
+    rank, found = _best(candidates, checks)
+    if rank >= 2 or not finished:
+        return found if rank > 0 else None
+    # No plain log shows a solve. Each gzipped log whose plain twin is absent is ranked with the
+    # plain ones (banner, then mtime, then path), exactly as the unzipped copy's logs are, so
+    # neither `log.potentialFoam` nor a newer crashed `log.simpleFoam.gz` is hidden; a `.gz`
+    # beside its own plain file is that file's copy and is not read (T-GZ-CASE rounds 2, 3).
+    plain = {p.name for p in candidates}
+    gz = [p for p in case.glob("log.*.gz")
+          if p.is_file() and not p.name.endswith(".bak.gz") and p.name[:-3] not in plain]
+    rank, found = _best(candidates + gz, checks)   # as its unzipped copy ranks them
+    return found if rank > 0 else None
+
+
+def _best(candidates: list[Path], checks: str) -> tuple[int, Path | None]:
+    """The highest-ranked of `candidates` (banner, then mtime, then path) and its rank, or
+    (0, None) when there are none. Rank 0 is a known utility's log, never the run's."""
     if not candidates:
-        return None
+        return 0, None
+    from courant.verify.checks import enabled
+
     utilities = _utilities(checks)
-    rank, _, best = max((_log_rank(p, utilities), p.stat().st_mtime, p) for p in candidates)
-    return best if rank > 0 else None
+    every = enabled("log.post_process", checks)
+    rank, _, best = max((_log_rank(p, utilities, every_exec=every), p.stat().st_mtime, p)
+                        for p in candidates)
+    return rank, best
 
 
-def utility_logs(case_dir: str | Path, *, checks: str = "default") -> list[str]:
-    """The known utilities' logs in a case directory, by name: what `find_log` passed over."""
+def utility_logs(case_dir: str | Path, *, checks: str = "default",
+                 finished: bool = False) -> list[str]:
+    """The known utilities' logs in a case directory, by name: what `find_log` passed over. With
+    `finished`, `log.<utility>.gz` too, as `find_log(..., finished=True)` ranks them."""
     case = Path(case_dir)
     utilities = _utilities(checks)
+    names = {p.name for p in case.glob("log.*")}
     return sorted(p.name for p in case.glob("log.*")
-                  if p.is_file() and p.name[4:] in utilities)
+                  if p.is_file() and (finished or not p.name.endswith(".gz"))
+                  and not (p.name.endswith(".gz") and p.name[:-3] in names)   # a plain twin's copy
+                  and _named_utility(p, utilities))

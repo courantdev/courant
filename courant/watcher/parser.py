@@ -16,6 +16,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from courant.events import (
     ContinuityErrors,
@@ -27,6 +28,9 @@ from courant.events import (
     Severity,
     WarnPayload,
 )
+
+if TYPE_CHECKING:
+    from typing import TypeGuard
 
 # --- Regexes (compiled once) ------------------------------------------------
 
@@ -310,7 +314,7 @@ def _to_float(token: str) -> float | None:
         return None
 
 
-def _is_bad(x: float | None) -> bool:
+def _is_bad(x: float | None) -> TypeGuard[float]:
     return x is not None and (math.isnan(x) or math.isinf(x))
 
 
@@ -362,7 +366,7 @@ class LogParser:
     """
 
     def __init__(self, run_id: str, start_seq: int = 0, *, regions: bool = False,
-                 multirun: bool = False):
+                 multirun: bool = False, region_courant_first: bool = False):
         """`regions` (TRD VER-20; `log.regions`, behind `--checks next` in the verdict): key each
         residual by the region the log names for it, `<field>@<region>`, so a multi-region
         log's regions are never merged; take a step's Courant number as the largest region's,
@@ -375,10 +379,19 @@ class LogParser:
         their region in a prefix rather than a header (`_RE_PREFIXED_TIME`). Each line is read
         behind its prefix, under the region it names. Before the first `Time =` the width is not
         known, and no Courant number is read there: the setup's and the first step's pre-solve,
-        which belong to no numbered step."""
+        which belong to no numbered step.
+
+        `region_courant_first` (with `regions`; TRD VER-20, `log.regions.courant`, behind
+        `--checks next`): a `Region: <name> Courant Number` line is never read by the bulk
+        pattern, so it is always its region's. Off, the bulk pattern is tried first, and its
+        lookbehind refuses only a letter (A to Z, a to z) before the space: a region whose name
+        does not end in one (`fluid1`, `fluid_2`, `fluid.`) resets the step's Courant number to
+        its own, so the step reads the largest over that region and those printed after it
+        (review of 0.7.0, A5-1)."""
         self.run_id = run_id
         self._regions = regions
         self._multirun = regions and multirun
+        self._region_courant_first = regions and region_courant_first
         self._region: str | None = None      # the region the last header or prefix named
         self._coupled = False                # inside a coupled energy solve, this step
         #: Residual lines inside a coupled energy solve that were not stored (`regions=True`).
@@ -507,7 +520,7 @@ class LogParser:
         events: list[Event] = []
 
         if self._multirun:
-            line = self._behind_prefix(line)
+            line = self._behind_prefix(line)  # pyright: ignore[reportAssignmentType]  # None: skip
             if line is None:
                 return events
 
@@ -536,6 +549,8 @@ class LogParser:
             return events
 
         m = _RE_COURANT.search(line)
+        if m and self._region_courant_first and _RE_REGION_COURANT.match(line):
+            m = None                     # a region's line: read below, under `self._regions`
         if m:
             if self._multirun and self._region is not None:
                 self._take_region_courant(_to_float(m.group(2)))     # behind a region's prefix
@@ -574,7 +589,9 @@ class LogParser:
                     self._step.first_initial_residuals.setdefault(fieldname, init)
                 if fin is not None:
                     self._step.final_residuals[fieldname] = fin
-                self._step.solver_iterations[fieldname] = int(iters_s)
+                if len(iters_s) <= 19:      # a label (64 bits at most); past Python's
+                    # 4,300-digit `int()` limit a longer one would end the read
+                    self._step.solver_iterations[fieldname] = int(iters_s)
                 self._step._has_data = True
             # per-line divergence: a NaN/Inf residual is an immediate red flag
             if _is_bad(init) or _is_bad(fin):

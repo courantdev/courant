@@ -142,7 +142,10 @@ def setup_not_checked(config, checks: str = "default") -> list[str]:
     if config is None:
         return []
     out: list[str] = []
-    every = viscosities(config, "next")
+    # A region's viscosity (VER-3e) is said only in the mode that reads it: a view from elsewhere
+    # carrying `region_thermo` changes no default sentence (the review of T-MULTI-REGION-2, M1).
+    every = tuple(v for v in viscosities(config, "next") if v.region is None or v in
+                  viscosities(config, checks))
     if not every:
         out.append(sentences.VISCOSITY_NONE)
     else:
@@ -168,7 +171,8 @@ def setup_findings(config, mesh, checks: str = "default") -> list:
 
 def preflight_views(run_id: str, config_view: dict | None, mesh_view: dict | None,
                     inputs: tuple[InputFile, ...] = (), solver: str | None = None, *,
-                    checks: str = "default", computed_here: bool = False) -> Preflight:
+                    checks: str = "default", computed_here: bool = False,
+                    regions_partial: bool = False) -> Preflight:
     """The preflight on captured views. `checks` is `--checks` (GATE-13): under the default, a
     mesh view computed from the mesh files (VER-7a) is not read, as v0.5.0 did not compute it.
     `computed_here`: the mesh view is `preflight_path`'s own reading of the case directory, so
@@ -176,13 +180,21 @@ def preflight_views(run_id: str, config_view: dict | None, mesh_view: dict | Non
     (`MeshQuality.from_view`), as `courant verify` drops them; and the configuration view is its
     own reading too, so VER-13a's `ddt_read_whole` stands, where a view from anywhere else (an
     MCP `case_json`, a sidecar) states it and it is dropped (`CaseConfig.from_view`), as
-    `courant verify` drops it (the review of hp6/final)."""
+    `courant verify` drops it (the review of hp6/final). `regions_partial`: `preflight_path`
+    found checkMesh logs for some regions of a multi-region case and not all
+    (`mesh.regions_checkmesh_partial`; VER-3e, `case.regions.whole`), said as verify says it."""
     from courant import __version__
     from courant.case.config import CaseConfig
     from courant.case.mesh import MeshQuality
     from courant.verify.checks import enabled
     from courant.verify.pipeline import _finding_input, _kb, limitations
-    from courant.verify.sentences import not_found, skewness_zero_area
+    from courant.verify import sentences
+    from courant.verify.sentences import (
+        fields_not_found,
+        is_field,
+        not_found,
+        skewness_zero_area,
+    )
 
     config = CaseConfig.from_view(config_view, read_here=computed_here)
     mesh = MeshQuality.from_view(mesh_view, computed_here=computed_here)
@@ -210,10 +222,16 @@ def preflight_views(run_id: str, config_view: dict | None, mesh_view: dict | Non
         if entry is not None and entry.canonical_fixes:
             action = f"Suggested, not applied: {entry.canonical_fixes[0].description}"
             break
+    # VER-3e: a start field said apart from the dictionaries under `case.regions.whole` only.
+    apart = enabled("case.regions.whole", checks)
     not_checked = ([needs_the_run(checks)]
-                   + ([not_found(config.missing)] if config.missing else [])
+                   + ([not_found(d)] if (d := [n for n in config.missing
+                                                 if not (apart and is_field(n))]) else [])
+                   + ([fields_not_found(f)] if (f := [n for n in config.missing
+                                                      if apart and is_field(n)]) else [])
                    + unread + ([NO_MESH] if mesh is None else
-                               [MESH_PARTIAL] if mesh.source is not None else []))
+                               [MESH_PARTIAL] if mesh.source is not None else [])
+                   + ([sentences.MESH_REGIONS_PARTIAL] if regions_partial else []))
     skew_set_aside = skewness_zero_area(mesh)       # VER-7d, as verify says it
     if skew_set_aside:
         not_checked.append(skew_set_aside)
@@ -230,7 +248,7 @@ def preflight_path(path: str | Path, case_json: str | Path | None = None, *,
     """A case directory (read with foamlib), or a corpus sidecar's captured views. With
     `checks="next"` (GATE-13) a case with no checkMesh log has its aspect ratio computed from
     `constant/polyMesh` (VER-7a)."""
-    from courant.verify.checks import enabled
+    from courant.verify.checks import CASE_MERGE_WITH_VALUE, FOAM_GUARD, enabled
     from courant.verify.ingest import InputError, read_sidecar
 
     enabled("", checks)                                 # refuse an unknown mode first
@@ -246,26 +264,38 @@ def preflight_path(path: str | Path, case_json: str | Path | None = None, *,
     if not path.is_dir():
         raise InputError(f"preflight needs a case directory (or --case-json): {path}")
     from courant.case.config import CaseConfig
-    from courant.case.mesh import read_mesh_quality
+    from courant.case.foamguard import guarded
+    from courant.case.mesh import read_mesh_quality, regions_checkmesh_partial
     from courant.case.reads import recording
 
-    with recording(path) as reads:                      # VER-14: the verifier's own recorder
+    with recording(path) as reads, guarded(enabled(FOAM_GUARD, checks)):  # VER-14's recorder
         try:
             config_view = CaseConfig.from_foam(
                 str(path), buoyancy=enabled("physics.laminar_regime", checks),
                 directives=enabled("case.directives", checks),
                 zero_unlisted=enabled("case.zero_unlisted", checks),
                 regions=enabled("case.regions", checks),            # VER-3d, behind next
+                regions_whole=enabled("case.regions.whole", checks),  # VER-3e, behind next
+                merge_values=enabled(CASE_MERGE_WITH_VALUE, checks),  # DO-2, behind next
+                compressed=enabled("case.zero_compressed", checks),  # VER-3f, behind next
+                patches=enabled("case.boundary_patches", checks),   # VER-3g, behind next
             ).model_dump(mode="json")
         except Exception:                               # noqa: BLE001
             config_view = None
         # The aspect ratio from the mesh files (VER-7a), behind --checks next until 0.6.0.
+        regions = (config_view or {}).get("regions") or None
         mesh = read_mesh_quality(str(path),
                                  polymesh=enabled("mesh.aspect_ratio.polymesh", checks),
-                                 regions=(config_view or {}).get("regions") or None)
+                                 regions=regions,
+                                 by_solver=enabled("case.regions.whole", checks))  # VER-3e
+    # VER-3e (`case.regions.whole`): some regions have a checkMesh log and not all, as verify
+    # says it (`mesh.regions_checkmesh_partial`, the one predicate).
+    partial = enabled("case.regions.whole", checks) and regions_checkmesh_partial(str(path),
+                                                                                    regions)
     return preflight_views(path.name, config_view,
                            mesh.model_dump(mode="json") if mesh is not None else None,
-                           manifest(path, reads.paths()), checks=checks, computed_here=True)
+                           manifest(path, reads.paths()), checks=checks, computed_here=True,
+                           regions_partial=partial)
 
 
 def render_text(p: Preflight) -> str:

@@ -1,0 +1,3 @@
+# SOURCE: synthetic, not a real run. Written 2026-11-08 from Anthropic's Claude Code documentation (headless mode, stream-json). The stream stops before the final `result` object, as a killed or crashed CLI leaves it.
+{"type":"system","subtype":"init","cwd":"/work/case","session_id":"0d8e4f11-5c2a-4b7e-8f3d-91a2b3c4d5e6","tools":["Bash","Read"],"mcp_servers":[],"model":"claude-test-model","permissionMode":"bypassPermissions","apiKeySource":"none"}
+{"type":"assistant","message":{"id":"msg_01","type":"message","role":"assistant","model":"claude-test-model","content":[{"type":"text","text":"Copying the tutorial."}],"usage":{"input_tokens":150,"output_tokens":12}},"session_id":"0d8e4f11-5c2a-4b7e-8f3d-91a2b3c4d5e6"}

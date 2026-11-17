@@ -75,7 +75,8 @@ PROCESS_ALLOWED = {"courant.verify.batch": ("multiprocessing", "concurrent.futur
 #: Packages whose every module hands a verdict on, or decides one.
 VERDICT_PACKAGES = ("verify", "gate", "mcp", "record", "live")
 #: Commands that read a run and print what they found.
-VERDICT_COMMANDS = ("verify", "gate", "tour", "live", "mcp", "preflight", "convergence", "audit")
+VERDICT_COMMANDS = ("verify", "gate", "tour", "live", "mcp", "preflight", "convergence", "audit",
+                    "precheck")
 #: Commands whose purpose is to reach a model or the network, and which say so (NETWORK.md).
 MAY_REACH_OUT = ("ctest", "spec", "doctor", "update")
 

@@ -70,6 +70,42 @@ class Drift:
         return abs(self.slope(e)) * (self.w - 1)
 
 
+#: `end_drift` sums the last window directly only when every addend, and so every exact partial
+#: sum of either way of summing, stays below this in magnitude: then nothing overflows and both
+#: ways are the correctly rounded value of the same exact sum.
+_END_DRIFT_BOUND = 1e300
+
+
+def end_drift(values: Sequence[float], w: int) -> float:
+    """`Drift(values, w).drift(len(values) - 1)`: the drift of the last window alone, bit for bit.
+
+    `Drift` holds exact prefix sums of the whole series so that it can answer any window; a
+    caller that asks only the last (`residual_summary`, the transient branch's settled-tail test)
+    pays O(n) partials for one answer. Here the two window sums are `math.fsum` over the window
+    itself, which `ExactSums.window` equals bit for bit (`exact.py`: both are the correctly
+    rounded value of the same exact sum), from the same addends: `v - c` with `c` the final
+    value, and `i * (v_i - c)` at the global index `i`. Where the values are large enough that
+    the prefix sums could overflow (`_END_DRIFT_BOUND`), or not finite, this is `Drift` itself,
+    so its errors are raised as before (perf-070)."""
+    n = len(values)
+    try:
+        direct = (2 <= w <= n and all(math.isfinite(v) for v in values)
+                  and max(abs(v) for v in values) * 2.0 * n * n < _END_DRIFT_BOUND)
+    except (OverflowError, TypeError):      # an int past a double's range: as `Drift` reads it
+        direct = False
+    if not direct:
+        return Drift(values, w).drift(n - 1)
+    c = values[n - 1]
+    a = n - w
+    centred = [float(values[i] - c) for i in range(a, n)]        # as `Drift` stores them
+    sy = math.fsum(centred)
+    sxy = math.fsum([(a + k) * y for k, y in enumerate(centred)]) - a * sy
+    sx = w * (w - 1) // 2
+    sxx = (w - 1) * w * (2 * w - 1) // 6
+    slope = (w * sxy - sx * sy) / (w * sxx - sx * sx)
+    return abs(slope) * (w - 1)
+
+
 def unsettled(drift: float, tau: float) -> bool:
     """A window fails the criterion. An exactly zero drift always passes, so a constant
     tail with no usable scale (tau = 0) is still settled."""
@@ -254,8 +290,7 @@ def residual_summary(field: str, values: Sequence[float]) -> ResidualSummary:
     plateaued, drift_rel = None, None
     if n >= WINDOW_FLOOR:
         w = window_width(n)
-        d = Drift(finite, w)
-        drift_rel = d.drift(n - 1) / r_final
+        drift_rel = end_drift(finite, w) / r_final
         plateaued = drift_rel < PLATEAU_DRIFT
     return ResidualSummary(field, n, r_ref, r_final, r_min, r_min_index, r_ref / r_final,
                            orders, capped, plateaued, drift_rel)

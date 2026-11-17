@@ -441,4 +441,21 @@ def solver_exec(log_text: str | None) -> Exec | None:
     The one reading of which program ran: conformance's solver item and the verdict's
     `run.solver` (`courant.spec.as_run`, `courant.verify.pipeline`), and the log's parallel
     signal (`courant.case.mesh.ran_parallel`)."""
-    return next((e for e in reversed(exec_lines(log_text)) if names_a_solver(e.program)), None)
+    global _LAST_SOLVER_EXEC
+    last = _LAST_SOLVER_EXEC
+    if last is not None and log_text is not None and last[0] is log_text:
+        return last[1]
+    ex = next((e for e in reversed(exec_lines(log_text)) if names_a_solver(e.program)), None)
+    if log_text is not None:
+        _LAST_SOLVER_EXEC = (log_text, ex)
+    return ex
+
+
+#: The last log `solver_exec` read, and its answer (perf-070). One verify asks it of the same log
+#: string several times (the pipeline's `run.solver`, the mesh and Reynolds readers, conformance),
+#: and each asking scanned the whole log (research/notes/perf-070/REPORT.md). The entry holds the
+#: string itself, so `is` names that very object and never a new one at a reused address; a
+#: string cannot change, and `Exec` is frozen, so the answer is the one a new scan would give. The
+#: cost: a long-lived process (the MCP server, `courant watch`) keeps the last log it read alive
+#: until it reads another. A test that patches the solver tables must use a new string.
+_LAST_SOLVER_EXEC: tuple[str, Exec | None] | None = None
